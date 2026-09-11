@@ -1,7 +1,7 @@
 {
   "domain": "energy_planner",
   "name": "Energy Planner",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "config_flow": true,
   "documentation": "https://github.com/chrisj500/home-assistant-energy-planner",
   "issue_tracker": "https://github.com/chrisj500/home-assistant-energy-planner/issues",
