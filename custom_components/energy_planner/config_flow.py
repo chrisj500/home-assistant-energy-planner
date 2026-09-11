@@ -82,6 +82,54 @@ class EnergyPlannerOptionsFlow(config_entries.OptionsFlow):
 
         schema = vol.Schema(
             {
+                vol.Required(
+                    CONF_SOC_1,
+                    default=current.get(CONF_SOC_1),
+                ): SENSOR_SELECTOR,
+                vol.Required(
+                    CONF_SOC_2,
+                    default=current.get(CONF_SOC_2),
+                ): SENSOR_SELECTOR,
+                vol.Required(
+                    CONF_SOC_3,
+                    default=current.get(CONF_SOC_3),
+                ): SENSOR_SELECTOR,
+                vol.Optional(
+                    CONF_SOC_WEIGHTS,
+                    default=current.get(CONF_SOC_WEIGHTS, DEFAULT_WEIGHTS),
+                ): str,
+                vol.Optional(
+                    CONF_CAPACITY_KWH,
+                    default=float(current.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH)),
+                ): vol.Coerce(float),
+                vol.Required(
+                    CONF_CHARGE_LIMIT,
+                    default=current.get(CONF_CHARGE_LIMIT),
+                ): NUMBER_SELECTOR,
+                vol.Required(
+                    CONF_BACKUP_RESERVE,
+                    default=current.get(CONF_BACKUP_RESERVE),
+                ): NUMBER_SELECTOR,
+                vol.Required(
+                    CONF_STORM_WARNING,
+                    default=current.get(CONF_STORM_WARNING),
+                ): BINARY_SELECTOR,
+                vol.Required(
+                    CONF_SOLAR_TODAY,
+                    default=current.get(CONF_SOLAR_TODAY),
+                ): SENSOR_SELECTOR,
+                vol.Required(
+                    CONF_SOLAR_TOMORROW,
+                    default=current.get(CONF_SOLAR_TOMORROW),
+                ): SENSOR_SELECTOR,
+                vol.Optional(
+                    CONF_EV_SOC,
+                    default=current.get(CONF_EV_SOC),
+                ): SENSOR_SELECTOR,
+                vol.Optional(
+                    CONF_EV_HOME,
+                    default=current.get(CONF_EV_HOME),
+                ): TRACKER_SELECTOR,
                 vol.Optional(
                     OPT_AUTO_HEADROOM,
                     default=bool(current.get(OPT_AUTO_HEADROOM, False)),
