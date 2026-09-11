@@ -47,7 +47,6 @@ SENSORS = (
         name="Upcoming Solar",
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
         device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.MEASUREMENT,
     ),
     EnergyPlannerSensorDescription(
         key="reserve",
