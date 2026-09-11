@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import timedelta
+import logging
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_BACKUP_RESERVE,
@@ -30,6 +32,8 @@ from .const import (
     OPT_MIN_RESERVE,
     OPT_STRONG_SOLAR_KWH,
 )
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _num(hass: HomeAssistant, entity_id: str | None) -> float | None:
@@ -57,7 +61,7 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
     def __init__(self, hass: HomeAssistant, entry: ConfigEntry) -> None:
         super().__init__(
             hass,
-            logger=__import__("logging").getLogger(__name__),
+            logger=_LOGGER,
             name="Energy Planner",
             update_interval=timedelta(minutes=1),
         )
@@ -83,8 +87,8 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             _num(self.hass, cfg.get(CONF_SOC_3)),
         ]
         weighted_soc = None
-        if all(v is not None for v in socs):
-            weighted_soc = sum(v * w for v, w in zip(socs, weights)) / sum(weights)
+        if all(value is not None for value in socs):
+            weighted_soc = sum(value * weight for value, weight in zip(socs, weights)) / sum(weights)
 
         capacity = float(cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH))
         stored = None if weighted_soc is None else capacity * weighted_soc / 100.0
@@ -95,7 +99,7 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         solar_today = _num(self.hass, cfg.get(CONF_SOLAR_TODAY))
         solar_tomorrow = _num(self.hass, cfg.get(CONF_SOLAR_TOMORROW))
-        upcoming = solar_today if self.hass.config.time_zone and __import__("homeassistant.util.dt", fromlist=["now"]).now().hour < 12 else solar_tomorrow
+        upcoming = solar_today if dt_util.now().hour < 12 else solar_tomorrow
 
         reserve = _num(self.hass, cfg.get(CONF_BACKUP_RESERVE))
         storm = _is_on(self.hass, cfg.get(CONF_STORM_WARNING))
@@ -148,6 +152,7 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         data = self.data or {}
         if not data.get("headroom_release"):
             return
+
         reserve_entity = self.cfg.get(CONF_BACKUP_RESERVE)
         minimum = float(self.cfg.get(OPT_MIN_RESERVE, DEFAULT_MIN_RESERVE))
         await self.hass.services.async_call(
