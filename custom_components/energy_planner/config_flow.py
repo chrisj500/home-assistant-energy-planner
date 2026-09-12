@@ -7,27 +7,37 @@ from homeassistant.const import CONF_NAME
 from homeassistant.helpers import selector
 
 from .const import (
+    CONF_ACTUAL_SOLAR_POWER,
     CONF_BACKUP_RESERVE,
     CONF_CAPACITY_KWH,
     CONF_CHARGE_LIMIT,
     CONF_EV_HOME,
     CONF_EV_SOC,
+    CONF_EXPECTED_LOAD_REMAINING,
     CONF_SOC_1,
     CONF_SOC_2,
     CONF_SOC_3,
     CONF_SOC_WEIGHTS,
+    CONF_SOLAR_PEAK_TIME,
+    CONF_SOLAR_REMAINING,
     CONF_SOLAR_TODAY,
     CONF_SOLAR_TOMORROW,
     CONF_STORM_WARNING,
     DEFAULT_CAPACITY_KWH,
+    DEFAULT_CHARGE_EFFICIENCY,
     DEFAULT_EV_TARGET_SOC,
+    DEFAULT_HARVEST_CAPTURE_FACTOR,
     DEFAULT_MIN_RESERVE,
+    DEFAULT_PREFERRED_IMPORT_W,
     DEFAULT_STRONG_SOLAR_KWH,
     DEFAULT_WEIGHTS,
     DOMAIN,
     OPT_AUTO_HEADROOM,
+    OPT_CHARGE_EFFICIENCY,
     OPT_EV_TARGET_SOC,
+    OPT_HARVEST_CAPTURE_FACTOR,
     OPT_MIN_RESERVE,
+    OPT_PREFERRED_IMPORT_W,
     OPT_STRONG_SOLAR_KWH,
 )
 
@@ -60,6 +70,10 @@ class EnergyPlannerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_STORM_WARNING): BINARY_SELECTOR,
                 vol.Required(CONF_SOLAR_TODAY): SENSOR_SELECTOR,
                 vol.Required(CONF_SOLAR_TOMORROW): SENSOR_SELECTOR,
+                vol.Optional(CONF_ACTUAL_SOLAR_POWER): SENSOR_SELECTOR,
+                vol.Optional(CONF_SOLAR_REMAINING): SENSOR_SELECTOR,
+                vol.Optional(CONF_EXPECTED_LOAD_REMAINING): SENSOR_SELECTOR,
+                vol.Optional(CONF_SOLAR_PEAK_TIME): SENSOR_SELECTOR,
                 vol.Optional(CONF_EV_SOC): SENSOR_SELECTOR,
                 vol.Optional(CONF_EV_HOME): TRACKER_SELECTOR,
             }
@@ -82,18 +96,9 @@ class EnergyPlannerOptionsFlow(config_entries.OptionsFlow):
 
         schema = vol.Schema(
             {
-                vol.Required(
-                    CONF_SOC_1,
-                    default=current.get(CONF_SOC_1),
-                ): SENSOR_SELECTOR,
-                vol.Required(
-                    CONF_SOC_2,
-                    default=current.get(CONF_SOC_2),
-                ): SENSOR_SELECTOR,
-                vol.Required(
-                    CONF_SOC_3,
-                    default=current.get(CONF_SOC_3),
-                ): SENSOR_SELECTOR,
+                vol.Required(CONF_SOC_1, default=current.get(CONF_SOC_1)): SENSOR_SELECTOR,
+                vol.Required(CONF_SOC_2, default=current.get(CONF_SOC_2)): SENSOR_SELECTOR,
+                vol.Required(CONF_SOC_3, default=current.get(CONF_SOC_3)): SENSOR_SELECTOR,
                 vol.Optional(
                     CONF_SOC_WEIGHTS,
                     default=current.get(CONF_SOC_WEIGHTS, DEFAULT_WEIGHTS),
@@ -123,13 +128,23 @@ class EnergyPlannerOptionsFlow(config_entries.OptionsFlow):
                     default=current.get(CONF_SOLAR_TOMORROW),
                 ): SENSOR_SELECTOR,
                 vol.Optional(
-                    CONF_EV_SOC,
-                    default=current.get(CONF_EV_SOC),
+                    CONF_ACTUAL_SOLAR_POWER,
+                    default=current.get(CONF_ACTUAL_SOLAR_POWER),
                 ): SENSOR_SELECTOR,
                 vol.Optional(
-                    CONF_EV_HOME,
-                    default=current.get(CONF_EV_HOME),
-                ): TRACKER_SELECTOR,
+                    CONF_SOLAR_REMAINING,
+                    default=current.get(CONF_SOLAR_REMAINING),
+                ): SENSOR_SELECTOR,
+                vol.Optional(
+                    CONF_EXPECTED_LOAD_REMAINING,
+                    default=current.get(CONF_EXPECTED_LOAD_REMAINING),
+                ): SENSOR_SELECTOR,
+                vol.Optional(
+                    CONF_SOLAR_PEAK_TIME,
+                    default=current.get(CONF_SOLAR_PEAK_TIME),
+                ): SENSOR_SELECTOR,
+                vol.Optional(CONF_EV_SOC, default=current.get(CONF_EV_SOC)): SENSOR_SELECTOR,
+                vol.Optional(CONF_EV_HOME, default=current.get(CONF_EV_HOME)): TRACKER_SELECTOR,
                 vol.Optional(
                     OPT_AUTO_HEADROOM,
                     default=bool(current.get(OPT_AUTO_HEADROOM, False)),
@@ -146,6 +161,23 @@ class EnergyPlannerOptionsFlow(config_entries.OptionsFlow):
                     OPT_EV_TARGET_SOC,
                     default=float(current.get(OPT_EV_TARGET_SOC, DEFAULT_EV_TARGET_SOC)),
                 ): vol.All(vol.Coerce(float), vol.Range(min=50, max=100)),
+                vol.Optional(
+                    OPT_PREFERRED_IMPORT_W,
+                    default=float(current.get(OPT_PREFERRED_IMPORT_W, DEFAULT_PREFERRED_IMPORT_W)),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0, max=1000)),
+                vol.Optional(
+                    OPT_HARVEST_CAPTURE_FACTOR,
+                    default=float(
+                        current.get(
+                            OPT_HARVEST_CAPTURE_FACTOR,
+                            DEFAULT_HARVEST_CAPTURE_FACTOR,
+                        )
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0.50, max=1.00)),
+                vol.Optional(
+                    OPT_CHARGE_EFFICIENCY,
+                    default=float(current.get(OPT_CHARGE_EFFICIENCY, DEFAULT_CHARGE_EFFICIENCY)),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0.50, max=1.00)),
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema)
