@@ -1,11 +1,11 @@
 {
   "domain": "energy_planner",
   "name": "Energy Planner",
-  "version": "0.1.4",
+  "codeowners": ["@chrisj500"],
   "config_flow": true,
   "documentation": "https://github.com/chrisj500/home-assistant-energy-planner",
-  "issue_tracker": "https://github.com/chrisj500/home-assistant-energy-planner/issues",
-  "codeowners": ["@chrisj500"],
   "integration_type": "service",
-  "iot_class": "calculated"
+  "iot_class": "calculated",
+  "issue_tracker": "https://github.com/chrisj500/home-assistant-energy-planner/issues",
+  "version": "0.1.5"
 }

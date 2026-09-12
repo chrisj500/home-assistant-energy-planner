@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Configure Energy Planner",
-        "description": "Select the Home Assistant entities used by the planner.",
+        "description": "Select the Home Assistant entities used by the planner. The four sunset-projection sources are optional for upgrades but are required for the policy-aware sunset projection.",
         "data": {
           "name": "Name",
           "soc_entity_1": "Battery SOC 1",
@@ -17,6 +17,10 @@
           "storm_warning_entity": "Storm warning",
           "solar_today_entity": "Solar forecast today",
           "solar_tomorrow_entity": "Solar forecast tomorrow",
+          "actual_solar_power_entity": "Actual solar power (W)",
+          "solar_remaining_entity": "Corrected solar remaining today (kWh)",
+          "expected_load_remaining_entity": "Expected house load remaining to sunset (kWh)",
+          "solar_peak_time_entity": "Forecast solar peak time today",
           "ev_soc_entity": "EV state of charge (optional)",
           "ev_home_entity": "EV location tracker (optional)"
         }
@@ -28,10 +32,29 @@
       "init": {
         "title": "Energy Planner options",
         "data": {
+          "soc_entity_1": "Battery SOC 1",
+          "soc_entity_2": "Battery SOC 2",
+          "soc_entity_3": "Battery SOC 3",
+          "soc_weights": "Battery weights",
+          "capacity_kwh": "Total battery capacity (kWh)",
+          "charge_limit_entity": "Battery charge limit",
+          "backup_reserve_entity": "Battery backup reserve",
+          "storm_warning_entity": "Storm warning",
+          "solar_today_entity": "Solar forecast today",
+          "solar_tomorrow_entity": "Solar forecast tomorrow",
+          "actual_solar_power_entity": "Actual solar power (W)",
+          "solar_remaining_entity": "Corrected solar remaining today (kWh)",
+          "expected_load_remaining_entity": "Expected house load remaining to sunset (kWh)",
+          "solar_peak_time_entity": "Forecast solar peak time today",
+          "ev_soc_entity": "EV state of charge (optional)",
+          "ev_home_entity": "EV location tracker (optional)",
           "auto_headroom": "Enable automatic solar headroom",
           "minimum_reserve": "Minimum backup reserve (%)",
           "strong_solar_kwh": "Strong solar threshold (kWh)",
-          "ev_target_soc": "EV target SOC (%)"
+          "ev_target_soc": "EV target SOC (%)",
+          "preferred_import_w": "Solar-harvest preferred grid import (W)",
+          "harvest_capture_factor": "Solar-harvest capture factor (0-1)",
+          "charge_efficiency": "AC-to-battery charge efficiency (0-1)"
         }
       }
     }

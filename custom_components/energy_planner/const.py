@@ -11,6 +11,10 @@ CONF_BACKUP_RESERVE = "backup_reserve_entity"
 CONF_STORM_WARNING = "storm_warning_entity"
 CONF_SOLAR_TODAY = "solar_today_entity"
 CONF_SOLAR_TOMORROW = "solar_tomorrow_entity"
+CONF_ACTUAL_SOLAR_POWER = "actual_solar_power_entity"
+CONF_SOLAR_REMAINING = "solar_remaining_entity"
+CONF_EXPECTED_LOAD_REMAINING = "expected_load_remaining_entity"
+CONF_SOLAR_PEAK_TIME = "solar_peak_time_entity"
 CONF_EV_SOC = "ev_soc_entity"
 CONF_EV_HOME = "ev_home_entity"
 
@@ -18,9 +22,15 @@ OPT_AUTO_HEADROOM = "auto_headroom"
 OPT_MIN_RESERVE = "minimum_reserve"
 OPT_STRONG_SOLAR_KWH = "strong_solar_kwh"
 OPT_EV_TARGET_SOC = "ev_target_soc"
+OPT_PREFERRED_IMPORT_W = "preferred_import_w"
+OPT_HARVEST_CAPTURE_FACTOR = "harvest_capture_factor"
+OPT_CHARGE_EFFICIENCY = "charge_efficiency"
 
 DEFAULT_WEIGHTS = "3,2,3"
 DEFAULT_CAPACITY_KWH = 49.152
 DEFAULT_MIN_RESERVE = 10.0
 DEFAULT_STRONG_SOLAR_KWH = 35.0
 DEFAULT_EV_TARGET_SOC = 100.0
+DEFAULT_PREFERRED_IMPORT_W = 250.0
+DEFAULT_HARVEST_CAPTURE_FACTOR = 0.88
+DEFAULT_CHARGE_EFFICIENCY = 0.90
