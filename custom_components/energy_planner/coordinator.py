@@ -10,28 +10,39 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_ACTUAL_SOLAR_POWER,
     CONF_BACKUP_RESERVE,
     CONF_CAPACITY_KWH,
     CONF_CHARGE_LIMIT,
     CONF_EV_HOME,
     CONF_EV_SOC,
+    CONF_EXPECTED_LOAD_REMAINING,
     CONF_SOC_1,
     CONF_SOC_2,
     CONF_SOC_3,
     CONF_SOC_WEIGHTS,
+    CONF_SOLAR_PEAK_TIME,
+    CONF_SOLAR_REMAINING,
     CONF_SOLAR_TODAY,
     CONF_SOLAR_TOMORROW,
     CONF_STORM_WARNING,
     DEFAULT_CAPACITY_KWH,
+    DEFAULT_CHARGE_EFFICIENCY,
     DEFAULT_EV_TARGET_SOC,
+    DEFAULT_HARVEST_CAPTURE_FACTOR,
     DEFAULT_MIN_RESERVE,
+    DEFAULT_PREFERRED_IMPORT_W,
     DEFAULT_STRONG_SOLAR_KWH,
     DEFAULT_WEIGHTS,
     OPT_AUTO_HEADROOM,
+    OPT_CHARGE_EFFICIENCY,
     OPT_EV_TARGET_SOC,
+    OPT_HARVEST_CAPTURE_FACTOR,
     OPT_MIN_RESERVE,
+    OPT_PREFERRED_IMPORT_W,
     OPT_STRONG_SOLAR_KWH,
 )
+from .projection import project_sunset_soc
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -55,6 +66,27 @@ def _is_on(hass: HomeAssistant, entity_id: str | None) -> bool | None:
     if state is None or state.state in {"unknown", "unavailable"}:
         return None
     return state.state == "on"
+
+
+def _timestamp(hass: HomeAssistant, entity_id: str | None):
+    if not entity_id:
+        return None
+    state = hass.states.get(entity_id)
+    if state is None or state.state in {"unknown", "unavailable", "none", ""}:
+        return None
+    return dt_util.parse_datetime(state.state)
+
+
+def _next_sunset(hass: HomeAssistant):
+    sun = hass.states.get("sun.sun")
+    if sun is None or sun.state != "above_horizon":
+        return None
+    setting = sun.attributes.get("next_setting")
+    if not setting:
+        return None
+    if hasattr(setting, "tzinfo"):
+        return setting
+    return dt_util.parse_datetime(str(setting))
 
 
 class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -116,6 +148,64 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             and reserve > minimum_reserve + 0.5
         )
 
+        projected_sunset_soc = None
+        projected_charge_to_sunset = None
+        projection_available_ac = None
+        projection_model = None
+
+        remaining_solar = _num(self.hass, cfg.get(CONF_SOLAR_REMAINING))
+        expected_load = _num(self.hass, cfg.get(CONF_EXPECTED_LOAD_REMAINING))
+        actual_solar_w = _num(self.hass, cfg.get(CONF_ACTUAL_SOLAR_POWER))
+        peak_time = _timestamp(self.hass, cfg.get(CONF_SOLAR_PEAK_TIME))
+        sunset = _next_sunset(self.hass)
+        now = dt_util.now()
+
+        projection_inputs_ready = all(
+            value is not None
+            for value in (
+                weighted_soc,
+                charge_limit,
+                remaining_solar,
+                expected_load,
+                actual_solar_w,
+                peak_time,
+                sunset,
+            )
+        )
+        if projection_inputs_ready:
+            projection = project_sunset_soc(
+                now=now,
+                sunset=sunset,
+                current_soc_pct=weighted_soc,
+                capacity_kwh=capacity,
+                charge_limit_pct=charge_limit,
+                remaining_solar_kwh=remaining_solar,
+                expected_load_remaining_kwh=expected_load,
+                current_solar_w=actual_solar_w,
+                peak_time=peak_time,
+                preferred_import_w=float(
+                    cfg.get(OPT_PREFERRED_IMPORT_W, DEFAULT_PREFERRED_IMPORT_W)
+                ),
+                harvest_capture_factor=float(
+                    cfg.get(
+                        OPT_HARVEST_CAPTURE_FACTOR,
+                        DEFAULT_HARVEST_CAPTURE_FACTOR,
+                    )
+                ),
+                charge_efficiency=float(
+                    cfg.get(OPT_CHARGE_EFFICIENCY, DEFAULT_CHARGE_EFFICIENCY)
+                ),
+            )
+            projected_sunset_soc = projection.projected_soc
+            projected_charge_to_sunset = projection.projected_charge_kwh
+            projection_available_ac = projection.projected_available_ac_kwh
+            projection_model = projection.model
+        elif weighted_soc is not None and sunset is None:
+            projected_sunset_soc = weighted_soc
+            projected_charge_to_sunset = 0.0
+            projection_available_ac = 0.0
+            projection_model = "after_sunset"
+
         ev_soc = _num(self.hass, cfg.get(CONF_EV_SOC))
         ev_home_entity = cfg.get(CONF_EV_HOME)
         ev_home = None
@@ -143,6 +233,10 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "storm": storm,
             "control_ready": ready,
             "headroom_release": release,
+            "projected_sunset_soc": projected_sunset_soc,
+            "projected_charge_to_sunset": projected_charge_to_sunset,
+            "projection_available_ac": projection_available_ac,
+            "projection_model": projection_model,
             "ev_soc": ev_soc,
             "ev_plan": ev_plan,
         }
