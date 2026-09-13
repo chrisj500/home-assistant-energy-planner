@@ -5,13 +5,16 @@ import logging
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.const import SUN_EVENT_SUNRISE, SUN_EVENT_SUNSET
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_ACTUAL_SOLAR_POWER,
     CONF_BACKUP_RESERVE,
+    CONF_BASE_LOAD_POWER,
     CONF_CAPACITY_KWH,
     CONF_CHARGE_LIMIT,
     CONF_EV_HOME,
@@ -22,12 +25,14 @@ from .const import (
     CONF_SOC_3,
     CONF_SOC_WEIGHTS,
     CONF_SOLAR_PEAK_TIME,
+    CONF_SOLAR_PEAK_TIME_TOMORROW,
     CONF_SOLAR_REMAINING,
     CONF_SOLAR_TODAY,
     CONF_SOLAR_TOMORROW,
     CONF_STORM_WARNING,
     DEFAULT_CAPACITY_KWH,
     DEFAULT_CHARGE_EFFICIENCY,
+    DEFAULT_DISCRETIONARY_THRESHOLD_KWH,
     DEFAULT_EV_TARGET_SOC,
     DEFAULT_HARVEST_CAPTURE_FACTOR,
     DEFAULT_MIN_RESERVE,
@@ -36,6 +41,7 @@ from .const import (
     DEFAULT_WEIGHTS,
     OPT_AUTO_HEADROOM,
     OPT_CHARGE_EFFICIENCY,
+    OPT_DISCRETIONARY_THRESHOLD_KWH,
     OPT_EV_TARGET_SOC,
     OPT_HARVEST_CAPTURE_FACTOR,
     OPT_MIN_RESERVE,
@@ -43,6 +49,12 @@ from .const import (
     OPT_STRONG_SOLAR_KWH,
 )
 from .projection import project_sunset_soc
+from .strategy import (
+    STRATEGY_CREATE_HEADROOM,
+    STRATEGY_INSUFFICIENT_DATA,
+    STRATEGY_USE_DISCRETIONARY_LOADS,
+    plan_solar_period,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -87,6 +99,13 @@ def _next_sunset(hass: HomeAssistant):
     if hasattr(setting, "tzinfo"):
         return setting
     return dt_util.parse_datetime(str(setting))
+
+
+def _tomorrow_solar_window(hass: HomeAssistant):
+    tomorrow = dt_util.now().date() + timedelta(days=1)
+    sunrise = get_astral_event_date(hass, SUN_EVENT_SUNRISE, tomorrow)
+    sunset = get_astral_event_date(hass, SUN_EVENT_SUNSET, tomorrow)
+    return sunrise, sunset
 
 
 class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -140,13 +159,6 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         auto_headroom = bool(cfg.get(OPT_AUTO_HEADROOM, False))
 
         ready = reserve is not None and storm is not None and upcoming is not None
-        release = bool(
-            ready
-            and auto_headroom
-            and not storm
-            and upcoming >= strong_solar
-            and reserve > minimum_reserve + 0.5
-        )
 
         projected_sunset_soc = None
         projected_charge_to_sunset = None
@@ -213,14 +225,110 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             state = self.hass.states.get(ev_home_entity)
             ev_home = None if state is None else state.state == "home"
         ev_target = float(cfg.get(OPT_EV_TARGET_SOC, DEFAULT_EV_TARGET_SOC))
+
+        base_load_power_w = _num(self.hass, cfg.get(CONF_BASE_LOAD_POWER))
+        peak_time_tomorrow = _timestamp(
+            self.hass, cfg.get(CONF_SOLAR_PEAK_TIME_TOMORROW)
+        )
+        tomorrow_sunrise, tomorrow_sunset = _tomorrow_solar_window(self.hass)
+
+        tomorrow_strategy = STRATEGY_INSUFFICIENT_DATA
+        tomorrow_strategy_reason = "Tomorrow planning inputs are incomplete."
+        tomorrow_plan_ready = False
+        required_headroom_tomorrow = None
+        headroom_margin_tomorrow = None
+        headroom_shortfall_tomorrow = None
+        recommended_overnight_discharge = None
+        projected_max_soc_tomorrow = None
+        projected_sunset_soc_tomorrow = None
+        predicted_export_tomorrow = None
+        predicted_grid_import_tomorrow = None
+        discretionary_energy_tomorrow = None
+        tomorrow_projection_model = None
+
+        tomorrow_required_values = {
+            "battery SOC": weighted_soc,
+            "charge limit": charge_limit,
+            "tomorrow solar forecast": solar_tomorrow,
+            "base load power": base_load_power_w,
+            "storm state": storm,
+            "tomorrow sunrise": tomorrow_sunrise,
+            "tomorrow sunset": tomorrow_sunset,
+        }
+        missing_tomorrow = [
+            label for label, value in tomorrow_required_values.items() if value is None
+        ]
+
+        if not missing_tomorrow:
+            plan = plan_solar_period(
+                sunrise=tomorrow_sunrise,
+                sunset=tomorrow_sunset,
+                current_soc_pct=weighted_soc,
+                capacity_kwh=capacity,
+                charge_limit_pct=charge_limit,
+                minimum_reserve_pct=minimum_reserve,
+                solar_forecast_kwh=solar_tomorrow,
+                base_load_power_w=base_load_power_w,
+                peak_time=peak_time_tomorrow,
+                harvest_capture_factor=float(
+                    cfg.get(
+                        OPT_HARVEST_CAPTURE_FACTOR,
+                        DEFAULT_HARVEST_CAPTURE_FACTOR,
+                    )
+                ),
+                charge_efficiency=float(
+                    cfg.get(OPT_CHARGE_EFFICIENCY, DEFAULT_CHARGE_EFFICIENCY)
+                ),
+                storm_active=storm,
+                ev_soc_pct=ev_soc,
+                ev_target_soc_pct=ev_target,
+                ev_home=ev_home,
+                discretionary_threshold_kwh=float(
+                    cfg.get(
+                        OPT_DISCRETIONARY_THRESHOLD_KWH,
+                        DEFAULT_DISCRETIONARY_THRESHOLD_KWH,
+                    )
+                ),
+            )
+            tomorrow_strategy = plan.strategy
+            tomorrow_strategy_reason = plan.reason
+            tomorrow_plan_ready = True
+            required_headroom_tomorrow = plan.required_headroom_kwh
+            headroom_margin_tomorrow = plan.headroom_margin_kwh
+            headroom_shortfall_tomorrow = plan.headroom_shortfall_kwh
+            recommended_overnight_discharge = (
+                plan.recommended_overnight_discharge_kwh
+            )
+            projected_max_soc_tomorrow = plan.projected_max_soc_pct
+            projected_sunset_soc_tomorrow = plan.projected_sunset_soc_pct
+            predicted_export_tomorrow = plan.predicted_export_kwh
+            predicted_grid_import_tomorrow = plan.predicted_grid_import_kwh
+            discretionary_energy_tomorrow = plan.discretionary_energy_kwh
+            tomorrow_projection_model = plan.model
+        elif missing_tomorrow:
+            tomorrow_strategy_reason = (
+                "Missing: " + ", ".join(missing_tomorrow) + "."
+            )
+
+        # v0.1.6 is advisory-only: expose whether headroom creation would be
+        # recommended, but do not actuate the backup reserve or EcoFlow mode.
+        release = bool(
+            auto_headroom
+            and tomorrow_plan_ready
+            and tomorrow_strategy == STRATEGY_CREATE_HEADROOM
+            and not storm
+        )
+
         if ev_soc is None:
             ev_plan = "EV SOC unavailable"
         elif ev_home is False:
             ev_plan = "EV away"
         elif ev_soc >= ev_target - 1:
             ev_plan = "No charge needed"
+        elif tomorrow_strategy == STRATEGY_USE_DISCRETIONARY_LOADS:
+            ev_plan = "Charge during tomorrow solar window"
         elif solar_tomorrow is not None and solar_tomorrow >= strong_solar:
-            ev_plan = "Defer grid charging for solar"
+            ev_plan = "Defer grid charging pending solar plan"
         else:
             ev_plan = "Grid charge when convenient"
 
@@ -239,20 +347,21 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "projection_model": projection_model,
             "ev_soc": ev_soc,
             "ev_plan": ev_plan,
+            "tomorrow_plan_ready": tomorrow_plan_ready,
+            "tomorrow_strategy": tomorrow_strategy,
+            "tomorrow_strategy_reason": tomorrow_strategy_reason,
+            "required_headroom_tomorrow": required_headroom_tomorrow,
+            "headroom_margin_tomorrow": headroom_margin_tomorrow,
+            "headroom_shortfall_tomorrow": headroom_shortfall_tomorrow,
+            "recommended_overnight_discharge": recommended_overnight_discharge,
+            "projected_max_soc_tomorrow": projected_max_soc_tomorrow,
+            "projected_sunset_soc_tomorrow": projected_sunset_soc_tomorrow,
+            "predicted_export_tomorrow": predicted_export_tomorrow,
+            "predicted_grid_import_tomorrow": predicted_grid_import_tomorrow,
+            "discretionary_energy_tomorrow": discretionary_energy_tomorrow,
+            "tomorrow_projection_model": tomorrow_projection_model,
         }
 
     async def async_apply_headroom_policy(self) -> None:
-        await self.async_request_refresh()
-        data = self.data or {}
-        if not data.get("headroom_release"):
-            return
-
-        reserve_entity = self.cfg.get(CONF_BACKUP_RESERVE)
-        minimum = float(self.cfg.get(OPT_MIN_RESERVE, DEFAULT_MIN_RESERVE))
-        await self.hass.services.async_call(
-            "number",
-            "set_value",
-            {"entity_id": reserve_entity, "value": minimum},
-            blocking=True,
-        )
+        """Refresh advisory policy state without actuating devices in v0.1.6."""
         await self.async_request_refresh()
