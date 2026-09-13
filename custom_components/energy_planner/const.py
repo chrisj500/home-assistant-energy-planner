@@ -15,6 +15,8 @@ CONF_ACTUAL_SOLAR_POWER = "actual_solar_power_entity"
 CONF_SOLAR_REMAINING = "solar_remaining_entity"
 CONF_EXPECTED_LOAD_REMAINING = "expected_load_remaining_entity"
 CONF_SOLAR_PEAK_TIME = "solar_peak_time_entity"
+CONF_SOLAR_PEAK_TIME_TOMORROW = "solar_peak_time_tomorrow_entity"
+CONF_BASE_LOAD_POWER = "base_load_power_entity"
 CONF_EV_SOC = "ev_soc_entity"
 CONF_EV_HOME = "ev_home_entity"
 
@@ -25,6 +27,7 @@ OPT_EV_TARGET_SOC = "ev_target_soc"
 OPT_PREFERRED_IMPORT_W = "preferred_import_w"
 OPT_HARVEST_CAPTURE_FACTOR = "harvest_capture_factor"
 OPT_CHARGE_EFFICIENCY = "charge_efficiency"
+OPT_DISCRETIONARY_THRESHOLD_KWH = "discretionary_threshold_kwh"
 
 DEFAULT_WEIGHTS = "3,2,3"
 DEFAULT_CAPACITY_KWH = 49.152
@@ -34,3 +37,4 @@ DEFAULT_EV_TARGET_SOC = 100.0
 DEFAULT_PREFERRED_IMPORT_W = 250.0
 DEFAULT_HARVEST_CAPTURE_FACTOR = 0.88
 DEFAULT_CHARGE_EFFICIENCY = 0.90
+DEFAULT_DISCRETIONARY_THRESHOLD_KWH = 1.0

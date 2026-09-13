@@ -2,21 +2,36 @@
 
 Forecast-aware battery headroom and flexible-load planning for Home Assistant.
 
-## v0.1.0 scope
+## v0.1.6 scope
 
-The first release intentionally focuses on the slow planning/control layer rather than replacing fast device controllers.
+The current release keeps the planner as the slow, advisory planning layer rather than replacing fast device controllers.
 
 It provides:
 
 - Weighted whole-bank SOC from three battery SOC entities with configurable weights.
 - Stored battery energy and available battery headroom.
-- Upcoming solar forecast from Forecast.Solar-compatible entities.
-- Flat-rate solar-headroom control: when the next solar period is strong, an elevated backup reserve can be lowered back to the configured minimum to create room for solar.
-- Storm-warning interlock: reserve control is suppressed while the configured storm-warning binary sensor is active or unavailable.
-- EV SOC and a basic advisory EV charge plan.
+- Policy-aware projected sunset SOC that never assumes protected-daylight battery discharge.
+- A next-solar-period simulation using tomorrow's solar forecast, daylight window, base house load, battery headroom, charge efficiency, storm state, and optional EV availability.
+- Evening strategy recommendations: `HOLD`, `USE_DISCRETIONARY_LOADS`, `CREATE_HEADROOM`, `PRESERVE_FOR_RESILIENCE`, or `INSUFFICIENT_DATA`.
+- Required headroom, headroom margin/shortfall, projected maximum SOC tomorrow, projected export/import, discretionary energy, and recommended overnight discharge sensors.
+- EV guidance that prefers using otherwise-exported solar before deliberately cycling the stationary battery.
 - UI configuration and options; no YAML is required for the integration itself.
 
-The integration never raises backup reserve and never grid-charges the stationary battery.
+### Planning priorities
+
+The strategy engine is intentionally ordered around these goals:
+
+1. Minimize exported solar.
+2. Minimize grid purchases over the long term, not merely shift purchases between days.
+3. Preserve stored solar unless discharging creates useful headroom.
+4. Respect storm protection and the configured minimum backup reserve.
+5. Prefer discretionary loads such as EV charging before creating stationary-battery headroom when practical.
+
+The configured minimum reserve is a floor, not a routine overnight target.
+
+### Advisory-only control model
+
+v0.1.6 does **not** automatically change EcoFlow operating mode, discharge the battery, grid-charge the battery, or lower the backup reserve. It publishes planning intent and supporting metrics for validation first. The fast EcoFlow solar-surplus controller should remain responsible for real-time surplus capture.
 
 ## Installation with HACS
 
@@ -30,7 +45,7 @@ Until this repository is added to the default HACS store, add it as a custom rep
 
 ## Configuration
 
-The setup flow asks for:
+The setup flow asks for the core battery and forecast entities, including:
 
 - three battery SOC sensors
 - battery weights, such as `3,2,3`
@@ -39,14 +54,20 @@ The setup flow asks for:
 - backup-reserve number entity
 - storm-warning binary sensor
 - solar forecast for today and tomorrow
+- optional sunset-projection inputs
+- optional tomorrow solar peak-time sensor
+- expected/base house load power sensor for tomorrow planning
 - optional EV SOC and location entities
 
-Options provide:
+Options include:
 
-- automatic solar headroom on/off
 - minimum reserve percentage
-- strong-solar threshold in kWh
 - EV target SOC
+- solar-harvest preferred grid import
+- harvest capture factor
+- AC-to-battery charge efficiency
+- minimum predicted export before recommending discretionary loads
+- legacy strong-solar threshold retained for backward-compatible EV guidance
 
 ## Safety model
 
@@ -54,11 +75,13 @@ Priority is deliberately conservative:
 
 1. Native device safety / storm protection
 2. Minimum reserve protection
-3. Solar headroom optimization
-4. Flexible-load recommendations
+3. Preserve stored solar by default
+4. Reduce future solar export
+5. Flexible-load recommendations
+6. Headroom creation only when modeled storage capacity is insufficient
 
-If required control inputs are unavailable, the integration does nothing.
+If required tomorrow-planning inputs are unavailable, the strategy reports `INSUFFICIENT_DATA` rather than recommending discharge.
 
 ## Development
 
-`v0.1.0` is the first migration step from the existing Home Assistant YAML planner. The existing fast EcoFlow solar-surplus controller should remain in place during validation. Once values match the current dashboard, later releases can absorb additional forecast correction, daily accounting, HVAC/load prediction, and flexible-load actuation.
+The integration remains separate from the fast EcoFlow solar-surplus controller. A future control release can consume the validated strategy intent and translate it into explicit EcoFlow operating modes such as hold/preserve, solar capture, controlled headroom creation, or deliberate grid charge.
