@@ -123,12 +123,12 @@ def plan_solar_period(
     controller_settings: ControllerSettings | None = None,
     step_minutes: int = 1,
 ) -> SolarPeriodPlan:
-    """Plan one complete solar period using physical AC-flow constraints.
+    """Plan one complete solar period from physical AC-flow constraints.
 
-    ``harvest_capture_factor`` remains in the signature for config-entry
-    compatibility but is intentionally not used. Forecast derating is not a
-    physical export path: energy is exported only when the modeled controller,
-    battery capacity, or charging-power limits cannot absorb it.
+    ``harvest_capture_factor`` is retained only for config compatibility. It is
+    deliberately ignored: forecast uncertainty is not a physical export path.
+    Export is counted only when modeled solar cannot be absorbed after house
+    load because of battery capacity, charging-power, or controller behavior.
     """
     del harvest_capture_factor
 
@@ -190,7 +190,12 @@ def plan_solar_period(
     )
     charge_ceiling_kwh = sum(capacities) * charge_limit_pct / 100.0
     available_headroom_kwh = max(charge_ceiling_kwh - current_stored_kwh, 0.0)
-    required_headroom_kwh = unlimited.stored_charge_kwh
+
+    # Headroom is created only for solar-derived storage. The controller's
+    # preferred-import margin can cause a small amount of grid-to-battery AC;
+    # that is a diagnostic/control-tuning issue, never a reason to discharge
+    # stored solar in advance.
+    required_headroom_kwh = unlimited.solar_to_battery_ac_kwh * charge_efficiency
     headroom_margin_kwh = available_headroom_kwh - required_headroom_kwh
     headroom_shortfall_kwh = max(-headroom_margin_kwh, 0.0)
 
@@ -206,6 +211,7 @@ def plan_solar_period(
     capacity_export_material = (
         baseline.capacity_limited_export_kwh >= discretionary_threshold_kwh
     )
+    any_export_material = baseline.predicted_export_kwh >= discretionary_threshold_kwh
 
     strategy = STRATEGY_HOLD
     recommended_discharge_kwh = 0.0
@@ -219,52 +225,52 @@ def plan_solar_period(
     elif capacity_export_material and ev_discretionary_allowed and ev_available:
         strategy = STRATEGY_USE_DISCRETIONARY_LOADS
         reason = (
-            f"About {baseline.predicted_export_kwh:.2f} kWh is physically "
-            "at risk of export; a controllable EV/flexible load can be used "
-            "before cycling the stationary battery."
+            f"About {baseline.predicted_export_kwh:.2f} kWh is physically at "
+            "risk of export because storage capacity becomes limiting; a "
+            "reliably controllable EV/flexible load can be used before cycling "
+            "the stationary battery."
         )
     elif (
-        headroom_shortfall_kwh > 0.25
+        capacity_export_material
+        and headroom_shortfall_kwh > 0.25
         and allow_presolar_discharge
         and possible_discharge_kwh > 0.05
     ):
         strategy = STRATEGY_CREATE_HEADROOM
         recommended_discharge_kwh = possible_discharge_kwh
         reason = (
-            f"Battery headroom is short by {headroom_shortfall_kwh:.2f} kWh; "
+            f"Storage capacity would cause about "
+            f"{baseline.capacity_limited_export_kwh:.2f} kWh of export and "
+            f"solar headroom is short by {headroom_shortfall_kwh:.2f} kWh; "
             f"create no more than {recommended_discharge_kwh:.2f} kWh before "
             "the solar window while respecting the effective reserve floor."
         )
-    elif headroom_shortfall_kwh > 0.25 and not allow_presolar_discharge:
-        if baseline.predicted_export_kwh >= discretionary_threshold_kwh:
+    elif capacity_export_material and headroom_shortfall_kwh > 0.25:
+        if not allow_presolar_discharge:
             strategy = STRATEGY_USE_DISCRETIONARY_LOADS
             reason = (
-                f"About {baseline.predicted_export_kwh:.2f} kWh remains at "
-                "physical export risk; daylight discharge is prohibited, so "
-                "only a controllable flexible load should be considered."
+                f"Storage capacity may cause about "
+                f"{baseline.capacity_limited_export_kwh:.2f} kWh of export; "
+                "daylight battery discharge is prohibited, so use only a "
+                "reliably controllable flexible load if practical."
             )
         else:
             reason = (
-                "Additional headroom could help, but daylight battery discharge "
-                "is prohibited; preserve stored solar."
+                "Storage headroom would be useful, but the effective reserve "
+                "floor prevents a recommended discharge."
             )
-    elif headroom_shortfall_kwh > 0.25:
-        reason = (
-            "Additional headroom could help, but the effective reserve floor "
-            "prevents a recommended discharge."
-        )
-    elif baseline.predicted_export_kwh >= discretionary_threshold_kwh:
+    elif any_export_material:
         strategy = STRATEGY_USE_DISCRETIONARY_LOADS
         reason = (
             f"About {baseline.predicted_export_kwh:.2f} kWh remains at physical "
-            "export risk from controller/power constraints; use only a "
-            "controllable flexible load."
+            "export risk from charging-power/controller constraints rather than "
+            "storage capacity; use only a reliably controllable flexible load."
         )
     else:
         reason = (
-            f"Existing headroom exceeds modeled storage need by "
-            f"{max(headroom_margin_kwh, 0.0):.2f} kWh and physical export risk "
-            f"is only {baseline.predicted_export_kwh:.2f} kWh; preserve stored solar."
+            f"Physical export risk is only {baseline.predicted_export_kwh:.2f} "
+            "kWh. Existing headroom exceeds modeled solar-storage need by "
+            f"{max(headroom_margin_kwh, 0.0):.2f} kWh; preserve stored solar."
         )
 
     planned_socs = _discharge_banks(
