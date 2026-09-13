@@ -1,5 +1,5 @@
 DOMAIN = "energy_planner"
-PLATFORMS = ["sensor"]
+PLATFORMS = ["sensor", "binary_sensor"]
 
 CONF_SOC_1 = "soc_entity_1"
 CONF_SOC_2 = "soc_entity_2"
