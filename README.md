@@ -2,16 +2,16 @@
 
 Forecast-aware battery headroom and solar-export planning for Home Assistant.
 
-## v0.1.10 scope
+## v0.1.11 scope
 
 Energy Planner is the slow, advisory planning layer. The fast EcoFlow Solar Surplus integration remains responsible for real-time surplus capture.
 
-The planner is intentionally split into two layers:
+v0.1.11 keeps the v0.1.10 physical and confidence models intact and adds two deliberately conservative changes:
 
-1. **Physical forecast:** what the house, solar array, batteries, charge limits, and verified charging-power capability can physically absorb.
-2. **Confidence layer:** whether historical forecast performance supports taking a consequential action such as intentionally creating battery headroom.
+1. **Fresh pre-sunrise calibration snapshots.** The pending daylight forecast is refreshed during the pre-sunrise period and frozen only when the daylight sample actually starts.
+2. **Optional Forecast.Solar shadow evaluation.** A paid/trial API key can expose the richer interval forecast and Professional weather data for comparison, without changing any authoritative planning decision.
 
-This separation keeps forecast uncertainty from being misrepresented as grid export and prevents a single deterministic forecast from triggering unnecessary battery discharge.
+The planner remains fully functional with no Forecast.Solar API key or subscription. Missing, invalid, expired, rate-limited, or unavailable enhanced data falls back to the baseline planner for that refresh.
 
 ## Planning priorities
 
@@ -27,8 +27,6 @@ The strategy engine is ordered around these goals:
 The reserve is a floor, not a routine overnight target.
 
 ## Physical forecast model
-
-v0.1.9 removed the earlier controller-loop and generic-capture-factor assumptions. v0.1.10 keeps that physical model.
 
 During the protected solar window:
 
@@ -47,22 +45,94 @@ Forecast export exists only when solar surplus cannot physically be absorbed bec
 
 The planner reads the installed `ecoflow_solar_surplus` integration to determine whether capture control is active and to obtain the effective per-DPU charging-power ceiling. It does **not** try to predict the controller's second-by-second feedback trajectory.
 
-## Solar/load shape assumptions
+## Baseline solar/load shape assumptions
 
-The planner deliberately avoids false precision:
+The baseline model deliberately avoids false precision:
 
-- **Full-day solar:** an energy-conserving triangular curve uses the daily forecast total plus forecast peak time. Without a real interval solar forecast, inventing cloud detail would be less trustworthy.
+- **Full-day solar:** an energy-conserving triangular curve uses the daily forecast total plus forecast peak time.
 - **Full-day house load:** the configured representative/base-load sensor is used as the planning load.
 - **Live remaining-day forecast:** corrected solar remaining, current production, expected load to sunset, and current battery state drive the live sunset projection.
 - **Battery bank:** the three DPU stacks are simulated separately using configured capacity weights, so one stack can become full before the others.
 
+This remains the authoritative behavior even when the optional Forecast.Solar shadow is enabled.
+
+## Optional Forecast.Solar shadow evaluation
+
+A Forecast.Solar API key is optional. Add it in Energy Planner options only if you want to evaluate a paid/trial Forecast.Solar account.
+
+Without a valid key:
+
+- all normal Energy Planner forecasts continue to run;
+- strategy and headroom logic are unchanged;
+- the Forecast.Solar enhancement status reports baseline fallback; and
+- no paid feature is required for safe operation.
+
+With a valid key, v0.1.11 requests the authenticated Forecast.Solar production estimate and evaluates its interval `watts` series in **shadow mode**.
+
+### Why shadow mode
+
+The paid interval forecast is not allowed to drive strategy, discharge recommendations, or `Headroom Release Requested` in v0.1.11. We first want measured evidence that it improves forecast accuracy enough to justify a subscription.
+
+The shadow simulator uses the same:
+
+- current battery SOCs and bank capacities;
+- charge limit;
+- AC-to-battery efficiency;
+- expected house load to sunset; and
+- EcoFlow Solar Surplus physical charging capability
+
+as the baseline live projection.
+
+To isolate the value of the richer **time shape**, the paid interval curve is scaled to the existing corrected remaining-solar energy total. This means a comparison between baseline and shadow is primarily testing whether the real 15/30-minute Forecast.Solar shape improves the outcome versus the baseline geometric curve, rather than silently replacing the existing local solar-bias correction.
+
+Shadow diagnostics include:
+
+- Forecast.Solar enhancement/fallback status
+- detected account type
+- interval resolution
+- forecast horizon
+- number of interval points
+- paid raw remaining solar to sunset
+- shadow projected sunset SOC
+- shadow sunset-SOC delta versus baseline
+- shadow battery charge to sunset
+- shadow daylight grid import
+- shadow export
+- shadow energy scale factor
+
+### Professional weather data
+
+The verified Professional weather endpoint is also queried conservatively and remains diagnostic-only. Exposed values include:
+
+- current Forecast.Solar sky factor; the provider defines `1` as clear sky;
+- average sky factor for the next six hours; and
+- forecast temperature.
+
+The extra Professional capabilities for controllable-load time windows and theoretical clear-sky production are useful candidates for later evaluation, but v0.1.11 does **not** guess or depend on unverified endpoint/response schemas. They can be added after the live trial confirms their exact contract.
+
+### Failure behavior
+
+Enhanced Forecast.Solar failures must never make the baseline planner unavailable. Examples that cause transparent fallback include:
+
+- no API key;
+- malformed API key;
+- rejected/expired key;
+- rate limiting;
+- provider/network error;
+- missing interval forecast data; or
+- missing Forecast.Solar site/plane geometry.
+
+The API key is never exposed as a sensor value.
+
 ## Confidence calibration
 
-v0.1.10 adds persistent, evidence-based calibration for headroom decisions.
+v0.1.10 introduced persistent, evidence-based calibration for headroom decisions; v0.1.11 preserves that model.
 
 ### Daylight forecast-error history
 
 Before sunrise the planner stores its predicted battery stored-energy gain for the upcoming solar window. At sunset it compares that prediction with the actual stored-energy gain.
+
+v0.1.11 improves the sampling boundary: while still before sunrise, the pending forecast is refreshed with the latest valid prediction. Once daylight starts and the starting battery energy is recorded, that forecast is frozen for the day. This prevents calibration from scoring a stale forecast captured shortly after midnight when a newer pre-sunrise forecast was available.
 
 Each valid observation records:
 
@@ -99,7 +169,7 @@ After 10 observations in each stream, the planner uses empirical distribution ta
 
 ## No-regret headroom rule
 
-The economics are asymmetric: unnecessary battery discharge can lead to later grid purchases, while accepting some export during an uncertain forecast only loses otherwise-uncredited solar.
+The economics are asymmetric: unnecessary battery discharge can lead to later grid purchases, while accepting some export during an uncertain forecast only loses the value difference between self-consumed solar and export compensation.
 
 For that reason, the confidence layer intentionally requires overlap between two conservative conditions:
 
@@ -112,44 +182,20 @@ The confidence-adjusted recommendation is therefore normally smaller than the no
 
 ## Baseline vs planned forecast
 
-v0.1.10 explicitly separates:
+The planner explicitly separates:
 
 - **Baseline / unmitigated export:** what the point forecast predicts before any planner headroom action.
 - **Planned export:** what remains after the confidence-adjusted action, if one is justified.
 
 This prevents a strategy explanation such as "10 kWh would otherwise export" from appearing beside an unexplained zero-export sensor.
 
-## Key diagnostics
-
-The integration exposes, among others:
-
-- Forecast Calibration Status
-- Confidence Headroom Action Ready
-- Daylight Calibration Samples
-- Overnight Calibration Samples
-- Daylight Stored-Energy Forecast MAE / MAPE
-- No-Regret Headroom Factor
-- Median Overnight Battery Depletion Rate
-- No-Regret Overnight Battery Depletion Rate
-- Baseline Unmitigated Export Today / Next Day
-- Baseline Capacity-Limited Export Today / Next Day
-- Nominal Required Headroom / Margin / Shortfall
-- No-Regret Required / Available Headroom / Shortfall
-- Expected Natural Overnight Battery Depletion
-- No-Regret Natural Overnight Headroom Allowance
-- Confidence-Adjusted Discharge Before Next Day
-- Planned Solar Export Today / Next Day
-- Capacity-Limited, Power-Limited, and Control-Unavailable export components
-- Forecast Grid-to-Battery energy
-- Peak Unavoidable Export and duration
-
-Every material export forecast should therefore have an auditable physical cause.
-
 ## EV / flexible-load safety
 
 Solar EV advice is **disabled by default**. A large EV load without reliable start/stop control can easily turn a small export opportunity into material grid import.
 
 Enable EV solar-surplus recommendations only after reliable EV start/stop control exists. The Lexus should not be used merely because a point forecast predicts modest excess solar.
+
+Forecast.Solar Professional weather or interval data does not change this rule.
 
 ## Advisory-only control model
 
@@ -186,8 +232,9 @@ The setup flow asks for the core battery and forecast entities, including:
 - solar forecast for today and next day;
 - optional live sunset-projection inputs;
 - optional forecast peak-time sensors;
-- expected/base house load power sensor; and
-- optional EV SOC and location entities.
+- expected/base house load power sensor;
+- optional EV SOC and location entities; and
+- an optional Forecast.Solar API key used only for shadow evaluation.
 
 Options include:
 
@@ -210,5 +257,6 @@ Priority is deliberately conservative:
 4. Model physical export accurately
 5. Require measured forecast evidence before intentional headroom creation
 6. Flexible-load advice only for reliably controllable loads
+7. Treat paid Forecast.Solar data as optional evidence until it proves useful
 
-If required planning inputs are unavailable, the strategy reports `INSUFFICIENT_DATA` rather than recommending discharge.
+If required baseline planning inputs are unavailable, the strategy reports `INSUFFICIENT_DATA` rather than recommending discharge. Optional Forecast.Solar failures alone do not make baseline planning insufficient.
