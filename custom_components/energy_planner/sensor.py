@@ -242,7 +242,7 @@ SENSORS = (
     EnergyPlannerSensorDescription(
         key="rolling_ev_charge_power_w",
         data_key="rolling_ev_charge_power_w",
-        name="EV Learned Charge Power",
+        name="EV Charge Power",
         native_unit_of_measurement=UnitOfPower.WATT,
         device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
@@ -253,6 +253,27 @@ SENSORS = (
         data_key="rolling_ev_charge_power_samples",
         name="EV Charge Power Samples",
         state_class=SensorStateClass.MEASUREMENT,
+    ),
+    EnergyPlannerSensorDescription(
+        key="rolling_ev_charge_power_source",
+        data_key="rolling_ev_charge_power_source",
+        name="EV Charge Power Source",
+    ),
+    _energy(
+        "rolling_ev_wall_full_kwh",
+        "rolling_ev_wall_full_kwh",
+        "EV Learned Full-Range Wall Energy",
+    ),
+    EnergyPlannerSensorDescription(
+        key="rolling_ev_wall_full_samples",
+        data_key="rolling_ev_wall_full_samples",
+        name="EV Wall-Energy Learning Samples",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    EnergyPlannerSensorDescription(
+        key="rolling_ev_wall_full_source",
+        data_key="rolling_ev_wall_full_source",
+        name="EV Wall-Energy Estimate Source",
     ),
     _energy(
         "rolling_ev_recommended_energy_kwh",
@@ -283,6 +304,16 @@ SENSORS = (
         "rolling_ev_headroom_preserved_kwh",
         "rolling_ev_headroom_preserved_kwh",
         "Recommended EV Preserved Battery Headroom",
+    ),
+    _energy(
+        "rolling_ev_residual_headroom_shortfall_kwh",
+        "rolling_ev_residual_headroom_shortfall_kwh",
+        "Residual Headroom Shortfall After EV Charge",
+    ),
+    _energy(
+        "rolling_ev_residual_capacity_export_kwh",
+        "rolling_ev_residual_capacity_export_kwh",
+        "Residual Capacity Export After EV Charge",
     ),
     EnergyPlannerSensorDescription(
         key="rolling_ev_model",

@@ -6,6 +6,7 @@ from datetime import datetime, timedelta
 from typing import Any
 
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .const import (
@@ -38,6 +39,11 @@ from .const import (
     OPT_PREFERRED_IMPORT_W,
 )
 from .coordinator import EnergyPlannerCoordinator, _controller_settings, _num, _solar_window
+from .ev_learning import (
+    infer_wall_energy_full_kwh,
+    learned_wall_energy_full_kwh,
+    residual_after_ev_charge,
+)
 from .forecast_solar_shadow import (
     forecast_horizon_days,
     integrate_interval_energy_kwh,
@@ -65,6 +71,10 @@ _ESTIMATE_REFRESH = timedelta(minutes=30)
 _PROFESSIONAL_REFRESH = timedelta(minutes=30)
 _API_CALL_SPACING = timedelta(minutes=5)
 _REQUEST_TIMEOUT_SECONDS = 20
+_EV_LEARNING_STORE_VERSION = 1
+_MAX_EV_POWER_SAMPLES = 120
+_MAX_EV_ENERGY_SAMPLES = 20
+_MAX_SAMPLE_GAP_SECONDS = 300.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -104,7 +114,12 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
         self._professional_attempts: dict[str, datetime] = {}
         self._professional_entitled: bool | None = None
         self._active_api_key: str | None = None
-        self._ev_power_samples_w: list[float] = []
+        self._ev_learning_store: Store[dict[str, Any]] = Store(
+            hass,
+            _EV_LEARNING_STORE_VERSION,
+            f"energy_planner.{entry.entry_id}.ev_learning",
+        )
+        self._ev_learning_data: dict[str, Any] | None = None
 
     async def _capture_daylight_forecast(
         self,
@@ -138,10 +153,98 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
                 reason=f"enhancement_error:{type(err).__name__}"
             )
         try:
+            await self._update_ev_learning()
             rolling = self._rolling_ev_outputs(baseline)
         except Exception as err:  # Rolling advice is also non-authoritative.
             rolling = self._rolling_ev_fallback(f"rolling_error:{type(err).__name__}")
         return {**baseline, **enhancement, **rolling}
+
+    async def _ensure_ev_learning_data(self) -> dict[str, Any]:
+        if self._ev_learning_data is not None:
+            return self._ev_learning_data
+        loaded = await self._ev_learning_store.async_load()
+        if not isinstance(loaded, dict):
+            loaded = {}
+        self._ev_learning_data = {
+            "power_samples_w": list(loaded.get("power_samples_w", []))[-_MAX_EV_POWER_SAMPLES:],
+            "wall_full_samples_kwh": list(loaded.get("wall_full_samples_kwh", []))[-_MAX_EV_ENERGY_SAMPLES:],
+            "session": loaded.get("session") if isinstance(loaded.get("session"), dict) else None,
+        }
+        return self._ev_learning_data
+
+    async def _save_ev_learning_data(self) -> None:
+        if self._ev_learning_data is not None:
+            await self._ev_learning_store.async_save(self._ev_learning_data)
+
+    async def _update_ev_learning(self) -> None:
+        """Persist charge-power observations and learn wall kWh per EV SOC point."""
+        data = await self._ensure_ev_learning_data()
+        cfg = self.cfg
+        power_entity = cfg.get(CONF_EV_CHARGING_POWER)
+        if not power_entity:
+            return
+
+        now = dt_util.now()
+        power = _num(self.hass, power_entity)
+        ev_soc = _num(self.hass, cfg.get(CONF_EV_SOC))
+        session = data.get("session")
+        charging = power is not None and power >= 500.0
+        changed = False
+
+        if charging:
+            power_samples = [
+                float(value)
+                for value in data.get("power_samples_w", [])
+                if float(value) >= 500.0
+            ]
+            power_samples.append(float(power))
+            data["power_samples_w"] = power_samples[-_MAX_EV_POWER_SAMPLES:]
+            changed = True
+
+            if not isinstance(session, dict):
+                session = {
+                    "started_at": now.isoformat(),
+                    "start_soc_pct": ev_soc,
+                    "wall_energy_kwh": 0.0,
+                    "last_at": now.isoformat(),
+                    "last_power_w": float(power),
+                }
+            else:
+                last_at = dt_util.parse_datetime(str(session.get("last_at", "")))
+                try:
+                    last_power = float(session.get("last_power_w", power))
+                    wall_energy = float(session.get("wall_energy_kwh", 0.0))
+                except (TypeError, ValueError):
+                    last_power = float(power)
+                    wall_energy = 0.0
+                if last_at is not None:
+                    elapsed_s = max((now - last_at).total_seconds(), 0.0)
+                    if 0.0 < elapsed_s <= _MAX_SAMPLE_GAP_SECONDS:
+                        wall_energy += ((last_power + float(power)) / 2.0) * elapsed_s / 3_600_000.0
+                session["wall_energy_kwh"] = wall_energy
+                session["last_at"] = now.isoformat()
+                session["last_power_w"] = float(power)
+            data["session"] = session
+
+        elif isinstance(session, dict):
+            inferred = infer_wall_energy_full_kwh(
+                wall_energy_kwh=float(session.get("wall_energy_kwh", 0.0) or 0.0),
+                start_soc_pct=safe_float(session.get("start_soc_pct")),
+                end_soc_pct=ev_soc,
+            )
+            if inferred is not None:
+                energy_samples = [
+                    float(value)
+                    for value in data.get("wall_full_samples_kwh", [])
+                    if 5.0 <= float(value) <= 250.0
+                ]
+                energy_samples.append(inferred)
+                data["wall_full_samples_kwh"] = energy_samples[-_MAX_EV_ENERGY_SAMPLES:]
+            data["session"] = None
+            changed = True
+
+        if changed:
+            await self._save_ev_learning_data()
 
     def _fallback_shadow(self, *, reason: str) -> dict[str, Any]:
         return {
@@ -172,11 +275,17 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
             "forecast_solar_best_window_energy_kwh": None,
         }
 
-    def _rolling_ev_fallback(self, reason: str) -> dict[str, Any]:
+    def _rolling_ev_fallback(
+        self,
+        reason: str,
+        *,
+        planning_load_w: float | None = None,
+        planning_source: str = "unavailable",
+    ) -> dict[str, Any]:
         return {
             "rolling_ev_status": reason,
-            "rolling_planning_base_load_w": None,
-            "rolling_planning_base_load_source": "unavailable",
+            "rolling_planning_base_load_w": planning_load_w,
+            "rolling_planning_base_load_source": planning_source,
             "rolling_headroom_risk_date": "none",
             "rolling_headroom_shortfall_kwh": 0.0,
             "rolling_risk_projected_soc": None,
@@ -184,12 +293,18 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
             "rolling_ev_available_energy_kwh": None,
             "rolling_ev_charge_power_w": None,
             "rolling_ev_charge_power_samples": 0,
+            "rolling_ev_charge_power_source": "unavailable",
+            "rolling_ev_wall_full_kwh": None,
+            "rolling_ev_wall_full_samples": 0,
+            "rolling_ev_wall_full_source": "unavailable",
             "rolling_ev_recommended_energy_kwh": 0.0,
             "rolling_ev_window_start": None,
             "rolling_ev_window_end": None,
             "rolling_ev_window_solar_kwh": 0.0,
             "rolling_ev_window_grid_kwh": 0.0,
             "rolling_ev_headroom_preserved_kwh": 0.0,
+            "rolling_ev_residual_headroom_shortfall_kwh": 0.0,
+            "rolling_ev_residual_capacity_export_kwh": 0.0,
             "rolling_ev_model": "baseline_only",
         }
 
@@ -538,14 +653,26 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
             _num(self.hass, cfg.get(CONF_SOC_3)),
         )
         if any(value is None for value in soc_values):
-            return self._rolling_ev_fallback("battery_soc_unavailable")
+            return self._rolling_ev_fallback(
+                "battery_soc_unavailable",
+                planning_load_w=planning_load_w,
+                planning_source=planning_source,
+            )
         bank_socs = tuple(float(value) for value in soc_values if value is not None)
         if len(bank_socs) != 3:
-            return self._rolling_ev_fallback("battery_soc_unavailable")
+            return self._rolling_ev_fallback(
+                "battery_soc_unavailable",
+                planning_load_w=planning_load_w,
+                planning_source=planning_source,
+            )
 
         charge_limit = _num(self.hass, cfg.get(CONF_CHARGE_LIMIT))
         if charge_limit is None:
-            return self._rolling_ev_fallback("charge_limit_unavailable")
+            return self._rolling_ev_fallback(
+                "charge_limit_unavailable",
+                planning_load_w=planning_load_w,
+                planning_source=planning_source,
+            )
 
         weights = _parse_weights(cfg.get(CONF_SOC_WEIGHTS, DEFAULT_WEIGHTS))
         capacity = float(cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH))
@@ -591,11 +718,7 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
         )
         risk = first_headroom_risk(plans)
 
-        power_entity = cfg.get(CONF_EV_CHARGING_POWER)
-        current_ev_power = _num(self.hass, power_entity)
-        if current_ev_power is not None and current_ev_power >= 500.0:
-            self._ev_power_samples_w.append(float(current_ev_power))
-            self._ev_power_samples_w = self._ev_power_samples_w[-120:]
+        learning = self._ev_learning_data or {}
         fallback_power = float(
             cfg.get(
                 OPT_EV_FALLBACK_CHARGE_POWER_W,
@@ -603,16 +726,24 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
             )
         )
         ev_charge_power_w, power_samples = learned_charge_power_w(
-            self._ev_power_samples_w,
+            learning.get("power_samples_w", []),
             fallback_power,
         )
+        power_source = "learned" if power_samples > 0 else "configured_fallback"
+
+        fallback_full_kwh = float(cfg.get(OPT_EV_WALL_KWH_FULL, DEFAULT_EV_WALL_KWH_FULL))
+        ev_wall_full_kwh, wall_full_samples = learned_wall_energy_full_kwh(
+            learning.get("wall_full_samples_kwh", []),
+            fallback_full_kwh,
+        )
+        wall_full_source = "learned" if wall_full_samples > 0 else "configured_fallback"
 
         ev_soc = _num(self.hass, cfg.get(CONF_EV_SOC))
         ev_target = float(cfg.get(OPT_EV_TARGET_SOC, DEFAULT_EV_TARGET_SOC))
         ev_available_energy = ev_wall_energy_to_target_kwh(
             current_soc_pct=ev_soc,
             target_soc_pct=ev_target,
-            wall_kwh_full=float(cfg.get(OPT_EV_WALL_KWH_FULL, DEFAULT_EV_WALL_KWH_FULL)),
+            wall_kwh_full=ev_wall_full_kwh,
         )
         ev_home = None
         ev_home_entity = cfg.get(CONF_EV_HOME)
@@ -631,13 +762,19 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
             "rolling_ev_available_energy_kwh": ev_available_energy,
             "rolling_ev_charge_power_w": ev_charge_power_w,
             "rolling_ev_charge_power_samples": power_samples,
+            "rolling_ev_charge_power_source": power_source,
+            "rolling_ev_wall_full_kwh": ev_wall_full_kwh,
+            "rolling_ev_wall_full_samples": wall_full_samples,
+            "rolling_ev_wall_full_source": wall_full_source,
             "rolling_ev_recommended_energy_kwh": 0.0,
             "rolling_ev_window_start": None,
             "rolling_ev_window_end": None,
             "rolling_ev_window_solar_kwh": 0.0,
             "rolling_ev_window_grid_kwh": 0.0,
             "rolling_ev_headroom_preserved_kwh": 0.0,
-            "rolling_ev_model": "forecast_solar_paid_raw_rolling_v1",
+            "rolling_ev_residual_headroom_shortfall_kwh": 0.0,
+            "rolling_ev_residual_capacity_export_kwh": 0.0,
+            "rolling_ev_model": "forecast_solar_paid_raw_rolling_v2",
         }
         if risk is None:
             return output
@@ -649,6 +786,8 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
                 "rolling_headroom_shortfall_kwh": risk.headroom_shortfall_kwh,
                 "rolling_risk_projected_soc": risk.end_soc_pct,
                 "rolling_risk_export_kwh": risk.capacity_export_kwh,
+                "rolling_ev_residual_headroom_shortfall_kwh": risk.headroom_shortfall_kwh,
+                "rolling_ev_residual_capacity_export_kwh": risk.capacity_export_kwh,
             }
         )
 
@@ -690,6 +829,12 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
             output["rolling_ev_status"] = "headroom_risk_window_too_grid_heavy"
             return output
 
+        residual_headroom, residual_export = residual_after_ev_charge(
+            headroom_shortfall_kwh=risk.headroom_shortfall_kwh,
+            capacity_export_kwh=risk.capacity_export_kwh,
+            ev_solar_energy_kwh=window.solar_energy_kwh,
+            charge_efficiency=charge_efficiency,
+        )
         output.update(
             {
                 "rolling_ev_status": "charge_window_recommended",
@@ -699,6 +844,8 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
                 "rolling_ev_window_solar_kwh": window.solar_energy_kwh,
                 "rolling_ev_window_grid_kwh": window.grid_energy_kwh,
                 "rolling_ev_headroom_preserved_kwh": window.preserved_stationary_headroom_kwh,
+                "rolling_ev_residual_headroom_shortfall_kwh": residual_headroom,
+                "rolling_ev_residual_capacity_export_kwh": residual_export,
             }
         )
         return output
