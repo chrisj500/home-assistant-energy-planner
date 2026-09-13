@@ -102,12 +102,7 @@ def _allocate_solar_charge(
     maximum_rate_w: float,
     ignore_battery_capacity: bool,
 ) -> list[float]:
-    """Allocate solar-only AC charging to the lowest-SOC eligible banks.
-
-    This models what is physically absorbable. It intentionally ignores the
-    controller's transient mask/rate choreography; the real-time controller has
-    already demonstrated that it can track surplus closely when headroom exists.
-    """
+    """Allocate solar-only AC charging to the lowest-SOC eligible banks."""
     accepted = [0.0, 0.0, 0.0]
     remaining = max(float(requested_ac_kwh), 0.0)
     if remaining <= 0 or dt_h <= 0 or maximum_rate_w <= 0:
@@ -160,20 +155,15 @@ def simulate_energy_flow(
 ) -> SimulationResult:
     """Forecast protected-daytime AC flows from physical constraints.
 
-    Governing policy:
-    - Solar serves house load first.
-    - The stationary battery never discharges during the solar window.
-    - Only true solar surplus may charge the battery.
-    - Grid import is therefore house-load deficit only; the planner never
-      manufactures grid-to-battery charging from a controller setpoint.
-    - Export exists only when solar surplus cannot be absorbed because the
-      controller is unavailable, charging power is insufficient, or storage
-      capacity is exhausted.
-    - Charge-efficiency losses are consumed by charging and are never export.
+    Solar serves house load first. The stationary battery never discharges in
+    the solar window. Only true solar surplus may charge the battery. Grid import
+    is therefore house-load deficit only, and charge-efficiency losses are never
+    reclassified as export.
 
-    The fast Solar Surplus integration remains responsible for second-by-second
-    control. Routine controller leakage is intentionally assumed to be zero until
-    enough measured history exists to justify an empirical residual model.
+    Export exists only when surplus cannot be absorbed because the capture
+    controller is unavailable, aggregate charge power is insufficient, or
+    storage capacity is exhausted. Routine control-loop leakage is assumed zero
+    until measured history justifies an empirical residual model.
     """
     duration_h = max(float(duration_h), 0.0)
     average_load_kw = max(float(average_load_kw), 0.0)
@@ -198,7 +188,6 @@ def simulate_energy_flow(
     stored_charge_kwh = 0.0
     battery_ac_charge_kwh = 0.0
     solar_to_battery_ac_kwh = 0.0
-    # By policy, the forecast model never schedules grid energy into batteries.
     grid_to_battery_ac_kwh = 0.0
     predicted_export_kwh = 0.0
     predicted_grid_import_kwh = 0.0
@@ -211,6 +200,7 @@ def simulate_energy_flow(
     step_h = step_minutes / 60.0
     elapsed_h = 0.0
     maximum_rate_w = max(float(controller.maximum_rate_w), 0.0)
+    aggregate_charge_ceiling_w = maximum_rate_w * 3.0
 
     while elapsed_h < duration_h - 1e-9:
         dt_h = min(step_h, duration_h - elapsed_h)
@@ -222,15 +212,6 @@ def simulate_energy_flow(
         natural_surplus_w = max(solar_w - load_w, 0.0)
         natural_surplus_kwh = natural_surplus_w / 1000.0 * dt_h
         predicted_grid_import_kwh += house_deficit_w / 1000.0 * dt_h
-
-        if ignore_battery_capacity:
-            eligible_count = 3
-        else:
-            eligible_count = sum(
-                1
-                for index in range(3)
-                if stored[index] < charge_ceiling[index] - 1e-9
-            )
 
         if natural_surplus_kwh <= 0:
             elapsed_h += dt_h
@@ -244,15 +225,17 @@ def simulate_energy_flow(
             elapsed_h += dt_h
             continue
 
-        physical_charge_ceiling_w = maximum_rate_w * eligible_count
+        # Power limitation is based on installed aggregate charge capability,
+        # not how many banks currently have headroom. If a bank is full, the
+        # resulting unabsorbed energy is a capacity constraint, not a power one.
         power_limited_w = max(
-            natural_surplus_w - physical_charge_ceiling_w,
+            natural_surplus_w - aggregate_charge_ceiling_w,
             0.0,
         )
         power_limited_kwh = power_limited_w / 1000.0 * dt_h
         power_limited_export_kwh += power_limited_kwh
 
-        requested_charge_w = min(natural_surplus_w, physical_charge_ceiling_w)
+        requested_charge_w = min(natural_surplus_w, aggregate_charge_ceiling_w)
         requested_charge_kwh = requested_charge_w / 1000.0 * dt_h
         accepted_by_bank = _allocate_solar_charge(
             requested_ac_kwh=requested_charge_kwh,
