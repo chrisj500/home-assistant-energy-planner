@@ -14,6 +14,8 @@ STRATEGY_INSUFFICIENT_DATA = "INSUFFICIENT_DATA"
 class SolarPeriodPlan:
     strategy: str
     reason: str
+    starting_soc_pct: float
+    planned_start_soc_pct: float
     projected_max_soc_pct: float
     projected_sunset_soc_pct: float
     projected_charge_kwh: float
@@ -28,6 +30,15 @@ class SolarPeriodPlan:
     daylight_hours: float
     average_load_kw: float
     model: str
+
+
+@dataclass(frozen=True, slots=True)
+class _Simulation:
+    projected_stored_kwh: float
+    projected_charge_kwh: float
+    predicted_export_kwh: float
+    predicted_grid_import_kwh: float
+    required_headroom_kwh: float
 
 
 def _clamp(value: float, minimum: float, maximum: float) -> float:
@@ -52,14 +63,16 @@ def plan_solar_period(
     ev_target_soc_pct: float = 100.0,
     ev_home: bool | None = None,
     discretionary_threshold_kwh: float = 1.0,
+    allow_presolar_discharge: bool = True,
     step_minutes: int = 5,
 ) -> SolarPeriodPlan:
-    """Plan one complete solar period without routine battery discharge.
+    """Plan one complete solar period.
 
     Solar serves house load first. Only modeled AC surplus is available to
-    charge the stationary battery. A battery discharge is recommended only
-    when storage headroom is expected to be insufficient, the reserve floor
-    allows it, and a concrete EV opportunity is not preferred first.
+    charge the stationary battery. Stored solar is preserved by default.
+    Pre-solar discharge is recommended only when storage headroom is genuinely
+    insufficient, the reserve floor allows it, and an available EV is not a
+    better first use of otherwise-exported solar.
     """
     capacity_kwh = max(float(capacity_kwh), 0.001)
     current_soc_pct = _clamp(float(current_soc_pct), 0.0, 100.0)
@@ -94,66 +107,78 @@ def plan_solar_period(
         else 0.0
     )
 
-    projected_stored_kwh = min(stored_kwh, charge_ceiling_kwh)
-    projected_charge_kwh = 0.0
-    predicted_export_kwh = 0.0
-    predicted_grid_import_kwh = 0.0
-    required_headroom_kwh = 0.0
+    def _simulate(starting_stored_kwh: float) -> _Simulation:
+        projected_stored_kwh = min(starting_stored_kwh, charge_ceiling_kwh)
+        projected_charge_kwh = 0.0
+        predicted_export_kwh = 0.0
+        predicted_grid_import_kwh = 0.0
+        required_headroom_kwh = 0.0
 
-    step_h = step_minutes / 60.0
-    elapsed_h = 0.0
-    while elapsed_h < daylight_hours - 1e-9:
-        dt_h = min(step_h, daylight_hours - elapsed_h)
-        midpoint_h = elapsed_h + dt_h / 2.0
+        step_h = step_minutes / 60.0
+        elapsed_h = 0.0
+        while elapsed_h < daylight_hours - 1e-9:
+            dt_h = min(step_h, daylight_hours - elapsed_h)
+            midpoint_h = elapsed_h + dt_h / 2.0
 
-        if midpoint_h <= peak_elapsed_h:
-            solar_kw = (
-                peak_kw * midpoint_h / peak_elapsed_h
-                if peak_elapsed_h > 0
-                else peak_kw
-            )
-        else:
-            tail_h = daylight_hours - peak_elapsed_h
-            solar_kw = (
-                peak_kw * (daylight_hours - midpoint_h) / tail_h
-                if tail_h > 0
-                else 0.0
-            )
+            if midpoint_h <= peak_elapsed_h:
+                solar_kw = (
+                    peak_kw * midpoint_h / peak_elapsed_h
+                    if peak_elapsed_h > 0
+                    else peak_kw
+                )
+            else:
+                tail_h = daylight_hours - peak_elapsed_h
+                solar_kw = (
+                    peak_kw * (daylight_hours - midpoint_h) / tail_h
+                    if tail_h > 0
+                    else 0.0
+                )
 
-        net_kw = solar_kw - average_load_kw
-        if net_kw > 0:
-            surplus_ac_kwh = net_kw * dt_h
-            battery_eligible_ac_kwh = surplus_ac_kwh * harvest_capture_factor
-            potential_stored_kwh = battery_eligible_ac_kwh * charge_efficiency
-            required_headroom_kwh += potential_stored_kwh
+            net_kw = solar_kw - average_load_kw
+            if net_kw > 0:
+                surplus_ac_kwh = net_kw * dt_h
+                battery_eligible_ac_kwh = surplus_ac_kwh * harvest_capture_factor
+                potential_stored_kwh = battery_eligible_ac_kwh * charge_efficiency
+                required_headroom_kwh += potential_stored_kwh
 
-            headroom_left_kwh = max(
-                charge_ceiling_kwh - projected_stored_kwh, 0.0
-            )
-            accepted_stored_kwh = min(
-                potential_stored_kwh, headroom_left_kwh
-            )
-            projected_stored_kwh += accepted_stored_kwh
-            projected_charge_kwh += accepted_stored_kwh
+                headroom_left_kwh = max(
+                    charge_ceiling_kwh - projected_stored_kwh, 0.0
+                )
+                accepted_stored_kwh = min(
+                    potential_stored_kwh, headroom_left_kwh
+                )
+                projected_stored_kwh += accepted_stored_kwh
+                projected_charge_kwh += accepted_stored_kwh
 
-            accepted_ac_kwh = (
-                accepted_stored_kwh / charge_efficiency
-                if charge_efficiency > 0
-                else 0.0
-            )
-            predicted_export_kwh += max(
-                surplus_ac_kwh - accepted_ac_kwh, 0.0
-            )
-        else:
-            predicted_grid_import_kwh += -net_kw * dt_h
+                accepted_ac_kwh = (
+                    accepted_stored_kwh / charge_efficiency
+                    if charge_efficiency > 0
+                    else 0.0
+                )
+                predicted_export_kwh += max(
+                    surplus_ac_kwh - accepted_ac_kwh, 0.0
+                )
+            else:
+                predicted_grid_import_kwh += -net_kw * dt_h
 
-        elapsed_h += dt_h
+            elapsed_h += dt_h
 
+        return _Simulation(
+            projected_stored_kwh=projected_stored_kwh,
+            projected_charge_kwh=projected_charge_kwh,
+            predicted_export_kwh=predicted_export_kwh,
+            predicted_grid_import_kwh=predicted_grid_import_kwh,
+            required_headroom_kwh=required_headroom_kwh,
+        )
+
+    baseline = _simulate(stored_kwh)
+    required_headroom_kwh = baseline.required_headroom_kwh
     headroom_margin_kwh = available_headroom_kwh - required_headroom_kwh
     headroom_shortfall_kwh = max(-headroom_margin_kwh, 0.0)
+
     reserve_floor_kwh = capacity_kwh * minimum_reserve_pct / 100.0
     stored_above_reserve_kwh = max(stored_kwh - reserve_floor_kwh, 0.0)
-    recommended_discharge_kwh = min(
+    possible_discharge_kwh = min(
         headroom_shortfall_kwh, stored_above_reserve_kwh
     )
 
@@ -162,73 +187,90 @@ def plan_solar_period(
         and float(ev_soc_pct) < float(ev_target_soc_pct) - 1.0
     )
     ev_available = ev_home is not False and ev_needs_charge
-    discretionary_energy_kwh = (
-        predicted_export_kwh
-        if predicted_export_kwh >= discretionary_threshold_kwh
-        else 0.0
-    )
+
+    strategy = STRATEGY_HOLD
+    recommended_discharge_kwh = 0.0
 
     if storm_active:
         strategy = STRATEGY_PRESERVE_FOR_RESILIENCE
-        recommended_discharge_kwh = 0.0
         reason = (
             "Storm protection is active; preserve stored energy and do not "
             "create headroom."
         )
     elif (
-        headroom_shortfall_kwh > 0.25
+        baseline.predicted_export_kwh >= discretionary_threshold_kwh
         and ev_available
-        and predicted_export_kwh >= discretionary_threshold_kwh
     ):
         strategy = STRATEGY_USE_DISCRETIONARY_LOADS
-        recommended_discharge_kwh = 0.0
         reason = (
-            f"About {predicted_export_kwh:.2f} kWh may otherwise export; "
-            "use the EV or another flexible load before cycling the stationary "
-            "battery."
+            f"About {baseline.predicted_export_kwh:.2f} kWh may otherwise "
+            "export; use the EV or another flexible load in the solar window."
         )
-    elif headroom_shortfall_kwh > 0.25 and recommended_discharge_kwh > 0.05:
+    elif (
+        headroom_shortfall_kwh > 0.25
+        and allow_presolar_discharge
+        and possible_discharge_kwh > 0.05
+    ):
         strategy = STRATEGY_CREATE_HEADROOM
+        recommended_discharge_kwh = possible_discharge_kwh
         reason = (
             f"Battery headroom is short by {headroom_shortfall_kwh:.2f} kWh; "
-            f"create no more than {recommended_discharge_kwh:.2f} kWh while "
-            "respecting the reserve floor."
+            f"create no more than {recommended_discharge_kwh:.2f} kWh before "
+            "the solar window while respecting the reserve floor."
         )
+    elif headroom_shortfall_kwh > 0.25 and not allow_presolar_discharge:
+        if baseline.predicted_export_kwh >= discretionary_threshold_kwh:
+            strategy = STRATEGY_USE_DISCRETIONARY_LOADS
+            reason = (
+                f"About {baseline.predicted_export_kwh:.2f} kWh may otherwise "
+                "export; daylight is underway, so preserve the stationary "
+                "battery and use a flexible load if practical."
+            )
+        else:
+            reason = (
+                "Additional headroom may be useful, but daylight discharge is "
+                "not allowed; preserve stored solar."
+            )
     elif headroom_shortfall_kwh > 0.25:
-        strategy = STRATEGY_HOLD
-        recommended_discharge_kwh = 0.0
         reason = (
             "Additional headroom may be useful, but the reserve floor prevents "
             "a recommended battery discharge."
         )
-    elif (
-        predicted_export_kwh >= discretionary_threshold_kwh
-        and ev_available
-    ):
-        strategy = STRATEGY_USE_DISCRETIONARY_LOADS
-        recommended_discharge_kwh = 0.0
-        reason = (
-            f"About {predicted_export_kwh:.2f} kWh may otherwise export; "
-            "schedule the EV or another flexible load in the solar window."
-        )
     else:
-        strategy = STRATEGY_HOLD
-        recommended_discharge_kwh = 0.0
         reason = (
             f"Existing headroom exceeds modeled storage need by "
             f"{max(headroom_margin_kwh, 0.0):.2f} kWh; preserve stored solar."
         )
 
-    projected_soc_pct = 100.0 * projected_stored_kwh / capacity_kwh
+    planned_start_stored_kwh = max(
+        stored_kwh - recommended_discharge_kwh, reserve_floor_kwh
+    )
+    planned_start_soc_pct = 100.0 * planned_start_stored_kwh / capacity_kwh
+    final_simulation = (
+        _simulate(planned_start_stored_kwh)
+        if recommended_discharge_kwh > 0
+        else baseline
+    )
+
+    discretionary_energy_kwh = (
+        final_simulation.predicted_export_kwh
+        if final_simulation.predicted_export_kwh >= discretionary_threshold_kwh
+        else 0.0
+    )
+    projected_soc_pct = (
+        100.0 * final_simulation.projected_stored_kwh / capacity_kwh
+    )
 
     return SolarPeriodPlan(
         strategy=strategy,
         reason=reason,
+        starting_soc_pct=current_soc_pct,
+        planned_start_soc_pct=planned_start_soc_pct,
         projected_max_soc_pct=projected_soc_pct,
         projected_sunset_soc_pct=projected_soc_pct,
-        projected_charge_kwh=projected_charge_kwh,
-        predicted_export_kwh=predicted_export_kwh,
-        predicted_grid_import_kwh=predicted_grid_import_kwh,
+        projected_charge_kwh=final_simulation.projected_charge_kwh,
+        predicted_export_kwh=final_simulation.predicted_export_kwh,
+        predicted_grid_import_kwh=final_simulation.predicted_grid_import_kwh,
         required_headroom_kwh=required_headroom_kwh,
         available_headroom_kwh=available_headroom_kwh,
         headroom_margin_kwh=headroom_margin_kwh,
