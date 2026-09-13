@@ -16,60 +16,63 @@ def classify_ev_charging_outlook(
     reference_date: date,
     risk_date: date | None,
     best_solar_fraction: float | None,
+    surplus_next_3d_kwh: float = 0.0,
+    surplus_horizon_kwh: float = 0.0,
 ) -> EvChargingOutlook:
-    """Return a simple green/yellow/red EV charging recommendation.
+    """Return a simple green/yellow/red strategic EV charging recommendation.
 
-    Green means charging is strategically useful because a material stationary-
-    battery headroom problem is approaching within roughly two days and a strong
-    solar-rich EV window exists. Yellow means charging is acceptable but timing
-    matters. Red means there is no modeled headroom need and the best available
-    solar opportunity is weak enough that charging is likely to lean on the grid.
+    The traffic light is intentionally broader than the preferred charge window:
+    green means EV charging is strategically useful because material solar
+    headroom pressure is approaching within roughly two days; yellow means the
+    outlook is mixed or the need is farther away; red means no material headroom
+    pressure is forecast and the rolling solar outlook is weak enough that grid
+    energy is likely to dominate discretionary charging.
     """
     fraction = None
     if best_solar_fraction is not None:
         fraction = min(max(float(best_solar_fraction), 0.0), 1.0)
+    next_3d = max(float(surplus_next_3d_kwh), 0.0)
+    horizon = max(float(surplus_horizon_kwh), 0.0)
 
     if risk_date is not None:
         days = max((risk_date - reference_date).days, 0)
-        if days <= 2 and fraction is not None and fraction >= 0.80:
+        if days <= 2:
+            solar_text = (
+                f" Preferred EV window is about {fraction * 100:.0f}% solar."
+                if fraction is not None
+                else ""
+            )
             return EvChargingOutlook(
                 status="green",
                 reason=(
-                    f"Stationary-battery headroom pressure is forecast in {days} day(s), "
-                    f"and the preferred EV window is about {fraction * 100:.0f}% solar."
-                ),
-                days_to_risk=days,
-            )
-        if days <= 2:
-            solar_text = (
-                f"The best EV window is only about {fraction * 100:.0f}% solar."
-                if fraction is not None
-                else "No strong solar-rich EV window is currently available."
-            )
-            return EvChargingOutlook(
-                status="yellow",
-                reason=(
-                    f"Headroom pressure is forecast within {days} day(s), but charging "
-                    f"is constrained. {solar_text}"
+                    f"Stationary-battery headroom pressure is forecast in {days} day(s); "
+                    "using the EV as a flexible load is strategically useful."
+                    f"{solar_text}"
                 ),
                 days_to_risk=days,
             )
         return EvChargingOutlook(
             status="yellow",
             reason=(
-                f"A stationary-battery headroom risk is forecast in {days} day(s). "
-                "Charging can be useful, but preserving EV flexibility for a better "
-                "solar window is preferred."
+                f"A stationary-battery headroom risk is forecast in {days} day(s), but "
+                "the need is not immediate. Preserve some EV flexibility for later "
+                "solar-rich windows."
             ),
             days_to_risk=days,
         )
 
-    if fraction is not None and fraction >= 0.40:
+    if next_3d >= 5.0 or horizon >= 10.0 or (fraction is not None and fraction >= 0.40):
+        details = []
+        if next_3d > 0:
+            details.append(f"about {next_3d:.1f} kWh of modeled solar surplus in the next 3 days")
+        if fraction is not None:
+            details.append(f"best EV window about {fraction * 100:.0f}% solar")
+        suffix = "; ".join(details) if details else "some usable solar opportunity remains"
         return EvChargingOutlook(
             status="yellow",
             reason=(
-                "No material stationary-battery headroom risk is forecast, but a mixed "
-                f"solar charging opportunity exists at about {fraction * 100:.0f}% solar."
+                "No material stationary-battery headroom risk is forecast, so charging "
+                f"is optional rather than urgent; {suffix}."
             ),
             days_to_risk=None,
         )
@@ -82,8 +85,8 @@ def classify_ev_charging_outlook(
     return EvChargingOutlook(
         status="red",
         reason=(
-            "No material stationary-battery headroom risk is forecast and the solar "
-            f"outlook is weak for EV charging. {solar_text}"
+            "No material stationary-battery headroom risk is forecast and the rolling "
+            f"solar outlook is weak for discretionary EV charging. {solar_text}"
         ),
         days_to_risk=None,
     )
