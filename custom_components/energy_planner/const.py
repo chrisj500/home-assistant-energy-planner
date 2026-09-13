@@ -19,6 +19,7 @@ CONF_SOLAR_PEAK_TIME_TOMORROW = "solar_peak_time_tomorrow_entity"
 CONF_BASE_LOAD_POWER = "base_load_power_entity"
 CONF_EV_SOC = "ev_soc_entity"
 CONF_EV_HOME = "ev_home_entity"
+CONF_FORECAST_SOLAR_API_KEY = "forecast_solar_api_key"
 
 OPT_AUTO_HEADROOM = "auto_headroom"
 OPT_MIN_RESERVE = "minimum_reserve"

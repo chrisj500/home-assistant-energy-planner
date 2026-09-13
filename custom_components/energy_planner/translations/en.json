@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Configure Energy Planner",
-        "description": "Select the Home Assistant entities used by the planner. Live sunset and rolling Today/Next Day forecasts use the installed EcoFlow Solar Surplus controller settings when available.",
+        "description": "Select the Home Assistant entities used by the planner. Live sunset and rolling Today/Next Day forecasts use the installed EcoFlow Solar Surplus controller settings when available. A Forecast.Solar API key is optional and is used only for shadow evaluation; baseline planning remains authoritative without it.",
         "data": {
           "name": "Name",
           "soc_entity_1": "Battery SOC 1",
@@ -24,7 +24,8 @@
           "solar_peak_time_tomorrow_entity": "Forecast solar peak time tomorrow",
           "base_load_power_entity": "Expected/base house load power (W)",
           "ev_soc_entity": "EV state of charge (optional)",
-          "ev_home_entity": "EV location tracker (optional)"
+          "ev_home_entity": "EV location tracker (optional)",
+          "forecast_solar_api_key": "Forecast.Solar API key for optional shadow evaluation"
         }
       }
     }
@@ -52,6 +53,7 @@
           "base_load_power_entity": "Expected/base house load power (W)",
           "ev_soc_entity": "EV state of charge (optional)",
           "ev_home_entity": "EV location tracker (optional)",
+          "forecast_solar_api_key": "Forecast.Solar API key for optional shadow evaluation",
           "auto_headroom": "Expose create-headroom advisory flag",
           "minimum_reserve": "Minimum backup reserve (%)",
           "strong_solar_kwh": "Legacy strong solar threshold (kWh)",
