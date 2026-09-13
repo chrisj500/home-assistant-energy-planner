@@ -36,8 +36,7 @@ class SolarPeriodStrategyTests(unittest.TestCase):
             "controller_settings": ControllerSettings(source="test"),
         }
 
-    def test_plenty_of_headroom_does_not_invent_twelve_percent_export(self) -> None:
-        """Regression for the v0.1.7 0.88-capture-factor export bug."""
+    def test_plenty_of_headroom_means_zero_unavoidable_export(self) -> None:
         result = plan_solar_period(
             **self.common,
             current_soc_pct=22.28,
@@ -53,8 +52,9 @@ class SolarPeriodStrategyTests(unittest.TestCase):
         self.assertEqual(result.strategy, STRATEGY_HOLD)
         self.assertEqual(result.recommended_overnight_discharge_kwh, 0.0)
         self.assertGreater(result.headroom_margin_kwh, 5.0)
-        self.assertLess(result.predicted_export_kwh, 1.0)
+        self.assertAlmostEqual(result.predicted_export_kwh, 0.0, places=6)
         self.assertEqual(result.discretionary_energy_kwh, 0.0)
+        self.assertEqual(result.grid_to_battery_ac_kwh, 0.0)
 
     def test_harvest_factor_is_not_physical_export_or_soc_loss(self) -> None:
         kwargs = dict(
@@ -70,6 +70,35 @@ class SolarPeriodStrategyTests(unittest.TestCase):
         self.assertAlmostEqual(low.predicted_export_kwh, high.predicted_export_kwh, places=8)
         self.assertAlmostEqual(low.projected_sunset_soc_pct, high.projected_sunset_soc_pct, places=8)
         self.assertAlmostEqual(low.required_headroom_kwh, high.required_headroom_kwh, places=8)
+
+    def test_preferred_import_setting_does_not_change_energy_forecast(self) -> None:
+        kwargs = dict(
+            sunrise=self.sunrise,
+            sunset=self.sunset,
+            current_soc_pct=30,
+            bank_socs_pct=(30, 30, 30),
+            capacity_kwh=49.152,
+            charge_limit_pct=100,
+            minimum_reserve_pct=10,
+            solar_forecast_kwh=40,
+            base_load_power_w=2400,
+            peak_time=self.peak,
+            charge_efficiency=0.90,
+            bank_capacities_kwh=self.capacities,
+        )
+        low = plan_solar_period(
+            **kwargs,
+            controller_settings=ControllerSettings(preferred_import_w=0, source="test"),
+        )
+        high = plan_solar_period(
+            **kwargs,
+            controller_settings=ControllerSettings(preferred_import_w=1000, source="test"),
+        )
+        self.assertEqual(low.grid_to_battery_ac_kwh, 0.0)
+        self.assertEqual(high.grid_to_battery_ac_kwh, 0.0)
+        self.assertAlmostEqual(low.predicted_export_kwh, high.predicted_export_kwh, places=8)
+        self.assertAlmostEqual(low.predicted_grid_import_kwh, high.predicted_grid_import_kwh, places=8)
+        self.assertAlmostEqual(low.projected_sunset_soc_pct, high.projected_sunset_soc_pct, places=8)
 
     def test_near_full_battery_recommends_only_actual_missing_headroom(self) -> None:
         result = plan_solar_period(
@@ -152,6 +181,18 @@ class SolarPeriodStrategyTests(unittest.TestCase):
 
         self.assertEqual(result.strategy, STRATEGY_PRESERVE_FOR_RESILIENCE)
         self.assertEqual(result.recommended_overnight_discharge_kwh, 0.0)
+
+    def test_disabled_controller_does_not_trigger_battery_cycling(self) -> None:
+        result = plan_solar_period(
+            **{**self.common, "controller_settings": ControllerSettings(enabled=False, source="test")},
+            current_soc_pct=30,
+            bank_socs_pct=(30, 30, 30),
+            solar_forecast_kwh=45,
+            base_load_power_w=1800,
+        )
+        self.assertEqual(result.strategy, STRATEGY_HOLD)
+        self.assertEqual(result.recommended_overnight_discharge_kwh, 0.0)
+        self.assertGreater(result.control_limited_export_kwh, 1.0)
 
 
 if __name__ == "__main__":
