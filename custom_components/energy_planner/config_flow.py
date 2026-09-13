@@ -15,6 +15,7 @@ from .const import (
     CONF_EV_HOME,
     CONF_EV_SOC,
     CONF_EXPECTED_LOAD_REMAINING,
+    CONF_FORECAST_SOLAR_API_KEY,
     CONF_SOC_1,
     CONF_SOC_2,
     CONF_SOC_3,
@@ -49,6 +50,9 @@ SENSOR_SELECTOR = selector.EntitySelector(selector.EntitySelectorConfig(domain="
 NUMBER_SELECTOR = selector.EntitySelector(selector.EntitySelectorConfig(domain="number"))
 BINARY_SELECTOR = selector.EntitySelector(selector.EntitySelectorConfig(domain="binary_sensor"))
 TRACKER_SELECTOR = selector.EntitySelector(selector.EntitySelectorConfig(domain="device_tracker"))
+API_KEY_SELECTOR = selector.TextSelector(
+    selector.TextSelectorConfig(type=selector.TextSelectorType.PASSWORD)
+)
 
 
 class EnergyPlannerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -82,6 +86,7 @@ class EnergyPlannerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_BASE_LOAD_POWER): SENSOR_SELECTOR,
                 vol.Optional(CONF_EV_SOC): SENSOR_SELECTOR,
                 vol.Optional(CONF_EV_HOME): TRACKER_SELECTOR,
+                vol.Optional(CONF_FORECAST_SOLAR_API_KEY): API_KEY_SELECTOR,
             }
         )
         return self.async_show_form(step_id="user", data_schema=schema)
@@ -159,6 +164,10 @@ class EnergyPlannerOptionsFlow(config_entries.OptionsFlow):
                 ): SENSOR_SELECTOR,
                 vol.Optional(CONF_EV_SOC, default=current.get(CONF_EV_SOC)): SENSOR_SELECTOR,
                 vol.Optional(CONF_EV_HOME, default=current.get(CONF_EV_HOME)): TRACKER_SELECTOR,
+                vol.Optional(
+                    CONF_FORECAST_SOLAR_API_KEY,
+                    default=str(current.get(CONF_FORECAST_SOLAR_API_KEY, "") or ""),
+                ): API_KEY_SELECTOR,
                 vol.Optional(
                     OPT_AUTO_HEADROOM,
                     default=bool(current.get(OPT_AUTO_HEADROOM, False)),
