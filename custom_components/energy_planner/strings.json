@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Configure Energy Planner",
-        "description": "Select the Home Assistant entities used by the planner. Sunset projection and tomorrow-strategy sources are optional for upgrades but are required for their respective forecasts.",
+        "description": "Select the Home Assistant entities used by the planner. Live sunset and rolling Today/Next Day forecasts use the installed EcoFlow Solar Surplus controller settings when available.",
         "data": {
           "name": "Name",
           "soc_entity_1": "Battery SOC 1",
@@ -56,10 +56,10 @@
           "minimum_reserve": "Minimum backup reserve (%)",
           "strong_solar_kwh": "Legacy strong solar threshold (kWh)",
           "ev_target_soc": "EV target SOC (%)",
-          "preferred_import_w": "Solar-harvest preferred grid import (W)",
-          "harvest_capture_factor": "Solar-harvest capture factor (0-1)",
+          "ev_solar_advisory_enabled": "Allow EV solar-surplus recommendations (requires reliable start/stop control)",
+          "preferred_import_w": "Fallback preferred grid import if surplus controller is unavailable (W)",
           "charge_efficiency": "AC-to-battery charge efficiency (0-1)",
-          "discretionary_threshold_kwh": "Minimum predicted export for discretionary-load recommendation (kWh)"
+          "discretionary_threshold_kwh": "Minimum physically predicted export before flexible-load recommendation (kWh)"
         }
       }
     }
