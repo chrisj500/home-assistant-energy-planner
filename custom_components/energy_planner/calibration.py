@@ -230,6 +230,10 @@ def confidence_headroom_decision(
     stored_above_reserve = max(float(stored_above_reserve_kwh), 0.0)
 
     if not profile.action_ready:
+        # Keep the physical point-forecast risk visible while explicitly gating
+        # action. A learning status should never make a real nominal shortfall
+        # disappear from diagnostics merely because confidence is not ready.
+        provisional_shortfall = max(nominal_required - conservative_available, 0.0)
         reason = (
             "Forecast calibration is still learning. Preserve stored solar; "
             f"automatic headroom action requires at least {MIN_ACTION_SAMPLES} "
@@ -237,9 +241,9 @@ def confidence_headroom_decision(
         )
         return HeadroomDecision(
             nominal_required_headroom_kwh=nominal_required,
-            confidence_required_headroom_kwh=0.0,
+            confidence_required_headroom_kwh=nominal_required,
             conservative_available_headroom_kwh=conservative_available,
-            confidence_shortfall_kwh=0.0,
+            confidence_shortfall_kwh=provisional_shortfall,
             recommended_additional_discharge_kwh=0.0,
             action_ready=False,
             reason=reason,
