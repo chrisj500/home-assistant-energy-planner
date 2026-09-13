@@ -16,28 +16,31 @@ from ev_advisory import (  # noqa: E402
 
 
 class EvAdvisoryTests(unittest.TestCase):
-    def test_green_for_near_term_headroom_risk_and_solar_rich_window(self) -> None:
-        outlook = classify_ev_charging_outlook(
-            reference_date=date(2026, 9, 13),
-            risk_date=date(2026, 9, 14),
-            best_solar_fraction=0.994,
-        )
-        self.assertEqual(outlook.status, "green")
-        self.assertEqual(outlook.days_to_risk, 1)
-
-    def test_yellow_when_near_term_risk_has_mixed_window(self) -> None:
+    def test_green_for_near_term_headroom_risk(self) -> None:
         outlook = classify_ev_charging_outlook(
             reference_date=date(2026, 9, 13),
             risk_date=date(2026, 9, 14),
             best_solar_fraction=0.55,
         )
+        self.assertEqual(outlook.status, "green")
+        self.assertEqual(outlook.days_to_risk, 1)
+
+    def test_yellow_for_farther_headroom_risk(self) -> None:
+        outlook = classify_ev_charging_outlook(
+            reference_date=date(2026, 9, 13),
+            risk_date=date(2026, 9, 17),
+            best_solar_fraction=0.95,
+        )
         self.assertEqual(outlook.status, "yellow")
+        self.assertEqual(outlook.days_to_risk, 4)
 
     def test_red_when_no_headroom_risk_and_weak_solar_window(self) -> None:
         outlook = classify_ev_charging_outlook(
             reference_date=date(2026, 9, 13),
             risk_date=None,
             best_solar_fraction=0.25,
+            surplus_next_3d_kwh=1.0,
+            surplus_horizon_kwh=3.0,
         )
         self.assertEqual(outlook.status, "red")
 
@@ -46,6 +49,8 @@ class EvAdvisoryTests(unittest.TestCase):
             reference_date=date(2026, 9, 13),
             risk_date=None,
             best_solar_fraction=0.70,
+            surplus_next_3d_kwh=7.0,
+            surplus_horizon_kwh=12.0,
         )
         self.assertEqual(outlook.status, "yellow")
 
