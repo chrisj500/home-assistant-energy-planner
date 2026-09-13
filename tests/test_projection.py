@@ -14,7 +14,7 @@ from simulation import ControllerSettings  # noqa: E402
 
 class SunsetProjectionTests(unittest.TestCase):
     def test_sep12_snapshot_projection(self) -> None:
-        """Keep the historical snapshot in the same neighborhood without fake export."""
+        """Historical Sep 12 snapshot: small gain, no invented export/import."""
         load_kw = 0.45 * 2.594 + 0.55 * 2.751
         hours_to_sunset = 7.40 / load_kw
         now = datetime(2026, 9, 12, 20, 35, 54, tzinfo=timezone.utc)
@@ -40,8 +40,9 @@ class SunsetProjectionTests(unittest.TestCase):
 
         self.assertGreater(result.projected_soc, 22.4)
         self.assertLess(result.projected_soc, 23.2)
-        self.assertLess(result.predicted_export_kwh, 0.2)
-        self.assertIn("controller_mirror", result.model)
+        self.assertEqual(result.grid_to_battery_ac_kwh, 0.0)
+        self.assertLess(result.predicted_export_kwh, 0.05)
+        self.assertIn("physical_surplus", result.model)
 
     def test_daytime_deficit_never_discharges_battery(self) -> None:
         now = datetime(2026, 9, 12, 16, 0, tzinfo=timezone.utc)
@@ -59,6 +60,8 @@ class SunsetProjectionTests(unittest.TestCase):
             bank_capacities_kwh=(18.432, 12.288, 18.432),
         )
         self.assertGreaterEqual(result.projected_soc, 50.0)
+        self.assertEqual(result.projected_charge_kwh, 0.0)
+        self.assertGreater(result.predicted_grid_import_kwh, 0.0)
 
     def test_charge_limit_caps_projection_and_exposes_capacity_export(self) -> None:
         now = datetime(2026, 9, 12, 16, 0, tzinfo=timezone.utc)
@@ -97,6 +100,42 @@ class SunsetProjectionTests(unittest.TestCase):
         high = project_sunset_soc(**kwargs, harvest_capture_factor=1.0)
         self.assertAlmostEqual(low.projected_soc, high.projected_soc, places=8)
         self.assertAlmostEqual(low.predicted_export_kwh, high.predicted_export_kwh, places=8)
+
+    def test_preferred_import_setting_cannot_create_grid_battery_charge(self) -> None:
+        now = datetime(2026, 9, 12, 16, 0, tzinfo=timezone.utc)
+        kwargs = dict(
+            now=now,
+            sunset=now + timedelta(hours=4),
+            current_soc_pct=30,
+            capacity_kwh=49.152,
+            charge_limit_pct=100,
+            remaining_solar_kwh=16.0,
+            expected_load_remaining_kwh=6.0,
+            current_solar_w=6000,
+            peak_time=now - timedelta(hours=1),
+            bank_socs_pct=(30, 30, 30),
+            bank_capacities_kwh=(18.432, 12.288, 18.432),
+        )
+        zero_target = project_sunset_soc(
+            **kwargs,
+            controller_settings=ControllerSettings(preferred_import_w=0, source="test"),
+        )
+        high_target = project_sunset_soc(
+            **kwargs,
+            controller_settings=ControllerSettings(preferred_import_w=1000, source="test"),
+        )
+        self.assertEqual(zero_target.grid_to_battery_ac_kwh, 0.0)
+        self.assertEqual(high_target.grid_to_battery_ac_kwh, 0.0)
+        self.assertAlmostEqual(
+            zero_target.projected_soc,
+            high_target.projected_soc,
+            places=8,
+        )
+        self.assertAlmostEqual(
+            zero_target.predicted_grid_import_kwh,
+            high_target.predicted_grid_import_kwh,
+            places=8,
+        )
 
 
 if __name__ == "__main__":
