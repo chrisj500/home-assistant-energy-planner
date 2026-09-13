@@ -6,7 +6,14 @@ from typing import Callable
 
 @dataclass(frozen=True, slots=True)
 class ControllerSettings:
-    """Forecast mirror of the EcoFlow surplus-controller policy."""
+    """Physical capabilities and availability of the solar-surplus controller.
+
+    Most controller-tuning fields remain for configuration compatibility and
+    diagnostics. The planning model deliberately does not simulate the fast
+    feedback loop: day-ahead forecasts cannot know second-by-second grid error,
+    cloud transients, or controller timing. Only controller availability and the
+    verified per-DPU maximum charging power constrain the physical forecast.
+    """
 
     minimum_rate_w: float = 500.0
     maximum_rate_w: float = 3900.0
@@ -50,167 +57,8 @@ class SimulationResult:
     model: str
 
 
-@dataclass(frozen=True, slots=True)
-class ControllerState:
-    mask: int = 0
-    rate_w: int = 500
-
-
 def _clamp(value: float, minimum: float, maximum: float) -> float:
     return min(max(value, minimum), maximum)
-
-
-def _mask_count(mask: int) -> int:
-    return sum(1 for bit in (1, 2, 4) if mask & bit)
-
-
-def _round_to_step(value: float, step: float) -> int:
-    step = step if step > 0 else 100.0
-    return int(round(value / step) * step)
-
-
-def _select_mask(
-    eligible: tuple[bool, bool, bool],
-    socs: tuple[float, float, float],
-    desired_count: int,
-    commanded_mask: int,
-) -> int:
-    if desired_count <= 0:
-        return 0
-
-    commanded_count = _mask_count(commanded_mask)
-    commanded_valid = all(
-        not (commanded_mask & bit) or eligible[index]
-        for index, bit in enumerate((1, 2, 4))
-    )
-    if desired_count == commanded_count and commanded_valid:
-        return commanded_mask
-
-    candidates = [
-        (socs[index], index, bit)
-        for index, bit in enumerate((1, 2, 4))
-        if eligible[index]
-    ]
-    candidates.sort(key=lambda item: (item[0], item[1]))
-    return sum(bit for _, _, bit in candidates[:desired_count])
-
-
-def _controller_decision(
-    *,
-    site_grid_w: float,
-    solar_w: float,
-    socs: tuple[float, float, float],
-    eligible: tuple[bool, bool, bool],
-    state: ControllerState,
-    settings: ControllerSettings,
-) -> ControllerState:
-    """Mirror the deployed controller's side-effect-free decision math."""
-    if not settings.enabled:
-        return ControllerState(mask=0, rate_w=int(settings.minimum_rate_w))
-
-    commanded_count = _mask_count(state.mask)
-    eligible_count = sum(1 for value in eligible if value)
-    control_ok = solar_w >= settings.minimum_solar_w and eligible_count > 0
-    safe_to_start = control_ok and site_grid_w <= -settings.start_export_w
-    expected_command_w = commanded_count * state.rate_w
-    in_import_hold = 0 <= site_grid_w <= settings.import_hold_high_w
-
-    if not control_ok:
-        target_command_w = 0.0
-    elif in_import_hold:
-        target_command_w = float(expected_command_w)
-    else:
-        gain = settings.export_gain if site_grid_w < 0 else settings.import_gain
-        raw = expected_command_w + gain * (
-            settings.preferred_import_w - site_grid_w
-        )
-        target_command_w = min(
-            max(raw, 0.0), settings.maximum_rate_w * eligible_count
-        )
-
-    near_min = state.rate_w <= (
-        settings.minimum_rate_w + settings.slow_import_decrease_w
-    )
-
-    if not control_ok:
-        desired_count_pre = 0
-    elif site_grid_w > settings.severe_import_threshold_w:
-        if target_command_w < settings.stop_all_w:
-            desired_count_pre = 0
-        elif target_command_w < settings.start_2_w:
-            desired_count_pre = 1
-        elif target_command_w < settings.start_3_w:
-            desired_count_pre = 2
-        else:
-            desired_count_pre = 3
-    elif commanded_count == 0:
-        desired_count_pre = 1 if safe_to_start else 0
-    elif in_import_hold:
-        desired_count_pre = commanded_count
-    elif commanded_count == 1:
-        if near_min and (
-            target_command_w < settings.stop_all_w
-            or site_grid_w > settings.import_hold_high_w
-        ):
-            desired_count_pre = 0
-        elif target_command_w >= settings.start_2_w:
-            desired_count_pre = 2
-        else:
-            desired_count_pre = 1
-    elif commanded_count == 2:
-        if target_command_w >= settings.start_3_w:
-            desired_count_pre = 3
-        elif target_command_w < settings.stop_2_w and near_min:
-            desired_count_pre = 1
-        else:
-            desired_count_pre = 2
-    else:
-        if target_command_w < settings.stop_3_w and near_min:
-            desired_count_pre = 2
-        else:
-            desired_count_pre = 3
-
-    desired_count = min(desired_count_pre, eligible_count)
-    desired_mask = _select_mask(eligible, socs, desired_count, state.mask)
-
-    if desired_count <= 0:
-        ideal_rate_w = int(settings.minimum_rate_w)
-    else:
-        raw_rate = target_command_w / desired_count
-        limited = min(
-            max(raw_rate, settings.minimum_rate_w), settings.maximum_rate_w
-        )
-        ideal_rate_w = _round_to_step(limited, settings.rate_step_w)
-
-    if site_grid_w > settings.severe_import_threshold_w:
-        decrease_cap_w = 99999.0
-    elif site_grid_w > settings.moderate_import_threshold_w:
-        decrease_cap_w = settings.moderate_import_decrease_w
-    else:
-        decrease_cap_w = settings.slow_import_decrease_w
-
-    if desired_count <= 0:
-        command_rate_w = int(settings.minimum_rate_w)
-    elif desired_count != commanded_count:
-        command_rate_w = ideal_rate_w
-    elif ideal_rate_w > state.rate_w:
-        command_rate_w = int(
-            min(
-                ideal_rate_w,
-                state.rate_w + settings.maximum_rate_increase_w,
-            )
-        )
-    elif ideal_rate_w < state.rate_w:
-        if site_grid_w > settings.severe_import_threshold_w:
-            command_rate_w = ideal_rate_w
-        else:
-            command_rate_w = int(
-                max(ideal_rate_w, state.rate_w - decrease_cap_w)
-            )
-    else:
-        command_rate_w = int(state.rate_w)
-
-    return ControllerState(mask=desired_mask, rate_w=command_rate_w)
 
 
 def full_day_solar_curve(
@@ -219,7 +67,12 @@ def full_day_solar_curve(
     daylight_hours: float,
     peak_elapsed_h: float,
 ) -> Callable[[float], float]:
-    """Return the energy-conserving triangular full-day solar model in kW."""
+    """Return an energy-conserving triangular full-day solar model in kW.
+
+    We have a daily-energy forecast plus a peak-time estimate, not a trustworthy
+    interval forecast. A simple curve that exactly conserves forecast kWh is
+    preferable to inventing cloud detail we do not possess.
+    """
     daylight_hours = max(float(daylight_hours), 0.0)
     solar_forecast_kwh = max(float(solar_forecast_kwh), 0.0)
     if daylight_hours <= 0 or solar_forecast_kwh <= 0:
@@ -238,6 +91,60 @@ def full_day_solar_curve(
     return _curve
 
 
+def _allocate_solar_charge(
+    *,
+    requested_ac_kwh: float,
+    dt_h: float,
+    stored_kwh: list[float],
+    capacities_kwh: tuple[float, float, float],
+    charge_ceiling_kwh: tuple[float, float, float],
+    charge_efficiency: float,
+    maximum_rate_w: float,
+    ignore_battery_capacity: bool,
+) -> list[float]:
+    """Allocate solar-only AC charging to the lowest-SOC eligible banks.
+
+    This models what is physically absorbable. It intentionally ignores the
+    controller's transient mask/rate choreography; the real-time controller has
+    already demonstrated that it can track surplus closely when headroom exists.
+    """
+    accepted = [0.0, 0.0, 0.0]
+    remaining = max(float(requested_ac_kwh), 0.0)
+    if remaining <= 0 or dt_h <= 0 or maximum_rate_w <= 0:
+        return accepted
+
+    order = sorted(
+        range(3),
+        key=lambda index: stored_kwh[index] / capacities_kwh[index],
+    )
+    per_bank_power_kwh = maximum_rate_w / 1000.0 * dt_h
+
+    for index in order:
+        if remaining <= 1e-12:
+            break
+
+        if ignore_battery_capacity:
+            capacity_acceptance_kwh = per_bank_power_kwh
+        elif charge_efficiency <= 0:
+            capacity_acceptance_kwh = 0.0
+        else:
+            stored_headroom_kwh = max(
+                charge_ceiling_kwh[index] - stored_kwh[index],
+                0.0,
+            )
+            capacity_acceptance_kwh = stored_headroom_kwh / charge_efficiency
+
+        bank_acceptance_kwh = min(
+            remaining,
+            per_bank_power_kwh,
+            capacity_acceptance_kwh,
+        )
+        accepted[index] = max(bank_acceptance_kwh, 0.0)
+        remaining -= accepted[index]
+
+    return accepted
+
+
 def simulate_energy_flow(
     *,
     duration_h: float,
@@ -251,11 +158,22 @@ def simulate_energy_flow(
     step_minutes: int = 1,
     ignore_battery_capacity: bool = False,
 ) -> SimulationResult:
-    """Simulate physical AC flows and the fast controller in quasi-steady state.
+    """Forecast protected-daytime AC flows from physical constraints.
 
-    Export is counted only when modeled solar cannot be absorbed after house
-    load and the controller's actual charging policy. Charge efficiency affects
-    stored battery energy; it is never reclassified as grid export.
+    Governing policy:
+    - Solar serves house load first.
+    - The stationary battery never discharges during the solar window.
+    - Only true solar surplus may charge the battery.
+    - Grid import is therefore house-load deficit only; the planner never
+      manufactures grid-to-battery charging from a controller setpoint.
+    - Export exists only when solar surplus cannot be absorbed because the
+      controller is unavailable, charging power is insufficient, or storage
+      capacity is exhausted.
+    - Charge-efficiency losses are consumed by charging and are never export.
+
+    The fast Solar Surplus integration remains responsible for second-by-second
+    control. Routine controller leakage is intentionally assumed to be zero until
+    enough measured history exists to justify an empirical residual model.
     """
     duration_h = max(float(duration_h), 0.0)
     average_load_kw = max(float(average_load_kw), 0.0)
@@ -264,16 +182,23 @@ def simulate_energy_flow(
     step_minutes = max(int(step_minutes), 1)
 
     capacities = tuple(max(float(value), 0.001) for value in bank_capacities_kwh)
+    if len(capacities) != 3:
+        raise ValueError("exactly three bank capacities are required")
+    if len(bank_socs_pct) != 3:
+        raise ValueError("exactly three bank SOC values are required")
+
     stored = [
         capacity * _clamp(float(soc), 0.0, 100.0) / 100.0
         for capacity, soc in zip(capacities, bank_socs_pct)
     ]
-    charge_ceiling = [capacity * charge_limit_pct / 100.0 for capacity in capacities]
+    charge_ceiling = tuple(
+        capacity * charge_limit_pct / 100.0 for capacity in capacities
+    )
 
-    controller_state = ControllerState(rate_w=int(controller.minimum_rate_w))
     stored_charge_kwh = 0.0
     battery_ac_charge_kwh = 0.0
     solar_to_battery_ac_kwh = 0.0
+    # By policy, the forecast model never schedules grid energy into batteries.
     grid_to_battery_ac_kwh = 0.0
     predicted_export_kwh = 0.0
     predicted_grid_import_kwh = 0.0
@@ -285,106 +210,88 @@ def simulate_energy_flow(
 
     step_h = step_minutes / 60.0
     elapsed_h = 0.0
+    maximum_rate_w = max(float(controller.maximum_rate_w), 0.0)
+
     while elapsed_h < duration_h - 1e-9:
         dt_h = min(step_h, duration_h - elapsed_h)
         midpoint_h = elapsed_h + dt_h / 2.0
         solar_w = max(float(solar_power_kw(midpoint_h)), 0.0) * 1000.0
         load_w = average_load_kw * 1000.0
 
-        if ignore_battery_capacity:
-            eligible = (True, True, True)
-        else:
-            eligible = tuple(
-                stored[index] < charge_ceiling[index] - 1e-6
-                for index in range(3)
-            )
-
-        current_socs = tuple(
-            100.0 * stored[index] / capacities[index]
-            for index in range(3)
-        )
-
-        # The live controller retriggers after roughly two seconds of a fresh
-        # grid reading. Forecast steps are much coarser, so converge the control
-        # reaction inside each step rather than pretending it responds only once.
-        for _ in range(12):
-            commanded_charge_w = _mask_count(controller_state.mask) * controller_state.rate_w
-            site_grid_w = load_w + commanded_charge_w - solar_w
-            next_state = _controller_decision(
-                site_grid_w=site_grid_w,
-                solar_w=solar_w,
-                socs=current_socs,
-                eligible=eligible,
-                state=controller_state,
-                settings=controller,
-            )
-            if next_state == controller_state:
-                break
-            controller_state = next_state
-
-        accepted_ac_by_bank = [0.0, 0.0, 0.0]
-        for index, bit in enumerate((1, 2, 4)):
-            if not (controller_state.mask & bit):
-                continue
-            commanded_ac_kwh = controller_state.rate_w / 1000.0 * dt_h
-            if ignore_battery_capacity:
-                accepted_ac_kwh = commanded_ac_kwh
-            elif charge_efficiency <= 0:
-                accepted_ac_kwh = 0.0
-            else:
-                headroom_stored_kwh = max(charge_ceiling[index] - stored[index], 0.0)
-                accepted_ac_kwh = min(
-                    commanded_ac_kwh,
-                    headroom_stored_kwh / charge_efficiency,
-                )
-            accepted_ac_by_bank[index] = accepted_ac_kwh
-
-        accepted_ac_kwh = sum(accepted_ac_by_bank)
-        actual_charge_w = accepted_ac_kwh / dt_h * 1000.0 if dt_h > 0 else 0.0
+        house_deficit_w = max(load_w - solar_w, 0.0)
         natural_surplus_w = max(solar_w - load_w, 0.0)
-        site_grid_w = load_w + actual_charge_w - solar_w
-        export_w = max(-site_grid_w, 0.0)
-        import_w = max(site_grid_w, 0.0)
+        natural_surplus_kwh = natural_surplus_w / 1000.0 * dt_h
+        predicted_grid_import_kwh += house_deficit_w / 1000.0 * dt_h
 
-        solar_charge_w = min(actual_charge_w, natural_surplus_w)
-        grid_charge_w = max(actual_charge_w - natural_surplus_w, 0.0)
-        solar_to_battery_ac_kwh += solar_charge_w / 1000.0 * dt_h
-        grid_to_battery_ac_kwh += grid_charge_w / 1000.0 * dt_h
-        battery_ac_charge_kwh += accepted_ac_kwh
-        predicted_export_kwh += export_w / 1000.0 * dt_h
-        predicted_grid_import_kwh += import_w / 1000.0 * dt_h
+        if ignore_battery_capacity:
+            eligible_count = 3
+        else:
+            eligible_count = sum(
+                1
+                for index in range(3)
+                if stored[index] < charge_ceiling[index] - 1e-9
+            )
+
+        if natural_surplus_kwh <= 0:
+            elapsed_h += dt_h
+            continue
+
+        if not controller.enabled:
+            control_limited_export_kwh += natural_surplus_kwh
+            predicted_export_kwh += natural_surplus_kwh
+            peak_export_w = max(peak_export_w, natural_surplus_w)
+            export_minutes += dt_h * 60.0
+            elapsed_h += dt_h
+            continue
+
+        physical_charge_ceiling_w = maximum_rate_w * eligible_count
+        power_limited_w = max(
+            natural_surplus_w - physical_charge_ceiling_w,
+            0.0,
+        )
+        power_limited_kwh = power_limited_w / 1000.0 * dt_h
+        power_limited_export_kwh += power_limited_kwh
+
+        requested_charge_w = min(natural_surplus_w, physical_charge_ceiling_w)
+        requested_charge_kwh = requested_charge_w / 1000.0 * dt_h
+        accepted_by_bank = _allocate_solar_charge(
+            requested_ac_kwh=requested_charge_kwh,
+            dt_h=dt_h,
+            stored_kwh=stored,
+            capacities_kwh=capacities,
+            charge_ceiling_kwh=charge_ceiling,
+            charge_efficiency=charge_efficiency,
+            maximum_rate_w=maximum_rate_w,
+            ignore_battery_capacity=ignore_battery_capacity,
+        )
+        accepted_ac_kwh = sum(accepted_by_bank)
+        capacity_limited_kwh = max(
+            requested_charge_kwh - accepted_ac_kwh,
+            0.0,
+        )
+        capacity_limited_export_kwh += capacity_limited_kwh
+
+        export_kwh = power_limited_kwh + capacity_limited_kwh
+        predicted_export_kwh += export_kwh
+        export_w = export_kwh / dt_h * 1000.0 if dt_h > 0 else 0.0
         peak_export_w = max(peak_export_w, export_w)
-        if export_w > 1.0:
+        if export_kwh > 1e-9:
             export_minutes += dt_h * 60.0
 
-        if export_w > 0:
-            remaining_export_w = export_w
-            eligible_count = sum(1 for value in eligible if value)
-            if not ignore_battery_capacity and eligible_count == 0:
-                capacity_piece_w = remaining_export_w
-                power_piece_w = 0.0
-            else:
-                controller_power_ceiling_w = controller.maximum_rate_w * eligible_count
-                power_piece_w = min(
-                    remaining_export_w,
-                    max(natural_surplus_w - controller_power_ceiling_w, 0.0),
-                )
-                remaining_export_w -= power_piece_w
-                commanded_charge_w = _mask_count(controller_state.mask) * controller_state.rate_w
-                acceptance_shortfall_w = max(commanded_charge_w - actual_charge_w, 0.0)
-                capacity_piece_w = min(remaining_export_w, acceptance_shortfall_w)
-            control_piece_w = max(export_w - power_piece_w - capacity_piece_w, 0.0)
-            capacity_limited_export_kwh += capacity_piece_w / 1000.0 * dt_h
-            power_limited_export_kwh += power_piece_w / 1000.0 * dt_h
-            control_limited_export_kwh += control_piece_w / 1000.0 * dt_h
+        solar_to_battery_ac_kwh += accepted_ac_kwh
+        battery_ac_charge_kwh += accepted_ac_kwh
+        stored_gain_kwh = accepted_ac_kwh * charge_efficiency
+        stored_charge_kwh += stored_gain_kwh
 
         if not ignore_battery_capacity:
-            for index, accepted in enumerate(accepted_ac_by_bank):
-                stored_gain = accepted * charge_efficiency
-                stored[index] = min(stored[index] + stored_gain, charge_ceiling[index])
-                stored_charge_kwh += stored_gain
+            for index, accepted_ac in enumerate(accepted_by_bank):
+                stored[index] = min(
+                    stored[index] + accepted_ac * charge_efficiency,
+                    charge_ceiling[index],
+                )
         else:
-            stored_charge_kwh += accepted_ac_kwh * charge_efficiency
+            for index, accepted_ac in enumerate(accepted_by_bank):
+                stored[index] += accepted_ac * charge_efficiency
 
         elapsed_h += dt_h
 
@@ -410,5 +317,5 @@ def simulate_energy_flow(
         peak_export_w=peak_export_w,
         export_minutes=export_minutes,
         average_load_kw=average_load_kw,
-        model=f"controller_mirror_triangle_v1:{controller.source}",
+        model=f"physical_surplus_v1:{controller.source}",
     )
