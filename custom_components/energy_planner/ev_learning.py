@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from statistics import median
 from typing import Iterable
 
@@ -42,6 +43,52 @@ def infer_wall_energy_full_kwh(
     if not 5.0 <= inferred <= 250.0:
         return None
     return inferred
+
+
+def soc_observation_is_trusted(
+    *,
+    observed_at: datetime | None,
+    session_started_at: datetime | None,
+    age_minutes: float | None,
+    max_prestart_age_minutes: float = 5.0,
+    max_live_age_minutes: float = 30.0,
+) -> bool:
+    """Return whether an EV SOC observation is safe to use as a learning anchor.
+
+    A reading observed after charging starts is accepted while it remains reasonably
+    fresh. A reading from before charging started is accepted only when it was
+    refreshed immediately before the session. This prevents stale app telemetry from
+    being paired with wall energy that was delivered before the learner had a valid
+    SOC anchor.
+    """
+    if observed_at is None or session_started_at is None or age_minutes is None:
+        return False
+    age = max(float(age_minutes), 0.0)
+    if observed_at >= session_started_at:
+        return age <= max(float(max_live_age_minutes), 0.0)
+    prestart_age = max((session_started_at - observed_at).total_seconds() / 60.0, 0.0)
+    limit = max(float(max_prestart_age_minutes), 0.0)
+    return prestart_age <= limit and age <= limit
+
+
+def infer_anchored_wall_energy_full_kwh(
+    *,
+    anchor_wall_energy_kwh: float | None,
+    observed_wall_energy_kwh: float | None,
+    anchor_soc_pct: float | None,
+    observed_soc_pct: float | None,
+    minimum_soc_delta_pct: float = 5.0,
+) -> float | None:
+    """Infer EV full-range wall energy only from energy delivered after a trusted anchor."""
+    if anchor_wall_energy_kwh is None or observed_wall_energy_kwh is None:
+        return None
+    energy = max(float(observed_wall_energy_kwh) - float(anchor_wall_energy_kwh), 0.0)
+    return infer_wall_energy_full_kwh(
+        wall_energy_kwh=energy,
+        start_soc_pct=anchor_soc_pct,
+        end_soc_pct=observed_soc_pct,
+        minimum_soc_delta_pct=minimum_soc_delta_pct,
+    )
 
 
 def residual_after_ev_charge(
