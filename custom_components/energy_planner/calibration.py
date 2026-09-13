@@ -15,13 +15,17 @@ MAX_HISTORY_SAMPLES = 30
 class CalibrationProfile:
     """Evidence-derived uncertainty profile for headroom decisions.
 
-    Daylight error is expressed as actual stored-energy gain minus predicted
-    stored-energy gain. A negative error means the planner over-predicted how
-    much battery headroom the solar window actually needed.
+    Daylight error is actual stored-energy gain minus predicted stored-energy
+    gain. Negative values mean the point forecast over-predicted how much solar
+    energy would actually be stored.
 
-    Overnight samples are measured stored-energy drop rates. We use a lower
-    empirical bound so planned headroom never relies on an optimistic assumption
-    about how much energy the house will naturally consume overnight.
+    Overnight samples are measured stored-energy drop rates. For an intentional
+    headroom action we use the *upper* empirical overnight depletion bound. That
+    is deliberate: natural overnight discharge creates headroom for free, so we
+    only recommend extra discharge that remains necessary even on a night that
+    naturally creates relatively more headroom. Combined with a lower empirical
+    daylight-storage bound, this implements a no-regret bias against buying
+    energy later because of an overconfident forecast.
     """
 
     status: str
@@ -34,6 +38,7 @@ class CalibrationProfile:
     headroom_factor: float
     overnight_lower_drop_kw: float
     overnight_median_drop_kw: float
+    overnight_upper_drop_kw: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,12 +80,17 @@ def quantile(values: Sequence[float], q: float) -> float:
 def _lower_empirical_bound(values: Sequence[float], minimum_samples: int) -> float:
     if len(values) < minimum_samples:
         return 0.0
-    # With a small sample set, the observed minimum is deliberately conservative.
-    # Once there is enough history, use the 10th percentile so one pathological
-    # day does not permanently dominate the planner.
     if len(values) < CALIBRATED_SAMPLES:
         return min(values)
     return quantile(values, 0.10)
+
+
+def _upper_empirical_bound(values: Sequence[float], minimum_samples: int) -> float:
+    if len(values) < minimum_samples:
+        return 0.0
+    if len(values) < CALIBRATED_SAMPLES:
+        return max(values)
+    return quantile(values, 0.90)
 
 
 def build_profile(
@@ -110,14 +120,17 @@ def build_profile(
         daylight_mae_ratio = 0.0
 
     lower_ratio = _lower_empirical_bound(daylight_ratios, MIN_ACTION_SAMPLES)
-    # Calibration may reduce a point-forecast headroom request when history
-    # shows that the model has over-predicted stored solar. It never increases
-    # discharge above the physical point forecast solely from historical error.
     lower_ratio = min(lower_ratio, 0.0)
     headroom_factor = min(max(1.0 + lower_ratio, 0.0), 1.0)
 
-    overnight_lower = _lower_empirical_bound(overnight_rates, MIN_ACTION_SAMPLES)
-    overnight_lower = max(overnight_lower, 0.0)
+    overnight_lower = max(
+        _lower_empirical_bound(overnight_rates, MIN_ACTION_SAMPLES),
+        0.0,
+    )
+    overnight_upper = max(
+        _upper_empirical_bound(overnight_rates, MIN_ACTION_SAMPLES),
+        0.0,
+    )
     overnight_median = median(overnight_rates) if overnight_rates else 0.0
 
     action_ready = (
@@ -142,6 +155,7 @@ def build_profile(
         headroom_factor=headroom_factor,
         overnight_lower_drop_kw=overnight_lower,
         overnight_median_drop_kw=overnight_median,
+        overnight_upper_drop_kw=overnight_upper,
     )
 
 
@@ -157,7 +171,7 @@ def append_record(
 
 def projected_overnight_drop_kwh(
     *,
-    lower_drop_kw: float,
+    drop_kw: float,
     night_hours: float,
     sunset_soc_pct: float,
     capacity_kwh: float,
@@ -171,7 +185,7 @@ def projected_overnight_drop_kwh(
         capacity_kwh * (sunset_soc_pct - reserve_pct) / 100.0,
         0.0,
     )
-    expected_drop = max(float(lower_drop_kw), 0.0) * max(float(night_hours), 0.0)
+    expected_drop = max(float(drop_kw), 0.0) * max(float(night_hours), 0.0)
     return min(expected_drop, available_kwh)
 
 
@@ -210,14 +224,7 @@ def confidence_headroom_decision(
     conservative_available_headroom_kwh: float,
     stored_above_reserve_kwh: float,
 ) -> HeadroomDecision:
-    """Turn a physical point forecast into an evidence-backed action amount.
-
-    No calibration history means no automatic discharge recommendation. Once
-    both daylight and overnight error streams contain enough observations, the
-    planner uses the lower empirical stored-solar outcome and the lower empirical
-    overnight depletion outcome. This protects against buying energy later merely
-    because a single deterministic forecast happened to predict a full battery.
-    """
+    """Turn a physical point forecast into an evidence-backed action amount."""
     nominal_required = max(float(nominal_required_headroom_kwh), 0.0)
     conservative_available = max(float(conservative_available_headroom_kwh), 0.0)
     stored_above_reserve = max(float(stored_above_reserve_kwh), 0.0)
@@ -242,10 +249,10 @@ def confidence_headroom_decision(
     shortfall = max(confidence_required - conservative_available, 0.0)
     recommended = min(shortfall, stored_above_reserve)
     reason = (
-        f"Evidence-adjusted storage need is {confidence_required:.2f} kWh "
+        f"No-regret stored-solar need is {confidence_required:.2f} kWh "
         f"({profile.headroom_factor * 100:.1f}% of the physical point forecast) "
-        f"with {conservative_available:.2f} kWh conservatively available after "
-        "natural overnight depletion."
+        f"versus {conservative_available:.2f} kWh of headroom after the upper "
+        "empirical natural-overnight-depletion allowance."
     )
     return HeadroomDecision(
         nominal_required_headroom_kwh=nominal_required,
