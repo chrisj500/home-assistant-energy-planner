@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Configure Energy Planner",
-        "description": "Select the Home Assistant entities used by the planner. The four sunset-projection sources are optional for upgrades but are required for the policy-aware sunset projection.",
+        "description": "Select the Home Assistant entities used by the planner. Sunset projection and tomorrow-strategy sources are optional for upgrades but are required for their respective forecasts.",
         "data": {
           "name": "Name",
           "soc_entity_1": "Battery SOC 1",
@@ -21,6 +21,8 @@
           "solar_remaining_entity": "Corrected solar remaining today (kWh)",
           "expected_load_remaining_entity": "Expected house load remaining to sunset (kWh)",
           "solar_peak_time_entity": "Forecast solar peak time today",
+          "solar_peak_time_tomorrow_entity": "Forecast solar peak time tomorrow",
+          "base_load_power_entity": "Expected/base house load power (W)",
           "ev_soc_entity": "EV state of charge (optional)",
           "ev_home_entity": "EV location tracker (optional)"
         }
@@ -46,15 +48,18 @@
           "solar_remaining_entity": "Corrected solar remaining today (kWh)",
           "expected_load_remaining_entity": "Expected house load remaining to sunset (kWh)",
           "solar_peak_time_entity": "Forecast solar peak time today",
+          "solar_peak_time_tomorrow_entity": "Forecast solar peak time tomorrow",
+          "base_load_power_entity": "Expected/base house load power (W)",
           "ev_soc_entity": "EV state of charge (optional)",
           "ev_home_entity": "EV location tracker (optional)",
-          "auto_headroom": "Enable automatic solar headroom",
+          "auto_headroom": "Expose create-headroom advisory flag",
           "minimum_reserve": "Minimum backup reserve (%)",
-          "strong_solar_kwh": "Strong solar threshold (kWh)",
+          "strong_solar_kwh": "Legacy strong solar threshold (kWh)",
           "ev_target_soc": "EV target SOC (%)",
           "preferred_import_w": "Solar-harvest preferred grid import (W)",
           "harvest_capture_factor": "Solar-harvest capture factor (0-1)",
-          "charge_efficiency": "AC-to-battery charge efficiency (0-1)"
+          "charge_efficiency": "AC-to-battery charge efficiency (0-1)",
+          "discretionary_threshold_kwh": "Minimum predicted export for discretionary-load recommendation (kWh)"
         }
       }
     }
