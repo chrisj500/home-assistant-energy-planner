@@ -114,7 +114,6 @@ class SolarPeriodStrategyTests(unittest.TestCase):
         )
 
         self.assertEqual(result.strategy, STRATEGY_CREATE_HEADROOM)
-        self.assertGreater(result.capacity_limited_export_kwh, 1.0)
         self.assertGreater(result.headroom_shortfall_kwh, 1.0)
         self.assertAlmostEqual(
             result.recommended_overnight_discharge_kwh,
@@ -122,6 +121,10 @@ class SolarPeriodStrategyTests(unittest.TestCase):
             places=5,
         )
         self.assertGreaterEqual(result.planned_start_soc_pct, 10.0)
+        # Forecast outputs describe the planned outcome. Once exactly the missing
+        # headroom is created, the capacity-limited export should disappear.
+        self.assertAlmostEqual(result.capacity_limited_export_kwh, 0.0, places=6)
+        self.assertAlmostEqual(result.predicted_export_kwh, 0.0, places=6)
 
     def test_controlled_ev_can_be_preferred_only_when_explicitly_enabled(self) -> None:
         result = plan_solar_period(
