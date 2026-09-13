@@ -22,10 +22,11 @@ CONF_EV_HOME = "ev_home_entity"
 
 OPT_AUTO_HEADROOM = "auto_headroom"
 OPT_MIN_RESERVE = "minimum_reserve"
-OPT_STRONG_SOLAR_KWH = "strong_solar_kwh"
+OPT_STRONG_SOLAR_KWH = "strong_solar_kwh"  # legacy compatibility
 OPT_EV_TARGET_SOC = "ev_target_soc"
-OPT_PREFERRED_IMPORT_W = "preferred_import_w"
-OPT_HARVEST_CAPTURE_FACTOR = "harvest_capture_factor"
+OPT_EV_SOLAR_ADVISORY_ENABLED = "ev_solar_advisory_enabled"
+OPT_PREFERRED_IMPORT_W = "preferred_import_w"  # fallback if controller is absent
+OPT_HARVEST_CAPTURE_FACTOR = "harvest_capture_factor"  # deprecated; ignored by v0.1.8
 OPT_CHARGE_EFFICIENCY = "charge_efficiency"
 OPT_DISCRETIONARY_THRESHOLD_KWH = "discretionary_threshold_kwh"
 
@@ -34,7 +35,8 @@ DEFAULT_CAPACITY_KWH = 49.152
 DEFAULT_MIN_RESERVE = 10.0
 DEFAULT_STRONG_SOLAR_KWH = 35.0
 DEFAULT_EV_TARGET_SOC = 100.0
+DEFAULT_EV_SOLAR_ADVISORY_ENABLED = False
 DEFAULT_PREFERRED_IMPORT_W = 250.0
-DEFAULT_HARVEST_CAPTURE_FACTOR = 0.88
+DEFAULT_HARVEST_CAPTURE_FACTOR = 1.0
 DEFAULT_CHARGE_EFFICIENCY = 0.90
 DEFAULT_DISCRETIONARY_THRESHOLD_KWH = 1.0

@@ -3,6 +3,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
+try:
+    from .simulation import ControllerSettings, full_day_solar_curve, simulate_energy_flow
+except ImportError:  # pragma: no cover - direct unit-test import
+    from simulation import ControllerSettings, full_day_solar_curve, simulate_energy_flow
+
 STRATEGY_HOLD = "HOLD"
 STRATEGY_USE_DISCRETIONARY_LOADS = "USE_DISCRETIONARY_LOADS"
 STRATEGY_CREATE_HEADROOM = "CREATE_HEADROOM"
@@ -29,20 +34,68 @@ class SolarPeriodPlan:
     discretionary_energy_kwh: float
     daylight_hours: float
     average_load_kw: float
+    ending_bank_socs_pct: tuple[float, float, float]
+    capacity_limited_export_kwh: float
+    power_limited_export_kwh: float
+    control_limited_export_kwh: float
+    grid_to_battery_ac_kwh: float
+    peak_export_w: float
+    export_minutes: float
     model: str
-
-
-@dataclass(frozen=True, slots=True)
-class _Simulation:
-    projected_stored_kwh: float
-    projected_charge_kwh: float
-    predicted_export_kwh: float
-    predicted_grid_import_kwh: float
-    required_headroom_kwh: float
 
 
 def _clamp(value: float, minimum: float, maximum: float) -> float:
     return min(max(value, minimum), maximum)
+
+
+def _normalize_capacities(
+    capacity_kwh: float,
+    bank_capacities_kwh: tuple[float, float, float] | None,
+) -> tuple[float, float, float]:
+    if bank_capacities_kwh is not None:
+        values = tuple(max(float(value), 0.001) for value in bank_capacities_kwh)
+        total = sum(values)
+        if total > 0:
+            scale = capacity_kwh / total
+            return tuple(value * scale for value in values)
+    return (capacity_kwh / 3.0,) * 3
+
+
+def _normalize_socs(
+    current_soc_pct: float,
+    bank_socs_pct: tuple[float, float, float] | None,
+) -> tuple[float, float, float]:
+    if bank_socs_pct is None:
+        return (current_soc_pct,) * 3
+    return tuple(_clamp(float(value), 0.0, 100.0) for value in bank_socs_pct)
+
+
+def _aggregate_soc(
+    socs: tuple[float, float, float],
+    capacities: tuple[float, float, float],
+) -> float:
+    return 100.0 * sum(
+        capacity * soc / 100.0 for capacity, soc in zip(capacities, socs)
+    ) / sum(capacities)
+
+
+def _discharge_banks(
+    socs: tuple[float, float, float],
+    capacities: tuple[float, float, float],
+    discharge_kwh: float,
+    reserve_pct: float,
+) -> tuple[float, float, float]:
+    stored = [capacity * soc / 100.0 for capacity, soc in zip(capacities, socs)]
+    floors = [capacity * reserve_pct / 100.0 for capacity in capacities]
+    available = [max(value - floor, 0.0) for value, floor in zip(stored, floors)]
+    total_available = sum(available)
+    if total_available <= 0 or discharge_kwh <= 0:
+        return socs
+    fraction = min(discharge_kwh / total_available, 1.0)
+    ending = [value - room * fraction for value, room in zip(stored, available)]
+    return tuple(
+        100.0 * value / capacity for value, capacity in zip(ending, capacities)
+    )
 
 
 def plan_solar_period(
@@ -56,137 +109,109 @@ def plan_solar_period(
     solar_forecast_kwh: float,
     base_load_power_w: float,
     peak_time: datetime | None,
-    harvest_capture_factor: float = 0.88,
+    harvest_capture_factor: float = 1.0,
     charge_efficiency: float = 0.90,
     storm_active: bool = False,
     ev_soc_pct: float | None = None,
     ev_target_soc_pct: float = 100.0,
     ev_home: bool | None = None,
+    ev_discretionary_allowed: bool = False,
     discretionary_threshold_kwh: float = 1.0,
     allow_presolar_discharge: bool = True,
-    step_minutes: int = 5,
+    bank_socs_pct: tuple[float, float, float] | None = None,
+    bank_capacities_kwh: tuple[float, float, float] | None = None,
+    controller_settings: ControllerSettings | None = None,
+    step_minutes: int = 1,
 ) -> SolarPeriodPlan:
-    """Plan one complete solar period.
+    """Plan one complete solar period from physical AC-flow constraints.
 
-    Solar serves house load first. Only modeled AC surplus is available to
-    charge the stationary battery. Stored solar is preserved by default.
-    Pre-solar discharge is recommended only when storage headroom is genuinely
-    insufficient, the reserve floor allows it, and an available EV is not a
-    better first use of otherwise-exported solar.
+    ``harvest_capture_factor`` is retained only for config compatibility. It is
+    deliberately ignored: forecast uncertainty is not a physical export path.
+    Export is counted only when modeled solar cannot be absorbed after house
+    load because of battery capacity, charging-power, or controller behavior.
     """
+    del harvest_capture_factor
+
     capacity_kwh = max(float(capacity_kwh), 0.001)
     current_soc_pct = _clamp(float(current_soc_pct), 0.0, 100.0)
     charge_limit_pct = _clamp(float(charge_limit_pct), 0.0, 100.0)
     minimum_reserve_pct = _clamp(float(minimum_reserve_pct), 0.0, 100.0)
     solar_forecast_kwh = max(float(solar_forecast_kwh), 0.0)
     average_load_kw = max(float(base_load_power_w), 0.0) / 1000.0
-    harvest_capture_factor = _clamp(float(harvest_capture_factor), 0.0, 1.0)
     charge_efficiency = _clamp(float(charge_efficiency), 0.0, 1.0)
     discretionary_threshold_kwh = max(float(discretionary_threshold_kwh), 0.0)
-    step_minutes = max(int(step_minutes), 1)
+    controller_settings = controller_settings or ControllerSettings()
 
     daylight_hours = max((sunset - sunrise).total_seconds() / 3600.0, 0.0)
     if daylight_hours <= 0:
         raise ValueError("sunset must be after sunrise")
 
-    stored_kwh = capacity_kwh * current_soc_pct / 100.0
-    charge_ceiling_kwh = capacity_kwh * charge_limit_pct / 100.0
-    available_headroom_kwh = max(charge_ceiling_kwh - stored_kwh, 0.0)
+    capacities = _normalize_capacities(capacity_kwh, bank_capacities_kwh)
+    starting_socs = _normalize_socs(current_soc_pct, bank_socs_pct)
+    starting_soc_pct = _aggregate_soc(starting_socs, capacities)
 
     peak_elapsed_h = daylight_hours / 2.0
     if peak_time is not None:
         candidate = (peak_time - sunrise).total_seconds() / 3600.0
         if 0.05 < candidate < daylight_hours - 0.05:
             peak_elapsed_h = candidate
-
-    # A triangular curve conserves the daily forecast exactly regardless of
-    # where the peak occurs because its area is 1/2 * peak * daylight_hours.
-    peak_kw = (
-        2.0 * solar_forecast_kwh / daylight_hours
-        if solar_forecast_kwh > 0
-        else 0.0
+    solar_curve = full_day_solar_curve(
+        solar_forecast_kwh=solar_forecast_kwh,
+        daylight_hours=daylight_hours,
+        peak_elapsed_h=peak_elapsed_h,
     )
 
-    def _simulate(starting_stored_kwh: float) -> _Simulation:
-        projected_stored_kwh = min(starting_stored_kwh, charge_ceiling_kwh)
-        projected_charge_kwh = 0.0
-        predicted_export_kwh = 0.0
-        predicted_grid_import_kwh = 0.0
-        required_headroom_kwh = 0.0
+    baseline = simulate_energy_flow(
+        duration_h=daylight_hours,
+        solar_power_kw=solar_curve,
+        average_load_kw=average_load_kw,
+        bank_socs_pct=starting_socs,
+        bank_capacities_kwh=capacities,
+        charge_limit_pct=charge_limit_pct,
+        charge_efficiency=charge_efficiency,
+        controller=controller_settings,
+        step_minutes=step_minutes,
+    )
+    unlimited = simulate_energy_flow(
+        duration_h=daylight_hours,
+        solar_power_kw=solar_curve,
+        average_load_kw=average_load_kw,
+        bank_socs_pct=starting_socs,
+        bank_capacities_kwh=capacities,
+        charge_limit_pct=charge_limit_pct,
+        charge_efficiency=charge_efficiency,
+        controller=controller_settings,
+        step_minutes=step_minutes,
+        ignore_battery_capacity=True,
+    )
 
-        step_h = step_minutes / 60.0
-        elapsed_h = 0.0
-        while elapsed_h < daylight_hours - 1e-9:
-            dt_h = min(step_h, daylight_hours - elapsed_h)
-            midpoint_h = elapsed_h + dt_h / 2.0
+    current_stored_kwh = sum(
+        capacity * soc / 100.0 for capacity, soc in zip(capacities, starting_socs)
+    )
+    charge_ceiling_kwh = sum(capacities) * charge_limit_pct / 100.0
+    available_headroom_kwh = max(charge_ceiling_kwh - current_stored_kwh, 0.0)
 
-            if midpoint_h <= peak_elapsed_h:
-                solar_kw = (
-                    peak_kw * midpoint_h / peak_elapsed_h
-                    if peak_elapsed_h > 0
-                    else peak_kw
-                )
-            else:
-                tail_h = daylight_hours - peak_elapsed_h
-                solar_kw = (
-                    peak_kw * (daylight_hours - midpoint_h) / tail_h
-                    if tail_h > 0
-                    else 0.0
-                )
-
-            net_kw = solar_kw - average_load_kw
-            if net_kw > 0:
-                surplus_ac_kwh = net_kw * dt_h
-                battery_eligible_ac_kwh = surplus_ac_kwh * harvest_capture_factor
-                potential_stored_kwh = battery_eligible_ac_kwh * charge_efficiency
-                required_headroom_kwh += potential_stored_kwh
-
-                headroom_left_kwh = max(
-                    charge_ceiling_kwh - projected_stored_kwh, 0.0
-                )
-                accepted_stored_kwh = min(
-                    potential_stored_kwh, headroom_left_kwh
-                )
-                projected_stored_kwh += accepted_stored_kwh
-                projected_charge_kwh += accepted_stored_kwh
-
-                accepted_ac_kwh = (
-                    accepted_stored_kwh / charge_efficiency
-                    if charge_efficiency > 0
-                    else 0.0
-                )
-                predicted_export_kwh += max(
-                    surplus_ac_kwh - accepted_ac_kwh, 0.0
-                )
-            else:
-                predicted_grid_import_kwh += -net_kw * dt_h
-
-            elapsed_h += dt_h
-
-        return _Simulation(
-            projected_stored_kwh=projected_stored_kwh,
-            projected_charge_kwh=projected_charge_kwh,
-            predicted_export_kwh=predicted_export_kwh,
-            predicted_grid_import_kwh=predicted_grid_import_kwh,
-            required_headroom_kwh=required_headroom_kwh,
-        )
-
-    baseline = _simulate(stored_kwh)
-    required_headroom_kwh = baseline.required_headroom_kwh
+    # Headroom is created only for solar-derived storage. The controller's
+    # preferred-import margin can cause a small amount of grid-to-battery AC;
+    # that is a diagnostic/control-tuning issue, never a reason to discharge
+    # stored solar in advance.
+    required_headroom_kwh = unlimited.solar_to_battery_ac_kwh * charge_efficiency
     headroom_margin_kwh = available_headroom_kwh - required_headroom_kwh
     headroom_shortfall_kwh = max(-headroom_margin_kwh, 0.0)
 
-    reserve_floor_kwh = capacity_kwh * minimum_reserve_pct / 100.0
-    stored_above_reserve_kwh = max(stored_kwh - reserve_floor_kwh, 0.0)
-    possible_discharge_kwh = min(
-        headroom_shortfall_kwh, stored_above_reserve_kwh
-    )
+    reserve_floor_kwh = sum(capacities) * minimum_reserve_pct / 100.0
+    stored_above_reserve_kwh = max(current_stored_kwh - reserve_floor_kwh, 0.0)
+    possible_discharge_kwh = min(headroom_shortfall_kwh, stored_above_reserve_kwh)
 
     ev_needs_charge = (
         ev_soc_pct is not None
         and float(ev_soc_pct) < float(ev_target_soc_pct) - 1.0
     )
     ev_available = ev_home is not False and ev_needs_charge
+    capacity_export_material = (
+        baseline.capacity_limited_export_kwh >= discretionary_threshold_kwh
+    )
+    any_export_material = baseline.predicted_export_kwh >= discretionary_threshold_kwh
 
     strategy = STRATEGY_HOLD
     recommended_discharge_kwh = 0.0
@@ -197,57 +222,76 @@ def plan_solar_period(
             "Storm protection is active; preserve stored energy and do not "
             "create headroom."
         )
-    elif (
-        baseline.predicted_export_kwh >= discretionary_threshold_kwh
-        and ev_available
-    ):
+    elif capacity_export_material and ev_discretionary_allowed and ev_available:
         strategy = STRATEGY_USE_DISCRETIONARY_LOADS
         reason = (
-            f"About {baseline.predicted_export_kwh:.2f} kWh may otherwise "
-            "export; use the EV or another flexible load in the solar window."
+            f"About {baseline.predicted_export_kwh:.2f} kWh is physically at "
+            "risk of export because storage capacity becomes limiting; a "
+            "reliably controllable EV/flexible load can be used before cycling "
+            "the stationary battery."
         )
     elif (
-        headroom_shortfall_kwh > 0.25
+        capacity_export_material
+        and headroom_shortfall_kwh > 0.25
         and allow_presolar_discharge
         and possible_discharge_kwh > 0.05
     ):
         strategy = STRATEGY_CREATE_HEADROOM
         recommended_discharge_kwh = possible_discharge_kwh
         reason = (
-            f"Battery headroom is short by {headroom_shortfall_kwh:.2f} kWh; "
+            f"Storage capacity would cause about "
+            f"{baseline.capacity_limited_export_kwh:.2f} kWh of export and "
+            f"solar headroom is short by {headroom_shortfall_kwh:.2f} kWh; "
             f"create no more than {recommended_discharge_kwh:.2f} kWh before "
-            "the solar window while respecting the reserve floor."
+            "the solar window while respecting the effective reserve floor."
         )
-    elif headroom_shortfall_kwh > 0.25 and not allow_presolar_discharge:
-        if baseline.predicted_export_kwh >= discretionary_threshold_kwh:
+    elif capacity_export_material and headroom_shortfall_kwh > 0.25:
+        if not allow_presolar_discharge:
             strategy = STRATEGY_USE_DISCRETIONARY_LOADS
             reason = (
-                f"About {baseline.predicted_export_kwh:.2f} kWh may otherwise "
-                "export; daylight is underway, so preserve the stationary "
-                "battery and use a flexible load if practical."
+                f"Storage capacity may cause about "
+                f"{baseline.capacity_limited_export_kwh:.2f} kWh of export; "
+                "daylight battery discharge is prohibited, so use only a "
+                "reliably controllable flexible load if practical."
             )
         else:
             reason = (
-                "Additional headroom may be useful, but daylight discharge is "
-                "not allowed; preserve stored solar."
+                "Storage headroom would be useful, but the effective reserve "
+                "floor prevents a recommended discharge."
             )
-    elif headroom_shortfall_kwh > 0.25:
+    elif any_export_material:
+        strategy = STRATEGY_USE_DISCRETIONARY_LOADS
         reason = (
-            "Additional headroom may be useful, but the reserve floor prevents "
-            "a recommended battery discharge."
+            f"About {baseline.predicted_export_kwh:.2f} kWh remains at physical "
+            "export risk from charging-power/controller constraints rather than "
+            "storage capacity; use only a reliably controllable flexible load."
         )
     else:
         reason = (
-            f"Existing headroom exceeds modeled storage need by "
+            f"Physical export risk is only {baseline.predicted_export_kwh:.2f} "
+            "kWh. Existing headroom exceeds modeled solar-storage need by "
             f"{max(headroom_margin_kwh, 0.0):.2f} kWh; preserve stored solar."
         )
 
-    planned_start_stored_kwh = max(
-        stored_kwh - recommended_discharge_kwh, reserve_floor_kwh
+    planned_socs = _discharge_banks(
+        starting_socs,
+        capacities,
+        recommended_discharge_kwh,
+        minimum_reserve_pct,
     )
-    planned_start_soc_pct = 100.0 * planned_start_stored_kwh / capacity_kwh
+    planned_start_soc_pct = _aggregate_soc(planned_socs, capacities)
     final_simulation = (
-        _simulate(planned_start_stored_kwh)
+        simulate_energy_flow(
+            duration_h=daylight_hours,
+            solar_power_kw=solar_curve,
+            average_load_kw=average_load_kw,
+            bank_socs_pct=planned_socs,
+            bank_capacities_kwh=capacities,
+            charge_limit_pct=charge_limit_pct,
+            charge_efficiency=charge_efficiency,
+            controller=controller_settings,
+            step_minutes=step_minutes,
+        )
         if recommended_discharge_kwh > 0
         else baseline
     )
@@ -257,18 +301,15 @@ def plan_solar_period(
         if final_simulation.predicted_export_kwh >= discretionary_threshold_kwh
         else 0.0
     )
-    projected_soc_pct = (
-        100.0 * final_simulation.projected_stored_kwh / capacity_kwh
-    )
 
     return SolarPeriodPlan(
         strategy=strategy,
         reason=reason,
-        starting_soc_pct=current_soc_pct,
+        starting_soc_pct=starting_soc_pct,
         planned_start_soc_pct=planned_start_soc_pct,
-        projected_max_soc_pct=projected_soc_pct,
-        projected_sunset_soc_pct=projected_soc_pct,
-        projected_charge_kwh=final_simulation.projected_charge_kwh,
+        projected_max_soc_pct=final_simulation.aggregate_soc_pct,
+        projected_sunset_soc_pct=final_simulation.aggregate_soc_pct,
+        projected_charge_kwh=final_simulation.stored_charge_kwh,
         predicted_export_kwh=final_simulation.predicted_export_kwh,
         predicted_grid_import_kwh=final_simulation.predicted_grid_import_kwh,
         required_headroom_kwh=required_headroom_kwh,
@@ -279,5 +320,12 @@ def plan_solar_period(
         discretionary_energy_kwh=discretionary_energy_kwh,
         daylight_hours=daylight_hours,
         average_load_kw=average_load_kw,
-        model="full_day_triangle",
+        ending_bank_socs_pct=final_simulation.ending_bank_socs_pct,
+        capacity_limited_export_kwh=final_simulation.capacity_limited_export_kwh,
+        power_limited_export_kwh=final_simulation.power_limited_export_kwh,
+        control_limited_export_kwh=final_simulation.control_limited_export_kwh,
+        grid_to_battery_ac_kwh=final_simulation.grid_to_battery_ac_kwh,
+        peak_export_w=final_simulation.peak_export_w,
+        export_minutes=final_simulation.export_minutes,
+        model=final_simulation.model,
     )

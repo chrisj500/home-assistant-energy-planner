@@ -28,8 +28,8 @@ from .const import (
     DEFAULT_CAPACITY_KWH,
     DEFAULT_CHARGE_EFFICIENCY,
     DEFAULT_DISCRETIONARY_THRESHOLD_KWH,
+    DEFAULT_EV_SOLAR_ADVISORY_ENABLED,
     DEFAULT_EV_TARGET_SOC,
-    DEFAULT_HARVEST_CAPTURE_FACTOR,
     DEFAULT_MIN_RESERVE,
     DEFAULT_PREFERRED_IMPORT_W,
     DEFAULT_STRONG_SOLAR_KWH,
@@ -38,8 +38,8 @@ from .const import (
     OPT_AUTO_HEADROOM,
     OPT_CHARGE_EFFICIENCY,
     OPT_DISCRETIONARY_THRESHOLD_KWH,
+    OPT_EV_SOLAR_ADVISORY_ENABLED,
     OPT_EV_TARGET_SOC,
-    OPT_HARVEST_CAPTURE_FACTOR,
     OPT_MIN_RESERVE,
     OPT_PREFERRED_IMPORT_W,
     OPT_STRONG_SOLAR_KWH,
@@ -176,18 +176,18 @@ class EnergyPlannerOptionsFlow(config_entries.OptionsFlow):
                     default=float(current.get(OPT_EV_TARGET_SOC, DEFAULT_EV_TARGET_SOC)),
                 ): vol.All(vol.Coerce(float), vol.Range(min=50, max=100)),
                 vol.Optional(
+                    OPT_EV_SOLAR_ADVISORY_ENABLED,
+                    default=bool(
+                        current.get(
+                            OPT_EV_SOLAR_ADVISORY_ENABLED,
+                            DEFAULT_EV_SOLAR_ADVISORY_ENABLED,
+                        )
+                    ),
+                ): bool,
+                vol.Optional(
                     OPT_PREFERRED_IMPORT_W,
                     default=float(current.get(OPT_PREFERRED_IMPORT_W, DEFAULT_PREFERRED_IMPORT_W)),
                 ): vol.All(vol.Coerce(float), vol.Range(min=0, max=1000)),
-                vol.Optional(
-                    OPT_HARVEST_CAPTURE_FACTOR,
-                    default=float(
-                        current.get(
-                            OPT_HARVEST_CAPTURE_FACTOR,
-                            DEFAULT_HARVEST_CAPTURE_FACTOR,
-                        )
-                    ),
-                ): vol.All(vol.Coerce(float), vol.Range(min=0.50, max=1.00)),
                 vol.Optional(
                     OPT_CHARGE_EFFICIENCY,
                     default=float(current.get(OPT_CHARGE_EFFICIENCY, DEFAULT_CHARGE_EFFICIENCY)),
