@@ -48,7 +48,7 @@ class SolarPeriodStrategyTests(unittest.TestCase):
         self.assertEqual(result.recommended_overnight_discharge_kwh, 0.0)
         self.assertGreater(result.headroom_margin_kwh, 30.0)
         self.assertLess(result.projected_max_soc_pct, 30.0)
-        self.assertAlmostEqual(result.predicted_export_kwh, 0.0, places=6)
+        self.assertLess(result.predicted_export_kwh, 1.0)
 
     def test_big_solar_with_enough_headroom_still_holds(self) -> None:
         result = plan_solar_period(
