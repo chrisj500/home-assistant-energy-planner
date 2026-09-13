@@ -3,9 +3,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
-from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorEntityDescription, SensorStateClass
+from homeassistant.components.sensor import (
+    SensorDeviceClass,
+    SensorEntity,
+    SensorEntityDescription,
+    SensorStateClass,
+)
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfEnergy
+from homeassistant.const import PERCENTAGE, UnitOfEnergy, UnitOfPower, UnitOfTime
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .coordinator import EnergyPlannerCoordinator
@@ -16,64 +21,48 @@ class EnergyPlannerSensorDescription(SensorEntityDescription):
     data_key: str
 
 
-SENSORS = (
-    EnergyPlannerSensorDescription(
-        key="weighted_soc",
-        data_key="weighted_soc",
-        name="Whole Bank SOC",
-        native_unit_of_measurement=PERCENTAGE,
-        device_class=SensorDeviceClass.BATTERY,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    EnergyPlannerSensorDescription(
-        key="stored_energy",
-        data_key="stored_energy",
-        name="Whole Bank Stored Energy",
+def _energy(key: str, data_key: str, name: str, *, storage: bool = False):
+    return EnergyPlannerSensorDescription(
+        key=key,
+        data_key=data_key,
+        name=name,
         native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.ENERGY_STORAGE,
+        device_class=(
+            SensorDeviceClass.ENERGY_STORAGE if storage else SensorDeviceClass.ENERGY
+        ),
         state_class=SensorStateClass.MEASUREMENT,
-    ),
-    EnergyPlannerSensorDescription(
-        key="battery_headroom",
-        data_key="battery_headroom",
-        name="Battery Headroom",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.ENERGY_STORAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    EnergyPlannerSensorDescription(
-        key="upcoming_solar",
-        data_key="upcoming_solar",
-        name="Upcoming Solar",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.ENERGY,
-    ),
-    EnergyPlannerSensorDescription(
-        key="projected_sunset_soc",
-        data_key="projected_sunset_soc",
-        name="Live Projected Sunset SOC",
+        suggested_display_precision=2,
+    )
+
+
+def _soc(key: str, data_key: str, name: str):
+    return EnergyPlannerSensorDescription(
+        key=key,
+        data_key=data_key,
+        name=name,
         native_unit_of_measurement=PERCENTAGE,
         device_class=SensorDeviceClass.BATTERY,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
+    )
+
+
+SENSORS = (
+    _soc("weighted_soc", "weighted_soc", "Whole Bank SOC"),
+    _energy("stored_energy", "stored_energy", "Whole Bank Stored Energy", storage=True),
+    _energy("battery_headroom", "battery_headroom", "Battery Headroom", storage=True),
+    _energy("upcoming_solar", "upcoming_solar", "Upcoming Solar"),
+    _soc("projected_sunset_soc", "projected_sunset_soc", "Live Projected Sunset SOC"),
+    _energy(
+        "projected_charge_to_sunset",
+        "projected_charge_to_sunset",
+        "Live Projected Battery Charge to Sunset",
+        storage=True,
     ),
-    EnergyPlannerSensorDescription(
-        key="projected_charge_to_sunset",
-        data_key="projected_charge_to_sunset",
-        name="Live Projected Battery Charge to Sunset",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.ENERGY_STORAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=2,
-    ),
-    EnergyPlannerSensorDescription(
-        key="projection_available_ac",
-        data_key="projection_available_ac",
-        name="Live Projected Charge Opportunity to Sunset",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=2,
+    _energy(
+        "projection_available_ac",
+        "projection_available_ac",
+        "Live Projected Charge Opportunity to Sunset",
     ),
     EnergyPlannerSensorDescription(
         key="projection_model",
@@ -81,77 +70,77 @@ SENSORS = (
         name="Live Sunset Projection Model",
     ),
     EnergyPlannerSensorDescription(
-        key="today_plan_date",
-        data_key="today_plan_date",
-        name="Today Plan Date",
+        key="today_plan_date", data_key="today_plan_date", name="Today Plan Date"
     ),
     EnergyPlannerSensorDescription(
-        key="today_plan_ready",
-        data_key="today_plan_ready",
-        name="Today Plan Ready",
+        key="today_plan_ready", data_key="today_plan_ready", name="Today Plan Ready"
     ),
     EnergyPlannerSensorDescription(
-        key="today_strategy",
-        data_key="today_strategy",
-        name="Today Strategy",
+        key="today_strategy", data_key="today_strategy", name="Today Strategy"
     ),
     EnergyPlannerSensorDescription(
         key="today_strategy_reason",
         data_key="today_strategy_reason",
         name="Today Strategy Reason",
     ),
-    EnergyPlannerSensorDescription(
-        key="today_projected_max_soc",
-        data_key="today_projected_max_soc",
-        name="Projected Maximum SOC Today",
-        native_unit_of_measurement=PERCENTAGE,
-        device_class=SensorDeviceClass.BATTERY,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=1,
+    _soc("today_projected_max_soc", "today_projected_max_soc", "Projected Maximum SOC Today"),
+    _soc(
+        "today_projected_sunset_soc",
+        "today_projected_sunset_soc",
+        "Projected Sunset SOC Today",
+    ),
+    _energy("today_predicted_export", "today_predicted_export", "Predicted Solar Export Today"),
+    _energy(
+        "today_predicted_grid_import",
+        "today_predicted_grid_import",
+        "Predicted Daylight Grid Import Today",
+    ),
+    _energy(
+        "today_discretionary_energy",
+        "today_discretionary_energy",
+        "Discretionary Energy Today",
+    ),
+    _energy(
+        "today_recommended_presolar_discharge",
+        "today_recommended_presolar_discharge",
+        "Recommended Pre-Solar Discharge Today",
+    ),
+    _energy(
+        "today_capacity_limited_export",
+        "today_capacity_limited_export",
+        "Capacity-Limited Export Today",
+    ),
+    _energy(
+        "today_power_limited_export",
+        "today_power_limited_export",
+        "Power-Limited Export Today",
+    ),
+    _energy(
+        "today_control_limited_export",
+        "today_control_limited_export",
+        "Control-Unavailable Export Today",
+    ),
+    _energy(
+        "today_grid_to_battery",
+        "today_grid_to_battery",
+        "Forecast Grid-to-Battery Today",
     ),
     EnergyPlannerSensorDescription(
-        key="today_projected_sunset_soc",
-        data_key="today_projected_sunset_soc",
-        name="Projected Sunset SOC Today",
-        native_unit_of_measurement=PERCENTAGE,
-        device_class=SensorDeviceClass.BATTERY,
+        key="today_peak_export_w",
+        data_key="today_peak_export_w",
+        name="Peak Unavoidable Export Today",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=1,
+        suggested_display_precision=0,
     ),
     EnergyPlannerSensorDescription(
-        key="today_predicted_export",
-        data_key="today_predicted_export",
-        name="Predicted Solar Export Today",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.ENERGY,
+        key="today_export_minutes",
+        data_key="today_export_minutes",
+        name="Unavoidable Export Duration Today",
+        native_unit_of_measurement=UnitOfTime.MINUTES,
         state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=2,
-    ),
-    EnergyPlannerSensorDescription(
-        key="today_predicted_grid_import",
-        data_key="today_predicted_grid_import",
-        name="Predicted Daylight Grid Import Today",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=2,
-    ),
-    EnergyPlannerSensorDescription(
-        key="today_discretionary_energy",
-        data_key="today_discretionary_energy",
-        name="Discretionary Energy Today",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=2,
-    ),
-    EnergyPlannerSensorDescription(
-        key="today_recommended_presolar_discharge",
-        data_key="today_recommended_presolar_discharge",
-        name="Recommended Pre-Solar Discharge Today",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=2,
+        suggested_display_precision=0,
     ),
     EnergyPlannerSensorDescription(
         key="today_projection_model",
@@ -178,105 +167,120 @@ SENSORS = (
         data_key="tomorrow_strategy_reason",
         name="Next Day Strategy Reason",
     ),
-    EnergyPlannerSensorDescription(
-        key="required_headroom_tomorrow",
-        data_key="required_headroom_tomorrow",
-        name="Required Headroom Next Day",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=2,
+    _energy(
+        "required_headroom_tomorrow",
+        "required_headroom_tomorrow",
+        "Required Headroom Next Day",
+    ),
+    _energy(
+        "headroom_margin_tomorrow",
+        "headroom_margin_tomorrow",
+        "Headroom Margin Next Day",
+    ),
+    _energy(
+        "headroom_shortfall_tomorrow",
+        "headroom_shortfall_tomorrow",
+        "Headroom Shortfall Next Day",
+    ),
+    _energy(
+        "recommended_overnight_discharge",
+        "recommended_overnight_discharge",
+        "Recommended Discharge Before Next Day",
+    ),
+    _soc(
+        "projected_next_day_start_soc",
+        "projected_next_day_start_soc",
+        "Projected Start SOC Next Day",
+    ),
+    _soc(
+        "planned_next_day_start_soc",
+        "planned_next_day_start_soc",
+        "Planned Start SOC Next Day",
+    ),
+    _soc(
+        "projected_max_soc_tomorrow",
+        "projected_max_soc_tomorrow",
+        "Projected Maximum SOC Next Day",
+    ),
+    _soc(
+        "projected_sunset_soc_tomorrow",
+        "projected_sunset_soc_tomorrow",
+        "Projected Sunset SOC Next Day",
+    ),
+    _energy(
+        "predicted_export_tomorrow",
+        "predicted_export_tomorrow",
+        "Predicted Solar Export Next Day",
+    ),
+    _energy(
+        "predicted_grid_import_tomorrow",
+        "predicted_grid_import_tomorrow",
+        "Predicted Daylight Grid Import Next Day",
+    ),
+    _energy(
+        "discretionary_energy_tomorrow",
+        "discretionary_energy_tomorrow",
+        "Discretionary Energy Next Day",
+    ),
+    _energy(
+        "next_day_capacity_limited_export",
+        "next_day_capacity_limited_export",
+        "Capacity-Limited Export Next Day",
+    ),
+    _energy(
+        "next_day_power_limited_export",
+        "next_day_power_limited_export",
+        "Power-Limited Export Next Day",
+    ),
+    _energy(
+        "next_day_control_limited_export",
+        "next_day_control_limited_export",
+        "Control-Unavailable Export Next Day",
+    ),
+    _energy(
+        "next_day_grid_to_battery",
+        "next_day_grid_to_battery",
+        "Forecast Grid-to-Battery Next Day",
     ),
     EnergyPlannerSensorDescription(
-        key="headroom_margin_tomorrow",
-        data_key="headroom_margin_tomorrow",
-        name="Headroom Margin Next Day",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        key="next_day_peak_export_w",
+        data_key="next_day_peak_export_w",
+        name="Peak Unavoidable Export Next Day",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
         state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=2,
+        suggested_display_precision=0,
     ),
     EnergyPlannerSensorDescription(
-        key="headroom_shortfall_tomorrow",
-        data_key="headroom_shortfall_tomorrow",
-        name="Headroom Shortfall Next Day",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        key="next_day_export_minutes",
+        data_key="next_day_export_minutes",
+        name="Unavoidable Export Duration Next Day",
+        native_unit_of_measurement=UnitOfTime.MINUTES,
         state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=2,
-    ),
-    EnergyPlannerSensorDescription(
-        key="recommended_overnight_discharge",
-        data_key="recommended_overnight_discharge",
-        name="Recommended Discharge Before Next Day",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=2,
-    ),
-    EnergyPlannerSensorDescription(
-        key="projected_next_day_start_soc",
-        data_key="projected_next_day_start_soc",
-        name="Projected Start SOC Next Day",
-        native_unit_of_measurement=PERCENTAGE,
-        device_class=SensorDeviceClass.BATTERY,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=1,
-    ),
-    EnergyPlannerSensorDescription(
-        key="planned_next_day_start_soc",
-        data_key="planned_next_day_start_soc",
-        name="Planned Start SOC Next Day",
-        native_unit_of_measurement=PERCENTAGE,
-        device_class=SensorDeviceClass.BATTERY,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=1,
-    ),
-    EnergyPlannerSensorDescription(
-        key="projected_max_soc_tomorrow",
-        data_key="projected_max_soc_tomorrow",
-        name="Projected Maximum SOC Next Day",
-        native_unit_of_measurement=PERCENTAGE,
-        device_class=SensorDeviceClass.BATTERY,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=1,
-    ),
-    EnergyPlannerSensorDescription(
-        key="projected_sunset_soc_tomorrow",
-        data_key="projected_sunset_soc_tomorrow",
-        name="Projected Sunset SOC Next Day",
-        native_unit_of_measurement=PERCENTAGE,
-        device_class=SensorDeviceClass.BATTERY,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=1,
-    ),
-    EnergyPlannerSensorDescription(
-        key="predicted_export_tomorrow",
-        data_key="predicted_export_tomorrow",
-        name="Predicted Solar Export Next Day",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=2,
-    ),
-    EnergyPlannerSensorDescription(
-        key="predicted_grid_import_tomorrow",
-        data_key="predicted_grid_import_tomorrow",
-        name="Predicted Daylight Grid Import Next Day",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=2,
-    ),
-    EnergyPlannerSensorDescription(
-        key="discretionary_energy_tomorrow",
-        data_key="discretionary_energy_tomorrow",
-        name="Discretionary Energy Next Day",
-        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
-        device_class=SensorDeviceClass.ENERGY,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=2,
+        suggested_display_precision=0,
     ),
     EnergyPlannerSensorDescription(
         key="tomorrow_projection_model",
         data_key="tomorrow_projection_model",
         name="Next Day Projection Model",
+    ),
+    EnergyPlannerSensorDescription(
+        key="controller_model_source",
+        data_key="controller_model_source",
+        name="Forecast Capture Source",
+    ),
+    EnergyPlannerSensorDescription(
+        key="controller_model_enabled",
+        data_key="controller_model_enabled",
+        name="Forecast Capture Available",
+    ),
+    EnergyPlannerSensorDescription(
+        key="effective_reserve_floor",
+        data_key="effective_reserve_floor",
+        name="Effective Reserve Floor",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
     ),
     EnergyPlannerSensorDescription(
         key="reserve",
@@ -293,15 +297,9 @@ SENSORS = (
         device_class=SensorDeviceClass.BATTERY,
         state_class=SensorStateClass.MEASUREMENT,
     ),
+    EnergyPlannerSensorDescription(key="ev_plan", data_key="ev_plan", name="EV Charge Plan"),
     EnergyPlannerSensorDescription(
-        key="ev_plan",
-        data_key="ev_plan",
-        name="EV Charge Plan",
-    ),
-    EnergyPlannerSensorDescription(
-        key="control_ready",
-        data_key="control_ready",
-        name="Control Ready",
+        key="control_ready", data_key="control_ready", name="Control Ready"
     ),
     EnergyPlannerSensorDescription(
         key="headroom_release",
