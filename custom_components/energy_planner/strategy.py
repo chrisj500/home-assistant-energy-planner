@@ -3,7 +3,10 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime
 
-from .simulation import ControllerSettings, full_day_solar_curve, simulate_energy_flow
+try:
+    from .simulation import ControllerSettings, full_day_solar_curve, simulate_energy_flow
+except ImportError:  # pragma: no cover - direct unit-test import
+    from simulation import ControllerSettings, full_day_solar_curve, simulate_energy_flow
 
 STRATEGY_HOLD = "HOLD"
 STRATEGY_USE_DISCRETIONARY_LOADS = "USE_DISCRETIONARY_LOADS"
@@ -89,10 +92,7 @@ def _discharge_banks(
     if total_available <= 0 or discharge_kwh <= 0:
         return socs
     fraction = min(discharge_kwh / total_available, 1.0)
-    ending = [
-        value - room * fraction
-        for value, room in zip(stored, available)
-    ]
+    ending = [value - room * fraction for value, room in zip(stored, available)]
     return tuple(
         100.0 * value / capacity for value, capacity in zip(ending, capacities)
     )
@@ -216,11 +216,7 @@ def plan_solar_period(
             "Storm protection is active; preserve stored energy and do not "
             "create headroom."
         )
-    elif (
-        capacity_export_material
-        and ev_discretionary_allowed
-        and ev_available
-    ):
+    elif capacity_export_material and ev_discretionary_allowed and ev_available:
         strategy = STRATEGY_USE_DISCRETIONARY_LOADS
         reason = (
             f"About {baseline.predicted_export_kwh:.2f} kWh is physically "
