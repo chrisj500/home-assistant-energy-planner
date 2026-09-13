@@ -47,6 +47,17 @@ def _soc(key: str, data_key: str, name: str):
     )
 
 
+def _percent(key: str, data_key: str, name: str):
+    return EnergyPlannerSensorDescription(
+        key=key,
+        data_key=data_key,
+        name=name,
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
+    )
+
+
 SENSORS = (
     _soc("weighted_soc", "weighted_soc", "Whole Bank SOC"),
     _energy("stored_energy", "stored_energy", "Whole Bank Stored Energy", storage=True),
@@ -69,6 +80,64 @@ SENSORS = (
         data_key="projection_model",
         name="Live Sunset Projection Model",
     ),
+
+    # Forecast-calibration observability.
+    EnergyPlannerSensorDescription(
+        key="calibration_status",
+        data_key="calibration_status",
+        name="Forecast Calibration Status",
+    ),
+    EnergyPlannerSensorDescription(
+        key="calibration_action_ready",
+        data_key="calibration_action_ready",
+        name="Confidence Headroom Action Ready",
+    ),
+    EnergyPlannerSensorDescription(
+        key="calibration_daylight_samples",
+        data_key="calibration_daylight_samples",
+        name="Daylight Calibration Samples",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    EnergyPlannerSensorDescription(
+        key="calibration_overnight_samples",
+        data_key="calibration_overnight_samples",
+        name="Overnight Calibration Samples",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    _energy(
+        "calibration_daylight_mae_kwh",
+        "calibration_daylight_mae_kwh",
+        "Daylight Stored-Energy Forecast MAE",
+    ),
+    _percent(
+        "calibration_daylight_mae_ratio_pct",
+        "calibration_daylight_mae_ratio_pct",
+        "Daylight Stored-Energy Forecast MAPE",
+    ),
+    _percent(
+        "calibration_headroom_factor_pct",
+        "calibration_headroom_factor_pct",
+        "No-Regret Headroom Factor",
+    ),
+    EnergyPlannerSensorDescription(
+        key="calibration_overnight_median_kw",
+        data_key="calibration_overnight_median_kw",
+        name="Median Overnight Battery Depletion Rate",
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=2,
+    ),
+    EnergyPlannerSensorDescription(
+        key="calibration_overnight_upper_kw",
+        data_key="calibration_overnight_upper_kw",
+        name="No-Regret Overnight Battery Depletion Rate",
+        native_unit_of_measurement=UnitOfPower.KILO_WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=2,
+    ),
+
     EnergyPlannerSensorDescription(
         key="today_plan_date", data_key="today_plan_date", name="Today Plan Date"
     ),
@@ -89,7 +158,13 @@ SENSORS = (
         "today_projected_sunset_soc",
         "Projected Sunset SOC Today",
     ),
-    _energy("today_predicted_export", "today_predicted_export", "Predicted Solar Export Today"),
+    _energy("today_baseline_export", "today_baseline_export", "Baseline Unmitigated Export Today"),
+    _energy(
+        "today_baseline_capacity_export",
+        "today_baseline_capacity_export",
+        "Baseline Capacity-Limited Export Today",
+    ),
+    _energy("today_predicted_export", "today_predicted_export", "Planned Solar Export Today"),
     _energy(
         "today_predicted_grid_import",
         "today_predicted_grid_import",
@@ -103,17 +178,17 @@ SENSORS = (
     _energy(
         "today_recommended_presolar_discharge",
         "today_recommended_presolar_discharge",
-        "Recommended Pre-Solar Discharge Today",
+        "Confidence-Adjusted Pre-Solar Discharge Today",
     ),
     _energy(
         "today_capacity_limited_export",
         "today_capacity_limited_export",
-        "Capacity-Limited Export Today",
+        "Planned Capacity-Limited Export Today",
     ),
     _energy(
         "today_power_limited_export",
         "today_power_limited_export",
-        "Power-Limited Export Today",
+        "Planned Power-Limited Export Today",
     ),
     _energy(
         "today_control_limited_export",
@@ -147,6 +222,7 @@ SENSORS = (
         data_key="today_projection_model",
         name="Today Projection Model",
     ),
+
     EnergyPlannerSensorDescription(
         key="next_day_plan_date",
         data_key="next_day_plan_date",
@@ -170,27 +246,52 @@ SENSORS = (
     _energy(
         "required_headroom_tomorrow",
         "required_headroom_tomorrow",
-        "Required Headroom Next Day",
+        "Nominal Required Headroom Next Day",
     ),
     _energy(
         "headroom_margin_tomorrow",
         "headroom_margin_tomorrow",
-        "Headroom Margin Next Day",
+        "Nominal Headroom Margin Next Day",
     ),
     _energy(
         "headroom_shortfall_tomorrow",
         "headroom_shortfall_tomorrow",
-        "Headroom Shortfall Next Day",
+        "Nominal Headroom Shortfall Next Day",
+    ),
+    _energy(
+        "confidence_required_headroom_tomorrow",
+        "confidence_required_headroom_tomorrow",
+        "No-Regret Required Headroom Next Day",
+    ),
+    _energy(
+        "confidence_available_headroom_tomorrow",
+        "confidence_available_headroom_tomorrow",
+        "No-Regret Available Headroom Next Day",
+    ),
+    _energy(
+        "confidence_headroom_shortfall_tomorrow",
+        "confidence_headroom_shortfall_tomorrow",
+        "No-Regret Headroom Shortfall Next Day",
     ),
     _energy(
         "recommended_overnight_discharge",
         "recommended_overnight_discharge",
-        "Recommended Discharge Before Next Day",
+        "Confidence-Adjusted Discharge Before Next Day",
+    ),
+    _energy(
+        "nominal_overnight_drop_tomorrow",
+        "nominal_overnight_drop_tomorrow",
+        "Expected Natural Overnight Battery Depletion",
+    ),
+    _energy(
+        "no_regret_overnight_drop_tomorrow",
+        "no_regret_overnight_drop_tomorrow",
+        "No-Regret Natural Overnight Headroom Allowance",
     ),
     _soc(
         "projected_next_day_start_soc",
         "projected_next_day_start_soc",
-        "Projected Start SOC Next Day",
+        "Projected Natural Start SOC Next Day",
     ),
     _soc(
         "planned_next_day_start_soc",
@@ -208,9 +309,29 @@ SENSORS = (
         "Projected Sunset SOC Next Day",
     ),
     _energy(
+        "baseline_export_tomorrow",
+        "baseline_export_tomorrow",
+        "Baseline Unmitigated Export Next Day",
+    ),
+    _energy(
+        "baseline_capacity_export_tomorrow",
+        "baseline_capacity_export_tomorrow",
+        "Baseline Capacity-Limited Export Next Day",
+    ),
+    _energy(
+        "baseline_power_export_tomorrow",
+        "baseline_power_export_tomorrow",
+        "Baseline Power-Limited Export Next Day",
+    ),
+    _energy(
+        "baseline_control_export_tomorrow",
+        "baseline_control_export_tomorrow",
+        "Baseline Control-Unavailable Export Next Day",
+    ),
+    _energy(
         "predicted_export_tomorrow",
         "predicted_export_tomorrow",
-        "Predicted Solar Export Next Day",
+        "Planned Solar Export Next Day",
     ),
     _energy(
         "predicted_grid_import_tomorrow",
@@ -225,17 +346,17 @@ SENSORS = (
     _energy(
         "next_day_capacity_limited_export",
         "next_day_capacity_limited_export",
-        "Capacity-Limited Export Next Day",
+        "Planned Capacity-Limited Export Next Day",
     ),
     _energy(
         "next_day_power_limited_export",
         "next_day_power_limited_export",
-        "Power-Limited Export Next Day",
+        "Planned Power-Limited Export Next Day",
     ),
     _energy(
         "next_day_control_limited_export",
         "next_day_control_limited_export",
-        "Control-Unavailable Export Next Day",
+        "Planned Control-Unavailable Export Next Day",
     ),
     _energy(
         "next_day_grid_to_battery",
@@ -264,6 +385,7 @@ SENSORS = (
         data_key="tomorrow_projection_model",
         name="Next Day Projection Model",
     ),
+
     EnergyPlannerSensorDescription(
         key="controller_model_source",
         data_key="controller_model_source",
@@ -274,29 +396,13 @@ SENSORS = (
         data_key="controller_model_enabled",
         name="Forecast Capture Available",
     ),
-    EnergyPlannerSensorDescription(
-        key="effective_reserve_floor",
-        data_key="effective_reserve_floor",
-        name="Effective Reserve Floor",
-        native_unit_of_measurement=PERCENTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-        suggested_display_precision=1,
+    _percent(
+        "effective_reserve_floor",
+        "effective_reserve_floor",
+        "Effective Reserve Floor",
     ),
-    EnergyPlannerSensorDescription(
-        key="reserve",
-        data_key="reserve",
-        name="Current Backup Reserve",
-        native_unit_of_measurement=PERCENTAGE,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
-    EnergyPlannerSensorDescription(
-        key="ev_soc",
-        data_key="ev_soc",
-        name="EV SOC",
-        native_unit_of_measurement=PERCENTAGE,
-        device_class=SensorDeviceClass.BATTERY,
-        state_class=SensorStateClass.MEASUREMENT,
-    ),
+    _percent("reserve", "reserve", "Current Backup Reserve"),
+    _soc("ev_soc", "ev_soc", "EV SOC"),
     EnergyPlannerSensorDescription(key="ev_plan", data_key="ev_plan", name="EV Charge Plan"),
     EnergyPlannerSensorDescription(
         key="control_ready", data_key="control_ready", name="Control Ready"
