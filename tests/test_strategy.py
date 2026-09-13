@@ -46,6 +46,7 @@ class SolarPeriodStrategyTests(unittest.TestCase):
 
         self.assertEqual(result.strategy, STRATEGY_HOLD)
         self.assertEqual(result.recommended_overnight_discharge_kwh, 0.0)
+        self.assertAlmostEqual(result.planned_start_soc_pct, 21.75, places=6)
         self.assertGreater(result.headroom_margin_kwh, 30.0)
         self.assertLess(result.projected_max_soc_pct, 30.0)
         self.assertLess(result.predicted_export_kwh, 1.0)
@@ -78,6 +79,7 @@ class SolarPeriodStrategyTests(unittest.TestCase):
         self.assertGreater(result.predicted_export_kwh, 1.0)
         self.assertGreater(result.headroom_shortfall_kwh, 1.0)
         self.assertEqual(result.recommended_overnight_discharge_kwh, 0.0)
+        self.assertAlmostEqual(result.planned_start_soc_pct, 90.0, places=6)
 
     def test_export_risk_without_ev_recommends_only_missing_headroom(self) -> None:
         result = plan_solar_period(
@@ -97,13 +99,37 @@ class SolarPeriodStrategyTests(unittest.TestCase):
             result.headroom_shortfall_kwh,
             places=6,
         )
-        ending_soc = (
+        expected_start_soc = (
             90.0
             - 100.0
             * result.recommended_overnight_discharge_kwh
             / self.common["capacity_kwh"]
         )
-        self.assertGreaterEqual(ending_soc, self.common["minimum_reserve_pct"])
+        self.assertAlmostEqual(
+            result.planned_start_soc_pct,
+            expected_start_soc,
+            places=6,
+        )
+        self.assertGreaterEqual(
+            result.planned_start_soc_pct,
+            self.common["minimum_reserve_pct"],
+        )
+
+    def test_daylight_mode_never_recommends_presolar_discharge(self) -> None:
+        result = plan_solar_period(
+            **self.common,
+            current_soc_pct=90,
+            solar_forecast_kwh=50,
+            base_load_power_w=1500,
+            ev_soc_pct=100,
+            ev_target_soc_pct=100,
+            ev_home=True,
+            allow_presolar_discharge=False,
+        )
+
+        self.assertNotEqual(result.strategy, STRATEGY_CREATE_HEADROOM)
+        self.assertEqual(result.recommended_overnight_discharge_kwh, 0.0)
+        self.assertAlmostEqual(result.planned_start_soc_pct, 90.0, places=6)
 
     def test_storm_always_preserves_battery(self) -> None:
         result = plan_solar_period(
@@ -116,6 +142,7 @@ class SolarPeriodStrategyTests(unittest.TestCase):
 
         self.assertEqual(result.strategy, STRATEGY_PRESERVE_FOR_RESILIENCE)
         self.assertEqual(result.recommended_overnight_discharge_kwh, 0.0)
+        self.assertAlmostEqual(result.planned_start_soc_pct, 90.0, places=6)
 
 
 if __name__ == "__main__":
