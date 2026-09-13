@@ -4,7 +4,7 @@
     "step": {
       "user": {
         "title": "Configure Energy Planner",
-        "description": "Select the Home Assistant entities used by the planner. Live sunset and rolling Today/Next Day forecasts use the installed EcoFlow Solar Surplus controller settings when available. A Forecast.Solar API key is optional and is used only for shadow evaluation; baseline planning remains authoritative without it.",
+        "description": "Select the Home Assistant entities used by the planner. Baseline planning remains fully functional without a Forecast.Solar API key. When paid interval data is available, the rolling EV advisory evaluates future headroom risk without actuating the vehicle or stationary battery.",
         "data": {
           "name": "Name",
           "soc_entity_1": "Battery SOC 1",
@@ -23,9 +23,12 @@
           "solar_peak_time_entity": "Forecast solar peak time today",
           "solar_peak_time_tomorrow_entity": "Forecast solar peak time tomorrow",
           "base_load_power_entity": "Expected/base house load power (W)",
+          "base_load_3h_entity": "Smoothed non-EV load 3-hour average (W, optional)",
+          "base_load_24h_entity": "Smoothed non-EV load 24-hour average (W, optional)",
           "ev_soc_entity": "EV state of charge (optional)",
           "ev_home_entity": "EV location tracker (optional)",
-          "forecast_solar_api_key": "Forecast.Solar API key for optional shadow evaluation"
+          "ev_charging_power_entity": "EV circuit/charger power (W, optional)",
+          "forecast_solar_api_key": "Forecast.Solar API key for optional enhanced planning"
         }
       }
     }
@@ -51,14 +54,19 @@
           "solar_peak_time_entity": "Forecast solar peak time today",
           "solar_peak_time_tomorrow_entity": "Forecast solar peak time tomorrow",
           "base_load_power_entity": "Expected/base house load power (W)",
+          "base_load_3h_entity": "Smoothed non-EV load 3-hour average (W, optional)",
+          "base_load_24h_entity": "Smoothed non-EV load 24-hour average (W, optional)",
           "ev_soc_entity": "EV state of charge (optional)",
           "ev_home_entity": "EV location tracker (optional)",
-          "forecast_solar_api_key": "Forecast.Solar API key for optional shadow evaluation",
+          "ev_charging_power_entity": "EV circuit/charger power (W, optional)",
+          "forecast_solar_api_key": "Forecast.Solar API key for optional enhanced planning",
           "auto_headroom": "Expose create-headroom advisory flag",
           "minimum_reserve": "Minimum backup reserve (%)",
           "strong_solar_kwh": "Legacy strong solar threshold (kWh)",
           "ev_target_soc": "EV target SOC (%)",
           "ev_solar_advisory_enabled": "Allow EV solar-surplus recommendations (requires reliable start/stop control)",
+          "ev_wall_kwh_full": "EV wall energy from 0-100% SOC (kWh)",
+          "ev_fallback_charge_power_w": "EV fallback AC charging power (W)",
           "preferred_import_w": "Fallback preferred grid import if surplus controller is unavailable (W)",
           "charge_efficiency": "AC-to-battery charge efficiency (0-1)",
           "discretionary_threshold_kwh": "Minimum physically predicted export before flexible-load recommendation (kWh)"
