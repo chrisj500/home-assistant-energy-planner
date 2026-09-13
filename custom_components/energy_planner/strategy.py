@@ -136,14 +136,13 @@ def plan_solar_period(
             projected_stored_kwh += accepted_stored_kwh
             projected_charge_kwh += accepted_stored_kwh
 
-            overflow_stored_kwh = max(
-                potential_stored_kwh - accepted_stored_kwh, 0.0
+            accepted_ac_kwh = (
+                accepted_stored_kwh / charge_efficiency
+                if charge_efficiency > 0
+                else 0.0
             )
-            storage_yield = harvest_capture_factor * charge_efficiency
-            predicted_export_kwh += (
-                overflow_stored_kwh / storage_yield
-                if storage_yield > 0
-                else surplus_ac_kwh
+            predicted_export_kwh += max(
+                surplus_ac_kwh - accepted_ac_kwh, 0.0
             )
         else:
             predicted_grid_import_kwh += -net_kw * dt_h
