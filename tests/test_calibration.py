@@ -33,7 +33,8 @@ class CalibrationTests(unittest.TestCase):
         )
         self.assertFalse(decision.action_ready)
         self.assertEqual(decision.recommended_additional_discharge_kwh, 0.0)
-        self.assertEqual(decision.confidence_shortfall_kwh, 0.0)
+        self.assertEqual(decision.confidence_required_headroom_kwh, 25.0)
+        self.assertEqual(decision.confidence_shortfall_kwh, 10.0)
 
     def test_small_sample_uses_worst_observed_no_regret_bounds(self) -> None:
         profile = build_profile(
