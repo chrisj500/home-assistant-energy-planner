@@ -10,7 +10,13 @@ from homeassistant.components.sensor import (
     SensorStateClass,
 )
 from homeassistant.config_entries import ConfigEntry
-from homeassistant.const import PERCENTAGE, UnitOfEnergy, UnitOfPower, UnitOfTime
+from homeassistant.const import (
+    PERCENTAGE,
+    UnitOfEnergy,
+    UnitOfPower,
+    UnitOfTemperature,
+    UnitOfTime,
+)
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .coordinator import EnergyPlannerCoordinator
@@ -79,6 +85,113 @@ SENSORS = (
         key="projection_model",
         data_key="projection_model",
         name="Live Sunset Projection Model",
+    ),
+
+    # Optional Forecast.Solar shadow observability. These sensors never drive
+    # strategy or headroom release in v0.1.11.
+    EnergyPlannerSensorDescription(
+        key="forecast_solar_enhancement_status",
+        data_key="forecast_solar_enhancement_status",
+        name="Forecast.Solar Enhancement Status",
+    ),
+    EnergyPlannerSensorDescription(
+        key="forecast_solar_fallback_reason",
+        data_key="forecast_solar_fallback_reason",
+        name="Forecast.Solar Fallback Reason",
+    ),
+    EnergyPlannerSensorDescription(
+        key="forecast_solar_account_type",
+        data_key="forecast_solar_account_type",
+        name="Forecast.Solar Account Type",
+    ),
+    EnergyPlannerSensorDescription(
+        key="forecast_solar_interval_resolution_min",
+        data_key="forecast_solar_interval_resolution_min",
+        name="Forecast.Solar Interval Resolution",
+        native_unit_of_measurement=UnitOfTime.MINUTES,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+    ),
+    EnergyPlannerSensorDescription(
+        key="forecast_solar_horizon_days",
+        data_key="forecast_solar_horizon_days",
+        name="Forecast.Solar Horizon",
+        native_unit_of_measurement=UnitOfTime.DAYS,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+    ),
+    EnergyPlannerSensorDescription(
+        key="forecast_solar_interval_points",
+        data_key="forecast_solar_interval_points",
+        name="Forecast.Solar Interval Points",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    _energy(
+        "forecast_solar_paid_remaining_today_raw",
+        "forecast_solar_paid_remaining_today_raw",
+        "Forecast.Solar Paid Raw Remaining Today",
+    ),
+    _soc(
+        "forecast_solar_shadow_projected_sunset_soc",
+        "forecast_solar_shadow_projected_sunset_soc",
+        "Forecast.Solar Shadow Projected Sunset SOC",
+    ),
+    _percent(
+        "forecast_solar_shadow_sunset_soc_delta",
+        "forecast_solar_shadow_sunset_soc_delta",
+        "Forecast.Solar Shadow Sunset SOC Delta",
+    ),
+    _energy(
+        "forecast_solar_shadow_charge_to_sunset",
+        "forecast_solar_shadow_charge_to_sunset",
+        "Forecast.Solar Shadow Battery Charge to Sunset",
+        storage=True,
+    ),
+    _energy(
+        "forecast_solar_shadow_grid_import_today",
+        "forecast_solar_shadow_grid_import_today",
+        "Forecast.Solar Shadow Daylight Grid Import",
+    ),
+    _energy(
+        "forecast_solar_shadow_export_today",
+        "forecast_solar_shadow_export_today",
+        "Forecast.Solar Shadow Export Today",
+    ),
+    EnergyPlannerSensorDescription(
+        key="forecast_solar_shadow_scale_factor",
+        data_key="forecast_solar_shadow_scale_factor",
+        name="Forecast.Solar Shadow Energy Scale Factor",
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=3,
+    ),
+    EnergyPlannerSensorDescription(
+        key="forecast_solar_shadow_model",
+        data_key="forecast_solar_shadow_model",
+        name="Forecast.Solar Shadow Model",
+    ),
+    EnergyPlannerSensorDescription(
+        key="forecast_solar_professional_status",
+        data_key="forecast_solar_professional_status",
+        name="Forecast.Solar Professional Data Status",
+    ),
+    _percent(
+        "forecast_solar_weather_sky_now_pct",
+        "forecast_solar_weather_sky_now_pct",
+        "Forecast.Solar Weather Sky Now",
+    ),
+    _percent(
+        "forecast_solar_weather_sky_next_6h_pct",
+        "forecast_solar_weather_sky_next_6h_pct",
+        "Forecast.Solar Weather Sky Next 6 Hours",
+    ),
+    EnergyPlannerSensorDescription(
+        key="forecast_solar_weather_temperature_now",
+        data_key="forecast_solar_weather_temperature_now",
+        name="Forecast.Solar Weather Temperature",
+        native_unit_of_measurement=UnitOfTemperature.CELSIUS,
+        device_class=SensorDeviceClass.TEMPERATURE,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=1,
     ),
 
     # Forecast-calibration observability.
