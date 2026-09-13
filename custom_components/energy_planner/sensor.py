@@ -88,7 +88,7 @@ SENSORS = (
     ),
 
     # Optional Forecast.Solar shadow observability. These sensors never drive
-    # strategy or headroom release in v0.1.11.
+    # strategy or headroom release.
     EnergyPlannerSensorDescription(
         key="forecast_solar_enhancement_status",
         data_key="forecast_solar_enhancement_status",
@@ -192,6 +192,102 @@ SENSORS = (
         device_class=SensorDeviceClass.TEMPERATURE,
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=1,
+    ),
+
+    # Rolling paid-forecast EV/headroom advisory. This remains advisory-only.
+    EnergyPlannerSensorDescription(
+        key="rolling_ev_status",
+        data_key="rolling_ev_status",
+        name="Rolling EV Advisory Status",
+    ),
+    EnergyPlannerSensorDescription(
+        key="rolling_planning_base_load_w",
+        data_key="rolling_planning_base_load_w",
+        name="Rolling Planning Base Load",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+    ),
+    EnergyPlannerSensorDescription(
+        key="rolling_planning_base_load_source",
+        data_key="rolling_planning_base_load_source",
+        name="Rolling Planning Base Load Source",
+    ),
+    EnergyPlannerSensorDescription(
+        key="rolling_headroom_risk_date",
+        data_key="rolling_headroom_risk_date",
+        name="Rolling Headroom Risk Date",
+    ),
+    _energy(
+        "rolling_headroom_shortfall_kwh",
+        "rolling_headroom_shortfall_kwh",
+        "Rolling Headroom Shortfall",
+    ),
+    _soc(
+        "rolling_risk_projected_soc",
+        "rolling_risk_projected_soc",
+        "Rolling Risk Day Projected Sunset SOC",
+    ),
+    _energy(
+        "rolling_risk_export_kwh",
+        "rolling_risk_export_kwh",
+        "Rolling Risk Day Capacity Export",
+    ),
+    _energy(
+        "rolling_ev_available_energy_kwh",
+        "rolling_ev_available_energy_kwh",
+        "EV Available Energy to Target",
+    ),
+    EnergyPlannerSensorDescription(
+        key="rolling_ev_charge_power_w",
+        data_key="rolling_ev_charge_power_w",
+        name="EV Learned Charge Power",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+    ),
+    EnergyPlannerSensorDescription(
+        key="rolling_ev_charge_power_samples",
+        data_key="rolling_ev_charge_power_samples",
+        name="EV Charge Power Samples",
+        state_class=SensorStateClass.MEASUREMENT,
+    ),
+    _energy(
+        "rolling_ev_recommended_energy_kwh",
+        "rolling_ev_recommended_energy_kwh",
+        "Recommended EV Charge Energy",
+    ),
+    EnergyPlannerSensorDescription(
+        key="rolling_ev_window_start",
+        data_key="rolling_ev_window_start",
+        name="Recommended EV Charge Window Start",
+    ),
+    EnergyPlannerSensorDescription(
+        key="rolling_ev_window_end",
+        data_key="rolling_ev_window_end",
+        name="Recommended EV Charge Window End",
+    ),
+    _energy(
+        "rolling_ev_window_solar_kwh",
+        "rolling_ev_window_solar_kwh",
+        "Recommended EV Window Solar Energy",
+    ),
+    _energy(
+        "rolling_ev_window_grid_kwh",
+        "rolling_ev_window_grid_kwh",
+        "Recommended EV Window Grid Energy",
+    ),
+    _energy(
+        "rolling_ev_headroom_preserved_kwh",
+        "rolling_ev_headroom_preserved_kwh",
+        "Recommended EV Preserved Battery Headroom",
+    ),
+    EnergyPlannerSensorDescription(
+        key="rolling_ev_model",
+        data_key="rolling_ev_model",
+        name="Rolling EV Forecast Model",
     ),
 
     # Forecast-calibration observability.

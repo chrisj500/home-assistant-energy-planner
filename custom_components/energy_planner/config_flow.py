@@ -9,9 +9,12 @@ from homeassistant.helpers import selector
 from .const import (
     CONF_ACTUAL_SOLAR_POWER,
     CONF_BACKUP_RESERVE,
+    CONF_BASE_LOAD_24H,
+    CONF_BASE_LOAD_3H,
     CONF_BASE_LOAD_POWER,
     CONF_CAPACITY_KWH,
     CONF_CHARGE_LIMIT,
+    CONF_EV_CHARGING_POWER,
     CONF_EV_HOME,
     CONF_EV_SOC,
     CONF_EXPECTED_LOAD_REMAINING,
@@ -29,8 +32,10 @@ from .const import (
     DEFAULT_CAPACITY_KWH,
     DEFAULT_CHARGE_EFFICIENCY,
     DEFAULT_DISCRETIONARY_THRESHOLD_KWH,
+    DEFAULT_EV_FALLBACK_CHARGE_POWER_W,
     DEFAULT_EV_SOLAR_ADVISORY_ENABLED,
     DEFAULT_EV_TARGET_SOC,
+    DEFAULT_EV_WALL_KWH_FULL,
     DEFAULT_MIN_RESERVE,
     DEFAULT_PREFERRED_IMPORT_W,
     DEFAULT_STRONG_SOLAR_KWH,
@@ -39,8 +44,10 @@ from .const import (
     OPT_AUTO_HEADROOM,
     OPT_CHARGE_EFFICIENCY,
     OPT_DISCRETIONARY_THRESHOLD_KWH,
+    OPT_EV_FALLBACK_CHARGE_POWER_W,
     OPT_EV_SOLAR_ADVISORY_ENABLED,
     OPT_EV_TARGET_SOC,
+    OPT_EV_WALL_KWH_FULL,
     OPT_MIN_RESERVE,
     OPT_PREFERRED_IMPORT_W,
     OPT_STRONG_SOLAR_KWH,
@@ -84,8 +91,11 @@ class EnergyPlannerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_SOLAR_PEAK_TIME): SENSOR_SELECTOR,
                 vol.Optional(CONF_SOLAR_PEAK_TIME_TOMORROW): SENSOR_SELECTOR,
                 vol.Optional(CONF_BASE_LOAD_POWER): SENSOR_SELECTOR,
+                vol.Optional(CONF_BASE_LOAD_3H): SENSOR_SELECTOR,
+                vol.Optional(CONF_BASE_LOAD_24H): SENSOR_SELECTOR,
                 vol.Optional(CONF_EV_SOC): SENSOR_SELECTOR,
                 vol.Optional(CONF_EV_HOME): TRACKER_SELECTOR,
+                vol.Optional(CONF_EV_CHARGING_POWER): SENSOR_SELECTOR,
                 vol.Optional(CONF_FORECAST_SOLAR_API_KEY): API_KEY_SELECTOR,
             }
         )
@@ -162,8 +172,20 @@ class EnergyPlannerOptionsFlow(config_entries.OptionsFlow):
                     CONF_BASE_LOAD_POWER,
                     default=current.get(CONF_BASE_LOAD_POWER),
                 ): SENSOR_SELECTOR,
+                vol.Optional(
+                    CONF_BASE_LOAD_3H,
+                    default=current.get(CONF_BASE_LOAD_3H),
+                ): SENSOR_SELECTOR,
+                vol.Optional(
+                    CONF_BASE_LOAD_24H,
+                    default=current.get(CONF_BASE_LOAD_24H),
+                ): SENSOR_SELECTOR,
                 vol.Optional(CONF_EV_SOC, default=current.get(CONF_EV_SOC)): SENSOR_SELECTOR,
                 vol.Optional(CONF_EV_HOME, default=current.get(CONF_EV_HOME)): TRACKER_SELECTOR,
+                vol.Optional(
+                    CONF_EV_CHARGING_POWER,
+                    default=current.get(CONF_EV_CHARGING_POWER),
+                ): SENSOR_SELECTOR,
                 vol.Optional(
                     CONF_FORECAST_SOLAR_API_KEY,
                     default=str(current.get(CONF_FORECAST_SOLAR_API_KEY, "") or ""),
@@ -193,6 +215,19 @@ class EnergyPlannerOptionsFlow(config_entries.OptionsFlow):
                         )
                     ),
                 ): bool,
+                vol.Optional(
+                    OPT_EV_WALL_KWH_FULL,
+                    default=float(current.get(OPT_EV_WALL_KWH_FULL, DEFAULT_EV_WALL_KWH_FULL)),
+                ): vol.All(vol.Coerce(float), vol.Range(min=1, max=250)),
+                vol.Optional(
+                    OPT_EV_FALLBACK_CHARGE_POWER_W,
+                    default=float(
+                        current.get(
+                            OPT_EV_FALLBACK_CHARGE_POWER_W,
+                            DEFAULT_EV_FALLBACK_CHARGE_POWER_W,
+                        )
+                    ),
+                ): vol.All(vol.Coerce(float), vol.Range(min=0, max=20000)),
                 vol.Optional(
                     OPT_PREFERRED_IMPORT_W,
                     default=float(current.get(OPT_PREFERRED_IMPORT_W, DEFAULT_PREFERRED_IMPORT_W)),

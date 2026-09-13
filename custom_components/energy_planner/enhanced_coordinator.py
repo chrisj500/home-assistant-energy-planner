@@ -9,8 +9,14 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.util import dt as dt_util
 
 from .const import (
+    CONF_BASE_LOAD_24H,
+    CONF_BASE_LOAD_3H,
+    CONF_BASE_LOAD_POWER,
     CONF_CAPACITY_KWH,
     CONF_CHARGE_LIMIT,
+    CONF_EV_CHARGING_POWER,
+    CONF_EV_HOME,
+    CONF_EV_SOC,
     CONF_EXPECTED_LOAD_REMAINING,
     CONF_FORECAST_SOLAR_API_KEY,
     CONF_SOC_1,
@@ -20,9 +26,15 @@ from .const import (
     CONF_SOLAR_REMAINING,
     DEFAULT_CAPACITY_KWH,
     DEFAULT_CHARGE_EFFICIENCY,
+    DEFAULT_EV_FALLBACK_CHARGE_POWER_W,
+    DEFAULT_EV_TARGET_SOC,
+    DEFAULT_EV_WALL_KWH_FULL,
     DEFAULT_PREFERRED_IMPORT_W,
     DEFAULT_WEIGHTS,
     OPT_CHARGE_EFFICIENCY,
+    OPT_EV_FALLBACK_CHARGE_POWER_W,
+    OPT_EV_TARGET_SOC,
+    OPT_EV_WALL_KWH_FULL,
     OPT_PREFERRED_IMPORT_W,
 )
 from .coordinator import EnergyPlannerCoordinator, _controller_settings, _num, _solar_window
@@ -34,6 +46,15 @@ from .forecast_solar_shadow import (
     power_at,
     safe_float,
     weather_rows,
+)
+from .rolling_ev import (
+    DaylightWindow,
+    choose_ev_charge_window,
+    ev_wall_energy_to_target_kwh,
+    first_headroom_risk,
+    learned_charge_power_w,
+    planning_base_load_w,
+    simulate_rolling_days,
 )
 from .simulation import simulate_energy_flow
 
@@ -65,11 +86,11 @@ def _parse_weights(raw: Any) -> tuple[float, float, float]:
 
 
 class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
-    """Energy Planner plus optional Forecast.Solar shadow observability.
+    """Energy Planner plus optional Forecast.Solar and rolling EV observability.
 
-    Paid Forecast.Solar data is deliberately shadow-only in v0.1.11. Missing or
-    expired credentials, subscription changes, rate limiting, provider failures,
-    or malformed enhanced data leave the inherited baseline planner untouched.
+    Enhanced data remains advisory. Missing or expired credentials, subscription
+    changes, rate limiting, provider failures, malformed interval data, or EV
+    configuration gaps leave the inherited baseline planner untouched.
     """
 
     def __init__(self, hass, entry) -> None:
@@ -83,6 +104,7 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
         self._professional_attempts: dict[str, datetime] = {}
         self._professional_entitled: bool | None = None
         self._active_api_key: str | None = None
+        self._ev_power_samples_w: list[float] = []
 
     async def _capture_daylight_forecast(
         self,
@@ -115,7 +137,11 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
             enhancement = self._fallback_shadow(
                 reason=f"enhancement_error:{type(err).__name__}"
             )
-        return {**baseline, **enhancement}
+        try:
+            rolling = self._rolling_ev_outputs(baseline)
+        except Exception as err:  # Rolling advice is also non-authoritative.
+            rolling = self._rolling_ev_fallback(f"rolling_error:{type(err).__name__}")
+        return {**baseline, **enhancement, **rolling}
 
     def _fallback_shadow(self, *, reason: str) -> dict[str, Any]:
         return {
@@ -144,6 +170,27 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
             "forecast_solar_best_window_end": None,
             "forecast_solar_best_window_power_w": None,
             "forecast_solar_best_window_energy_kwh": None,
+        }
+
+    def _rolling_ev_fallback(self, reason: str) -> dict[str, Any]:
+        return {
+            "rolling_ev_status": reason,
+            "rolling_planning_base_load_w": None,
+            "rolling_planning_base_load_source": "unavailable",
+            "rolling_headroom_risk_date": "none",
+            "rolling_headroom_shortfall_kwh": 0.0,
+            "rolling_risk_projected_soc": None,
+            "rolling_risk_export_kwh": 0.0,
+            "rolling_ev_available_energy_kwh": None,
+            "rolling_ev_charge_power_w": None,
+            "rolling_ev_charge_power_samples": 0,
+            "rolling_ev_recommended_energy_kwh": 0.0,
+            "rolling_ev_window_start": None,
+            "rolling_ev_window_end": None,
+            "rolling_ev_window_solar_kwh": 0.0,
+            "rolling_ev_window_grid_kwh": 0.0,
+            "rolling_ev_headroom_preserved_kwh": 0.0,
+            "rolling_ev_model": "baseline_only",
         }
 
     def _forecast_solar_source(self) -> tuple[ForecastSolarSource | None, str | None]:
@@ -451,6 +498,210 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
         )
         shadow.update(self._professional_outputs(now))
         return shadow
+
+    def _configured_or_default_sensor(self, configured: str | None, default_entity: str) -> float | None:
+        value = _num(self.hass, configured)
+        if value is not None:
+            return value
+        return _num(self.hass, default_entity)
+
+    def _rolling_ev_outputs(self, baseline: dict[str, Any]) -> dict[str, Any]:
+        if self._estimate_payload is None:
+            return self._rolling_ev_fallback("waiting_for_interval_forecast")
+
+        now = dt_util.now()
+        points = interval_points_from_payload(self._estimate_payload, now, assume_utc=True)
+        if len(points) < 2:
+            return self._rolling_ev_fallback("interval_forecast_unavailable")
+
+        cfg = self.cfg
+        recent_3h = self._configured_or_default_sensor(
+            cfg.get(CONF_BASE_LOAD_3H),
+            "sensor.forecast_base_load_3h_average",
+        )
+        recent_24h = self._configured_or_default_sensor(
+            cfg.get(CONF_BASE_LOAD_24H),
+            "sensor.forecast_base_load_24h_average",
+        )
+        fallback_load = _num(self.hass, cfg.get(CONF_BASE_LOAD_POWER))
+        planning_load_w, planning_source = planning_base_load_w(
+            recent_3h,
+            recent_24h,
+            fallback_load,
+        )
+        if planning_load_w is None:
+            return self._rolling_ev_fallback("planning_load_unavailable")
+
+        soc_values = (
+            _num(self.hass, cfg.get(CONF_SOC_1)),
+            _num(self.hass, cfg.get(CONF_SOC_2)),
+            _num(self.hass, cfg.get(CONF_SOC_3)),
+        )
+        if any(value is None for value in soc_values):
+            return self._rolling_ev_fallback("battery_soc_unavailable")
+        bank_socs = tuple(float(value) for value in soc_values if value is not None)
+        if len(bank_socs) != 3:
+            return self._rolling_ev_fallback("battery_soc_unavailable")
+
+        charge_limit = _num(self.hass, cfg.get(CONF_CHARGE_LIMIT))
+        if charge_limit is None:
+            return self._rolling_ev_fallback("charge_limit_unavailable")
+
+        weights = _parse_weights(cfg.get(CONF_SOC_WEIGHTS, DEFAULT_WEIGHTS))
+        capacity = float(cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH))
+        total_weight = sum(weights)
+        bank_capacities = tuple(capacity * weight / total_weight for weight in weights)
+        reserve = baseline.get("effective_reserve_floor")
+        reserve_pct = float(reserve) if isinstance(reserve, (int, float)) else 10.0
+        overnight_drop_kw = baseline.get("calibration_overnight_median_kw")
+        overnight_drop_kw = (
+            float(overnight_drop_kw)
+            if isinstance(overnight_drop_kw, (int, float))
+            else 0.0
+        )
+        charge_efficiency = float(cfg.get(OPT_CHARGE_EFFICIENCY, DEFAULT_CHARGE_EFFICIENCY))
+        controller = _controller_settings(
+            self.hass,
+            float(cfg.get(OPT_PREFERRED_IMPORT_W, DEFAULT_PREFERRED_IMPORT_W)),
+        )
+
+        horizon = min(max(forecast_horizon_days(points, now), 1), 7)
+        daylight_windows: list[DaylightWindow] = []
+        for offset in range(horizon):
+            target_date = now.date() + timedelta(days=offset)
+            sunrise, sunset = _solar_window(self.hass, target_date)
+            if sunrise is None or sunset is None:
+                continue
+            daylight_windows.append(
+                DaylightWindow(day=target_date, sunrise=sunrise, sunset=sunset)
+            )
+        plans = simulate_rolling_days(
+            points=points,
+            reference=now,
+            daylight_windows=daylight_windows,
+            initial_bank_socs_pct=bank_socs,
+            bank_capacities_kwh=bank_capacities,
+            charge_limit_pct=float(charge_limit),
+            reserve_pct=reserve_pct,
+            charge_efficiency=charge_efficiency,
+            controller=controller,
+            average_load_kw=planning_load_w / 1000.0,
+            overnight_drop_kw=overnight_drop_kw,
+            step_minutes=5,
+        )
+        risk = first_headroom_risk(plans)
+
+        power_entity = cfg.get(CONF_EV_CHARGING_POWER)
+        current_ev_power = _num(self.hass, power_entity)
+        if current_ev_power is not None and current_ev_power >= 500.0:
+            self._ev_power_samples_w.append(float(current_ev_power))
+            self._ev_power_samples_w = self._ev_power_samples_w[-120:]
+        fallback_power = float(
+            cfg.get(
+                OPT_EV_FALLBACK_CHARGE_POWER_W,
+                DEFAULT_EV_FALLBACK_CHARGE_POWER_W,
+            )
+        )
+        ev_charge_power_w, power_samples = learned_charge_power_w(
+            self._ev_power_samples_w,
+            fallback_power,
+        )
+
+        ev_soc = _num(self.hass, cfg.get(CONF_EV_SOC))
+        ev_target = float(cfg.get(OPT_EV_TARGET_SOC, DEFAULT_EV_TARGET_SOC))
+        ev_available_energy = ev_wall_energy_to_target_kwh(
+            current_soc_pct=ev_soc,
+            target_soc_pct=ev_target,
+            wall_kwh_full=float(cfg.get(OPT_EV_WALL_KWH_FULL, DEFAULT_EV_WALL_KWH_FULL)),
+        )
+        ev_home = None
+        ev_home_entity = cfg.get(CONF_EV_HOME)
+        if ev_home_entity:
+            state = self.hass.states.get(ev_home_entity)
+            ev_home = None if state is None else state.state == "home"
+
+        output = {
+            "rolling_ev_status": "no_headroom_risk",
+            "rolling_planning_base_load_w": planning_load_w,
+            "rolling_planning_base_load_source": planning_source,
+            "rolling_headroom_risk_date": "none",
+            "rolling_headroom_shortfall_kwh": 0.0,
+            "rolling_risk_projected_soc": None,
+            "rolling_risk_export_kwh": 0.0,
+            "rolling_ev_available_energy_kwh": ev_available_energy,
+            "rolling_ev_charge_power_w": ev_charge_power_w,
+            "rolling_ev_charge_power_samples": power_samples,
+            "rolling_ev_recommended_energy_kwh": 0.0,
+            "rolling_ev_window_start": None,
+            "rolling_ev_window_end": None,
+            "rolling_ev_window_solar_kwh": 0.0,
+            "rolling_ev_window_grid_kwh": 0.0,
+            "rolling_ev_headroom_preserved_kwh": 0.0,
+            "rolling_ev_model": "forecast_solar_paid_raw_rolling_v1",
+        }
+        if risk is None:
+            return output
+
+        output.update(
+            {
+                "rolling_ev_status": "headroom_risk",
+                "rolling_headroom_risk_date": risk.day.isoformat(),
+                "rolling_headroom_shortfall_kwh": risk.headroom_shortfall_kwh,
+                "rolling_risk_projected_soc": risk.end_soc_pct,
+                "rolling_risk_export_kwh": risk.capacity_export_kwh,
+            }
+        )
+
+        if ev_home is False:
+            output["rolling_ev_status"] = "headroom_risk_ev_away"
+            return output
+        if ev_available_energy is None or ev_available_energy <= 0.05:
+            output["rolling_ev_status"] = "headroom_risk_ev_full_or_unavailable"
+            return output
+        if ev_charge_power_w <= 0:
+            output["rolling_ev_status"] = "headroom_risk_ev_power_unavailable"
+            return output
+
+        required_wall_kwh = max(
+            risk.headroom_shortfall_kwh / max(charge_efficiency, 0.01),
+            risk.capacity_export_kwh,
+        )
+        recommended_wall_kwh = min(required_wall_kwh, ev_available_energy)
+        if recommended_wall_kwh <= 0.05:
+            return output
+
+        window = choose_ev_charge_window(
+            points=points,
+            daylight_windows=daylight_windows,
+            earliest=now,
+            latest=risk.end,
+            base_load_kw=planning_load_w / 1000.0,
+            charge_power_w=ev_charge_power_w,
+            energy_kwh=recommended_wall_kwh,
+            charge_efficiency=charge_efficiency,
+            step_minutes=15,
+        )
+        if window is None:
+            output["rolling_ev_status"] = "headroom_risk_no_ev_window"
+            return output
+
+        solar_fraction = window.solar_energy_kwh / max(window.requested_energy_kwh, 0.001)
+        if solar_fraction < 0.80:
+            output["rolling_ev_status"] = "headroom_risk_window_too_grid_heavy"
+            return output
+
+        output.update(
+            {
+                "rolling_ev_status": "charge_window_recommended",
+                "rolling_ev_recommended_energy_kwh": window.requested_energy_kwh,
+                "rolling_ev_window_start": window.start.isoformat(),
+                "rolling_ev_window_end": window.end.isoformat(),
+                "rolling_ev_window_solar_kwh": window.solar_energy_kwh,
+                "rolling_ev_window_grid_kwh": window.grid_energy_kwh,
+                "rolling_ev_headroom_preserved_kwh": window.preserved_stationary_headroom_kwh,
+            }
+        )
+        return output
 
     def _professional_outputs(self, now: datetime) -> dict[str, Any]:
         weather = self._professional_cache.get("weather")
