@@ -1,0 +1,35 @@
+# Home Assistant runtime / private state
+.storage/
+.cloud/
+backups/
+backup/
+deps/
+tts/
+home-assistant.log*
+home-assistant_v2.db*
+*.db
+*.sqlite
+*.sqlite3
+
+# Secrets and credentials
+secrets.yaml
+secrets.yml
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.json
+service-account*.json
+*_credentials.json
+*_secrets.yaml
+*_secrets.yml
+
+# Local editor / OS noise
+.DS_Store
+.vscode/
+.idea/
+__pycache__/
+*.pyc
