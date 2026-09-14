@@ -9,7 +9,12 @@ from .v014_coordinator import EnergyPlannerV014Coordinator
 
 async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> None:
     coordinator: EnergyPlannerV014Coordinator = entry.runtime_data
-    async_add_entities([EnergyPlannerAutoChargeEligible(coordinator, entry)])
+    async_add_entities(
+        [
+            EnergyPlannerAutoChargeEligible(coordinator, entry),
+            EnergyPlannerNextSunsetAvailable(coordinator, entry),
+        ]
+    )
 
 
 class EnergyPlannerAutoChargeEligible(
@@ -51,4 +56,40 @@ class EnergyPlannerAutoChargeEligible(
             "ev_current_power_w": data.get("rolling_ev_current_power_w"),
             "surplus_next_3d_kwh": data.get("rolling_ev_surplus_next_3d_kwh"),
             "surplus_horizon_kwh": data.get("rolling_ev_surplus_horizon_kwh"),
+        }
+
+
+class EnergyPlannerNextSunsetAvailable(
+    CoordinatorEntity[EnergyPlannerV014Coordinator], BinarySensorEntity
+):
+    """Expose stable next-future-sunset forecast values as dashboard attributes."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Next Sunset Forecast Available"
+
+    def __init__(self, coordinator: EnergyPlannerV014Coordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_next_sunset_forecast_available"
+        self._attr_device_info = {
+            "identifiers": {("energy_planner", entry.entry_id)},
+            "name": entry.title,
+            "manufacturer": "Community",
+            "model": "Energy Planner",
+        }
+
+    @property
+    def is_on(self) -> bool:
+        data = self.coordinator.data or {}
+        return data.get("next_sunset_date") is not None and data.get("next_sunset_soc") is not None
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        data = self.coordinator.data or {}
+        return {
+            "date": data.get("next_sunset_date"),
+            "soc_pct": data.get("next_sunset_soc"),
+            "expected_charge_kwh": data.get("next_sunset_expected_charge"),
+            "expected_grid_import_kwh": data.get("next_sunset_expected_grid_import"),
+            "expected_export_kwh": data.get("next_sunset_expected_export"),
+            "forecast_source": data.get("next_sunset_forecast_source"),
         }
