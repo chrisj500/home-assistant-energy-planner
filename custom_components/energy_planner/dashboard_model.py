@@ -124,25 +124,3 @@ def select_next_sunset_forecast(
         expected_export_kwh=None,
         source="unavailable",
     )
-
-
-def normalize_forecast_temperature_c(
-    value: float | None,
-    *,
-    assumed_input_unit: str,
-) -> tuple[float | None, str]:
-    """Normalize Forecast.Solar weather temperature to Celsius for Home Assistant.
-
-    The live Professional weather endpoint has been observed to return values in
-    local Fahrenheit units for a US location even though common API references
-    describe temperature as Celsius. The caller therefore supplies the Home
-    Assistant temperature unit as an explicit assumption and the assumption is
-    exposed diagnostically rather than hidden.
-    """
-    if value is None:
-        return None, "unavailable"
-    raw = float(value)
-    unit = str(assumed_input_unit).strip().lower()
-    if unit in {"°f", "f", "fahrenheit"}:
-        return (raw - 32.0) * 5.0 / 9.0, "fahrenheit_assumed_from_home_assistant"
-    return raw, "celsius_assumed_from_home_assistant"
