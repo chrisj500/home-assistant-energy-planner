@@ -4,14 +4,15 @@ from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .v017_coordinator import EnergyPlannerV017Coordinator
+from .v018_coordinator import EnergyPlannerV018Coordinator
 
 
 async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> None:
-    coordinator: EnergyPlannerV017Coordinator = entry.runtime_data
+    coordinator: EnergyPlannerV018Coordinator = entry.runtime_data
     async_add_entities(
         [
             EnergyPlannerHeadroomRisk(coordinator, entry),
+            EnergyPlannerDynamicLoadForecast(coordinator, entry),
             EnergyPlannerAutoChargeEligible(coordinator, entry),
             EnergyPlannerNextSunsetAvailable(coordinator, entry),
         ]
@@ -19,12 +20,12 @@ async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> Non
 
 
 class EnergyPlannerHeadroomRisk(
-    CoordinatorEntity[EnergyPlannerV017Coordinator], BinarySensorEntity
+    CoordinatorEntity[EnergyPlannerV018Coordinator], BinarySensorEntity
 ):
     _attr_has_entity_name = True
     _attr_name = "Headroom Risk Today"
 
-    def __init__(self, coordinator: EnergyPlannerV017Coordinator, entry: ConfigEntry) -> None:
+    def __init__(self, coordinator: EnergyPlannerV018Coordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         self._attr_unique_id = f"{entry.entry_id}_headroom_risk_today"
         self._attr_device_info = {
@@ -54,13 +55,49 @@ class EnergyPlannerHeadroomRisk(
         }
 
 
+class EnergyPlannerDynamicLoadForecast(
+    CoordinatorEntity[EnergyPlannerV018Coordinator], BinarySensorEntity
+):
+    """Expose the complete modeled horizon and whether any day needs flexible load."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Dynamic Load Forecast"
+
+    def __init__(self, coordinator: EnergyPlannerV018Coordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_dynamic_load_forecast"
+        self._attr_device_info = {
+            "identifiers": {("energy_planner", entry.entry_id)},
+            "name": entry.title,
+            "manufacturer": "Community",
+            "model": "Energy Planner",
+        }
+
+    @property
+    def is_on(self) -> bool:
+        return bool((self.coordinator.data or {}).get("rolling_dynamic_load_days_count", 0))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        data = self.coordinator.data or {}
+        return {
+            "status": data.get("rolling_dynamic_load_forecast_status"),
+            "days": data.get("rolling_day_plans", []),
+            "risk_dates": data.get("rolling_dynamic_load_risk_dates", []),
+            "risk_days_count": data.get("rolling_dynamic_load_days_count", 0),
+            "dynamic_load_next_3d_kwh": data.get("rolling_dynamic_load_next_3d_kwh", 0.0),
+            "dynamic_load_horizon_kwh": data.get("rolling_dynamic_load_total_kwh", 0.0),
+            "model": data.get("rolling_dynamic_load_forecast_model"),
+        }
+
+
 class EnergyPlannerAutoChargeEligible(
-    CoordinatorEntity[EnergyPlannerV017Coordinator], BinarySensorEntity
+    CoordinatorEntity[EnergyPlannerV018Coordinator], BinarySensorEntity
 ):
     _attr_has_entity_name = True
     _attr_name = "EV Auto-Charge Eligible"
 
-    def __init__(self, coordinator: EnergyPlannerV017Coordinator, entry: ConfigEntry) -> None:
+    def __init__(self, coordinator: EnergyPlannerV018Coordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         self._attr_unique_id = f"{entry.entry_id}_ev_auto_charge_eligible"
         self._attr_device_info = {
@@ -97,14 +134,14 @@ class EnergyPlannerAutoChargeEligible(
 
 
 class EnergyPlannerNextSunsetAvailable(
-    CoordinatorEntity[EnergyPlannerV017Coordinator], BinarySensorEntity
+    CoordinatorEntity[EnergyPlannerV018Coordinator], BinarySensorEntity
 ):
     """Expose stable next-future-sunset forecast values as dashboard attributes."""
 
     _attr_has_entity_name = True
     _attr_name = "Next Sunset Forecast Available"
 
-    def __init__(self, coordinator: EnergyPlannerV017Coordinator, entry: ConfigEntry) -> None:
+    def __init__(self, coordinator: EnergyPlannerV018Coordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         self._attr_unique_id = f"{entry.entry_id}_next_sunset_forecast_available"
         self._attr_device_info = {

@@ -1,8 +1,10 @@
-# Energy Planning dashboard v3
+# Energy Planning dashboard v4
 #
-# Decision-first Lovelace dashboard for Energy Planner v0.1.17.
-# The primary question is whether stationary-battery headroom will be exhausted
-# before the available solar can be kept onsite.
+# Decision-first Lovelace dashboard for Energy Planner v0.1.18.
+# Primary questions:
+# 1. Is battery headroom at risk today?
+# 2. Which forecast days need useful dynamic load, and how much?
+# 3. Can the EV absorb that energy without unnecessary grid charging?
 
 views:
   - title: Energy Planning
@@ -36,10 +38,10 @@ views:
               **First risk day:** {{ state_attr(e,'risk_date') or '—' }}  
               {{ action or 'Preserve flexible-load capacity for the risk day.' }}
               {% else %}
-              ## 🟢 NO MATERIAL HEADROOM RISK
+              ## 🟢 NO MATERIAL HEADROOM RISK TODAY
               {{ action or 'No headroom action is currently required.' }}
               {% endif %}
-              
+
               Forecast basis: **{{ source or 'unavailable' }}**{% if scale is number %} · current-day scale **{{ scale | round(2) }}×**{% endif %}
 
           - type: tile
@@ -72,11 +74,69 @@ views:
             icon: mdi:transmission-tower-export
             vertical: false
 
+          - type: button
+            name: Energy History Export
+            icon: mdi:history
+            show_name: true
+            show_icon: true
+            tap_action:
+              action: navigate
+              navigation_path: >-
+                /history?entity_id=sensor.envoy_482538078562_current_net_power_consumption%2Csensor.envoy_482538078562_current_power_production%2Csensor.ecoflow_smart_home_panel_2_grid_power%2Csensor.ecoflow_smart_home_panel_2_home_power%2Csensor.ecoflow_delta_pro_ultra_battery%2Csensor.ecoflow_delta_pro_ultra_battery_2%2Csensor.ecoflow_delta_pro_ultra_battery_3%2Cnumber.ecoflow_smart_home_panel_2_charging_power%2Cnumber.ecoflow_smart_home_panel_2_backup_reserve_level%2Csensor.solar_actual_power%2Csensor.solar_forecast_power_now%2Csensor.energy_production_today%2Csensor.energy_production_today_remaining%2Csensor.energy_production_tomorrow%2Csensor.house_end_use_power%2Csensor.forecast_base_load_3h_average%2Csensor.forecast_base_load_24h_average%2Csensor.energy_planner_whole_bank_soc%2Csensor.energy_planner_battery_headroom%2Csensor.energy_planner_rolling_headroom_shortfall%2Csensor.energy_planner_rolling_risk_day_capacity_export%2Csensor.energy_planner_rolling_headroom_risk_date%2Cbinary_sensor.energy_planner_headroom_risk_today%2Cbinary_sensor.energy_planner_dynamic_load_forecast%2Csensor.energy_planner_ev_soc%2Csensor.car_charger_power%2Csensor.hot_tub_power%2Csensor.hvac_power%2Csensor.networking_servers_power%2Csensor.rear_patio_power
+
       - type: grid
         cards:
           - type: heading
-            heading: What To Do
-            icon: mdi:lightbulb-on-outline
+            heading: Dynamic Load Forecast — Next 7 Days
+            icon: mdi:calendar-lightning
+
+          - type: markdown
+            content: >-
+              {% set e = 'binary_sensor.energy_planner_dynamic_load_forecast' %}
+              {% set rows = state_attr(e,'days') or [] %}
+              {% set risk_dates = state_attr(e,'risk_dates') or [] %}
+              {% set next3 = state_attr(e,'dynamic_load_next_3d_kwh') %}
+              {% set horizon = state_attr(e,'dynamic_load_horizon_kwh') %}
+              {% if rows | count == 0 %}
+              ## ⚪ MULTI-DAY FORECAST UNAVAILABLE
+              Waiting for enough interval forecast and battery data.
+              {% else %}
+              {% if risk_dates | count > 0 %}
+              ## ⚠️ DYNAMIC LOAD NEEDED
+              **Risk days:** {{ risk_dates | join(', ') }}  
+              **Useful load needed — next 3 days:** {{ next3 | round(1) if next3 is number else '—' }} kWh  
+              **Useful load needed — full horizon:** {{ horizon | round(1) if horizon is number else '—' }} kWh
+              {% else %}
+              ## 🟢 NO DYNAMIC LOAD NEEDED IN FORECAST HORIZON
+              The modeled battery headroom is sufficient if conditions remain as forecast.
+              {% endif %}
+
+              | Day | Solar | Start SOC | Sunset SOC | Cap. export | Dynamic load | Decision |
+              |---|---:|---:|---:|---:|---:|---|
+              {% for row in rows %}
+              | {{ row.date }} | {{ row.solar_kwh | round(1) }} kWh | {{ row.start_soc_pct | round(0) }}% | {{ row.sunset_soc_pct | round(0) }}% | {{ row.capacity_export_kwh | round(1) }} kWh | {{ row.dynamic_load_needed_kwh | round(1) }} kWh | {% if row.dynamic_load_needed %}⚠️ Use load{% else %}🟢 Clear{% endif %} |
+              {% endfor %}
+              {% endif %}
+
+          - type: tile
+            entity: binary_sensor.energy_planner_dynamic_load_forecast
+            name: Any Dynamic Load Needed
+            icon: mdi:calendar-alert
+            vertical: false
+
+          - type: markdown
+            content: >-
+              {% set rows = state_attr('binary_sensor.energy_planner_dynamic_load_forecast','days') or [] %}
+              ### How to read this
+              **Dynamic load** is the useful AC energy the model expects must be consumed to avoid capacity-driven export.  
+              Today uses the locally corrected solar curve. Future days use Forecast.Solar's interval forecast and will change as weather forecasts update.  
+              Power/control-limited export is tracked separately and cannot necessarily be eliminated by creating more battery headroom.
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: EV / Flexible Load
+            icon: mdi:car-electric
 
           - type: markdown
             content: >-
@@ -85,16 +145,22 @@ views:
               {% set reason = state_attr(ev,'reason') %}
               {% set useful = states('sensor.energy_planner_recommended_ev_charge_energy') | float(0) %}
               {% if status == 'green' %}
-              ## 🟢 EV / FLEXIBLE LOAD USEFUL
+              ## 🟢 EV CHARGING USEFUL
               {% elif status == 'yellow' %}
-              ## 🟡 FLEXIBLE LOAD OPTIONAL
+              ## 🟡 EV CHARGING OPTIONAL
               {% elif status == 'red' %}
-              ## 🔴 FLEXIBLE LOAD NOT NEEDED
+              ## 🔴 EV CHARGING NOT NEEDED
               {% else %}
-              ## ⚪ FLEXIBLE-LOAD OUTLOOK UNAVAILABLE
+              ## ⚪ EV OUTLOOK UNAVAILABLE
               {% endif %}
-              **{{ reason or 'Planner is evaluating the best use of flexible load.' }}**  
+              **{{ reason or 'Planner is evaluating the EV as a flexible load.' }}**  
               {% if useful > 0 %}Recommended EV energy: **{{ useful | round(1) }} kWh**{% endif %}
+
+          - type: tile
+            entity: sensor.energy_planner_ev_soc
+            name: Lexus SOC
+            icon: mdi:car-battery
+            vertical: false
 
           - type: tile
             entity: binary_sensor.energy_planner_ev_auto_charge_eligible
@@ -105,13 +171,31 @@ views:
           - type: tile
             entity: sensor.energy_planner_ev_available_energy_to_target
             name: EV Energy Available
-            icon: mdi:car-battery
+            icon: mdi:battery-arrow-up-outline
+            vertical: false
+
+          - type: tile
+            entity: sensor.energy_planner_ev_charge_power
+            name: Learned Charge Power
+            icon: mdi:speedometer
+            vertical: false
+
+          - type: tile
+            entity: sensor.car_charger_power
+            name: Charger Now
+            icon: mdi:lightning-bolt
             vertical: false
 
           - type: tile
             entity: sensor.energy_planner_recommended_ev_charge_energy
             name: Recommended EV Energy
             icon: mdi:battery-charging-medium
+            vertical: false
+
+          - type: tile
+            entity: sensor.energy_planner_recommended_ev_preserved_battery_headroom
+            name: Headroom Preserved by EV
+            icon: mdi:battery-sync-outline
             vertical: false
 
           - type: markdown
@@ -125,13 +209,13 @@ views:
               **{{ as_local(as_datetime(start)).strftime('%-I:%M %p') }} – {{ as_local(as_datetime(end)).strftime('%-I:%M %p') }}**  
               Solar supplied: **{{ solar | round(0) if solar is number else '—' }}%**
               {% else %}
-              No EV charging window is currently required.
+              No EV charging window is currently required or available.
               {% endif %}
 
       - type: grid
         cards:
           - type: heading
-            heading: Solar & Battery Outlook
+            heading: Solar & Forecast Quality
             icon: mdi:weather-sunny
 
           - type: markdown
@@ -146,41 +230,6 @@ views:
               **Expected battery gain:** {{ charge | round(1) if charge is number else '—' }} kWh  
               **Expected export:** {{ export | round(1) if export is number else '—' }} kWh
 
-          - type: markdown
-            content: >-
-              {% set e = 'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
-              {% set s3 = state_attr(e,'surplus_next_3d_kwh') %}
-              {% set sh = state_attr(e,'surplus_horizon_kwh') %}
-              {% set risk = states('sensor.energy_planner_rolling_headroom_risk_date') %}
-              ### Rolling energy outlook
-              **Solar after house load — next 3 days:** {{ s3 | round(1) if s3 is number else '—' }} kWh  
-              **Solar after house load — full forecast horizon:** {{ sh | round(1) if sh is number else '—' }} kWh  
-              **First modeled headroom-risk day:** {{ risk }}
-
-          - type: tile
-            entity: sensor.energy_planner_rolling_risk_day_projected_sunset_soc
-            name: Risk-Day Sunset SOC
-            icon: mdi:battery-high
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_residual_headroom_shortfall_after_ev_charge
-            name: Residual Headroom Risk After EV
-            icon: mdi:battery-alert
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_residual_capacity_export_after_ev_charge
-            name: Residual Export After EV
-            icon: mdi:transmission-tower-export
-            vertical: false
-
-      - type: grid
-        cards:
-          - type: heading
-            heading: Forecast Quality
-            icon: mdi:chart-bell-curve-cumulative
-
           - type: tile
             entity: sensor.energy_planner_forecast_solar_enhancement_status
             name: Forecast.Solar
@@ -189,7 +238,7 @@ views:
 
           - type: tile
             entity: sensor.energy_planner_forecast_solar_paid_raw_remaining_today
-            name: Forecast.Solar Raw Remaining
+            name: Raw Remaining Today
             icon: mdi:solar-power-variant
             vertical: false
 
