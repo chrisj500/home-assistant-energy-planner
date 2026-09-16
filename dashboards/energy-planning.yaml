@@ -133,7 +133,7 @@ views:
               ### Preferred EV charging window
               {% if start and end %}
               **{{ as_local(as_datetime(start)).strftime('%-I:%M %p') }} – {{ as_local(as_datetime(end)).strftime('%-I:%M %p') }}**  
-              Solar supplied: **{{ solar | round(0) if solar is number else '—' }}%
+              Solar supplied: **{{ solar | round(0) if solar is number else '—' }}%**
               {% else %}
               No EV charging window is currently required.
               {% endif %}
