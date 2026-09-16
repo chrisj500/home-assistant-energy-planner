@@ -1,6 +1,6 @@
-# Energy Planning dashboard v4
+# Energy Planning dashboard v5
 #
-# Decision-first Lovelace dashboard for Energy Planner v0.1.18.
+# Decision-first Lovelace dashboard for Energy Planner v0.1.19.
 # Primary questions:
 # 1. Is battery headroom at risk today?
 # 2. Which forecast days need useful dynamic load, and how much?
@@ -91,7 +91,7 @@ views:
             icon: mdi:calendar-lightning
 
           - type: markdown
-            content: >-
+            content: |-
               {% set e = 'binary_sensor.energy_planner_dynamic_load_forecast' %}
               {% set rows = state_attr(e,'days') or [] %}
               {% set risk_dates = state_attr(e,'risk_dates') or [] %}
@@ -112,8 +112,8 @@ views:
               {% endif %}
 
               | Day | Solar | Start SOC | Sunset SOC | Cap. export | Dynamic load | Decision |
-              |---|---:|---:|---:|---:|---:|---|
-              {% for row in rows %}
+              | --- | ---: | ---: | ---: | ---: | ---: | --- |
+              {% for row in rows -%}
               | {{ row.date }} | {{ row.solar_kwh | round(1) }} kWh | {{ row.start_soc_pct | round(0) }}% | {{ row.sunset_soc_pct | round(0) }}% | {{ row.capacity_export_kwh | round(1) }} kWh | {{ row.dynamic_load_needed_kwh | round(1) }} kWh | {% if row.dynamic_load_needed %}⚠️ Use load{% else %}🟢 Clear{% endif %} |
               {% endfor %}
               {% endif %}
@@ -126,7 +126,6 @@ views:
 
           - type: markdown
             content: >-
-              {% set rows = state_attr('binary_sensor.energy_planner_dynamic_load_forecast','days') or [] %}
               ### How to read this
               **Dynamic load** is the useful AC energy the model expects must be consumed to avoid capacity-driven export.  
               Today uses the locally corrected solar curve. Future days use Forecast.Solar's interval forecast and will change as weather forecasts update.  
@@ -143,7 +142,7 @@ views:
               {% set ev = 'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
               {% set status = states('sensor.energy_planner_rolling_ev_advisory_status') %}
               {% set reason = state_attr(ev,'reason') %}
-              {% set useful = states('sensor.energy_planner_recommended_ev_charge_energy') | float(0) %}
+              {% set useful = state_attr(ev,'recommended_energy_kwh') | float(0) %}
               {% if status == 'green' %}
               ## 🟢 EV CHARGING USEFUL
               {% elif status == 'yellow' %}
@@ -174,11 +173,14 @@ views:
             icon: mdi:battery-arrow-up-outline
             vertical: false
 
-          - type: tile
-            entity: sensor.energy_planner_ev_charge_power
-            name: Learned Charge Power
-            icon: mdi:speedometer
-            vertical: false
+          - type: markdown
+            content: >-
+              {% set e = 'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
+              {% set learned = state_attr(e,'learned_charge_power_w') %}
+              {% set source = state_attr(e,'learned_charge_power_source') %}
+              ### Learned charge power
+              **{{ (learned / 1000) | round(2) if learned is number else '—' }} kW**  
+              {{ source | replace('_',' ') | title if source else 'Waiting for charge-power learning data' }}
 
           - type: tile
             entity: sensor.car_charger_power
