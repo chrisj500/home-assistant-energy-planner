@@ -7,5 +7,5 @@
   "integration_type": "service",
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/chrisj500/home-assistant-energy-planner/issues",
-  "version": "0.1.16"
+  "version": "0.1.17"
 }

@@ -1,7 +1,8 @@
-# Energy Planning dashboard v2
+# Energy Planning dashboard v3
 #
-# Standalone Lovelace YAML dashboard for Home Assistant.
-# Reconciled against the live Energy Planner v0.1.16 entity registry.
+# Decision-first Lovelace dashboard for Energy Planner v0.1.17.
+# The primary question is whether stationary-battery headroom will be exhausted
+# before the available solar can be kept onsite.
 
 views:
   - title: Energy Planning
@@ -13,46 +14,45 @@ views:
       - type: grid
         cards:
           - type: heading
-            heading: Energy Plan
-            icon: mdi:transmission-tower-export
+            heading: Headroom Decision
+            icon: mdi:battery-alert-variant-outline
 
           - type: markdown
             content: >-
-              {% set status = states('sensor.energy_planner_rolling_ev_advisory_status') %}
-              {% set reason = state_attr('binary_sensor.energy_planner_ev_auto_charge_eligible','reason') %}
-              {% set useful = states('sensor.energy_planner_recommended_ev_charge_energy') | float(0) %}
-              {% set risk = states('sensor.energy_planner_rolling_headroom_risk_date') %}
-              {% if status == 'green' %}
-              ## 🟢 EV charging outlook — GREEN
-              {% elif status == 'yellow' %}
-              ## 🟡 EV charging outlook — YELLOW
-              {% elif status == 'red' %}
-              ## 🔴 EV charging outlook — RED
+              {% set e = 'binary_sensor.energy_planner_headroom_risk_today' %}
+              {% set status = state_attr(e,'status') %}
+              {% set shortfall = state_attr(e,'shortfall_kwh') %}
+              {% set export = state_attr(e,'capacity_export_kwh') %}
+              {% set action = state_attr(e,'action') %}
+              {% set scale = state_attr(e,'current_day_scale_factor') %}
+              {% set source = state_attr(e,'forecast_source') %}
+              {% if is_state(e,'on') %}
+              ## ⚠️ HEADROOM RISK — TODAY
+              **Projected storage shortfall:** {{ shortfall | round(1) if shortfall is number else '—' }} kWh  
+              **Capacity-limited export if no useful load is added:** {{ export | round(1) if export is number else '—' }} kWh  
+              **Action:** {{ action or 'Use useful flexible load before the battery fills.' }}
+              {% elif status == 'risk_future' %}
+              ## 🟡 HEADROOM RISK — FUTURE
+              **First risk day:** {{ state_attr(e,'risk_date') or '—' }}  
+              {{ action or 'Preserve flexible-load capacity for the risk day.' }}
               {% else %}
-              ## ⚪ EV charging outlook — unavailable
+              ## 🟢 NO MATERIAL HEADROOM RISK
+              {{ action or 'No headroom action is currently required.' }}
               {% endif %}
-              **{{ reason or 'Rolling solar/headroom model is evaluating the next charging opportunity.' }}**  
-              {% if useful > 0 %}Useful EV energy: **{{ useful | round(1) }} kWh** · {% endif %}Headroom risk: **{{ risk }}**
+              
+              Forecast basis: **{{ source or 'unavailable' }}**{% if scale is number %} · current-day scale **{{ scale | round(2) }}×**{% endif %}
+
+          - type: tile
+            entity: binary_sensor.energy_planner_headroom_risk_today
+            name: Headroom Risk Today
+            icon: mdi:battery-alert
+            vertical: false
 
           - type: tile
             entity: sensor.energy_planner_whole_bank_soc
             name: Battery Now
             icon: mdi:battery
             vertical: false
-
-          - type: markdown
-            content: >-
-              {% set e = 'binary_sensor.energy_planner_next_sunset_forecast_available' %}
-              {% set d = state_attr(e,'date') %}
-              {% set soc = state_attr(e,'soc_pct') %}
-              {% set src = state_attr(e,'forecast_source') %}
-              ### Next Sunset{% if d %} — {{ d }}{% endif %}
-              {% if soc is number %}
-              # {{ soc | round(1) }}%
-              {% else %}
-              **Forecast unavailable**
-              {% endif %}
-              {{ src or 'unavailable' }}
 
           - type: tile
             entity: sensor.energy_planner_battery_headroom
@@ -62,15 +62,39 @@ views:
 
           - type: tile
             entity: sensor.energy_planner_rolling_headroom_shortfall
-            name: Rolling Headroom Shortfall
-            icon: mdi:battery-alert-variant-outline
+            name: Modeled Headroom Shortfall
+            icon: mdi:battery-minus-outline
             vertical: false
 
           - type: tile
-            entity: sensor.energy_planner_rolling_headroom_risk_date
-            name: Headroom Risk Date
-            icon: mdi:calendar-alert
+            entity: sensor.energy_planner_rolling_risk_day_capacity_export
+            name: Capacity-Limited Export Risk
+            icon: mdi:transmission-tower-export
             vertical: false
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: What To Do
+            icon: mdi:lightbulb-on-outline
+
+          - type: markdown
+            content: >-
+              {% set ev = 'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
+              {% set status = states('sensor.energy_planner_rolling_ev_advisory_status') %}
+              {% set reason = state_attr(ev,'reason') %}
+              {% set useful = states('sensor.energy_planner_recommended_ev_charge_energy') | float(0) %}
+              {% if status == 'green' %}
+              ## 🟢 EV / FLEXIBLE LOAD USEFUL
+              {% elif status == 'yellow' %}
+              ## 🟡 FLEXIBLE LOAD OPTIONAL
+              {% elif status == 'red' %}
+              ## 🔴 FLEXIBLE LOAD NOT NEEDED
+              {% else %}
+              ## ⚪ FLEXIBLE-LOAD OUTLOOK UNAVAILABLE
+              {% endif %}
+              **{{ reason or 'Planner is evaluating the best use of flexible load.' }}**  
+              {% if useful > 0 %}Recommended EV energy: **{{ useful | round(1) }} kWh**{% endif %}
 
           - type: tile
             entity: binary_sensor.energy_planner_ev_auto_charge_eligible
@@ -78,23 +102,84 @@ views:
             icon: mdi:ev-station
             vertical: false
 
+          - type: tile
+            entity: sensor.energy_planner_ev_available_energy_to_target
+            name: EV Energy Available
+            icon: mdi:car-battery
+            vertical: false
+
+          - type: tile
+            entity: sensor.energy_planner_recommended_ev_charge_energy
+            name: Recommended EV Energy
+            icon: mdi:battery-charging-medium
+            vertical: false
+
+          - type: markdown
+            content: >-
+              {% set e = 'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
+              {% set start = state_attr(e,'preferred_window_start') %}
+              {% set end = state_attr(e,'preferred_window_end') %}
+              {% set solar = state_attr(e,'preferred_window_solar_fraction_pct') %}
+              ### Preferred EV charging window
+              {% if start and end %}
+              **{{ as_local(as_datetime(start)).strftime('%-I:%M %p') }} – {{ as_local(as_datetime(end)).strftime('%-I:%M %p') }}**  
+              Solar supplied: **{{ solar | round(0) if solar is number else '—' }}%**
+              {% else %}
+              No EV charging window is currently required.
+              {% endif %}
+
       - type: grid
         cards:
           - type: heading
-            heading: Next Solar Window
+            heading: Solar & Battery Outlook
             icon: mdi:weather-sunny
 
           - type: markdown
             content: >-
               {% set e = 'binary_sensor.energy_planner_next_sunset_forecast_available' %}
               {% set d = state_attr(e,'date') %}
+              {% set soc = state_attr(e,'soc_pct') %}
               {% set charge = state_attr(e,'expected_charge_kwh') %}
-              {% set grid = state_attr(e,'expected_grid_import_kwh') %}
               {% set export = state_attr(e,'expected_export_kwh') %}
-              ### {% if d %}{{ d }}{% else %}Next available forecast{% endif %}
-              **Expected battery gain:** {{ charge | round(2) if charge is number else '—' }} kWh  
-              **Expected daylight grid import:** {{ grid | round(2) if grid is number else '—' }} kWh  
-              **Expected export:** {{ export | round(2) if export is number else '—' }} kWh
+              ### Next sunset{% if d %} — {{ d }}{% endif %}
+              **Projected SOC:** {{ soc | round(1) if soc is number else '—' }}%  
+              **Expected battery gain:** {{ charge | round(1) if charge is number else '—' }} kWh  
+              **Expected export:** {{ export | round(1) if export is number else '—' }} kWh
+
+          - type: markdown
+            content: >-
+              {% set e = 'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
+              {% set s3 = state_attr(e,'surplus_next_3d_kwh') %}
+              {% set sh = state_attr(e,'surplus_horizon_kwh') %}
+              {% set risk = states('sensor.energy_planner_rolling_headroom_risk_date') %}
+              ### Rolling energy outlook
+              **Solar after house load — next 3 days:** {{ s3 | round(1) if s3 is number else '—' }} kWh  
+              **Solar after house load — full forecast horizon:** {{ sh | round(1) if sh is number else '—' }} kWh  
+              **First modeled headroom-risk day:** {{ risk }}
+
+          - type: tile
+            entity: sensor.energy_planner_rolling_risk_day_projected_sunset_soc
+            name: Risk-Day Sunset SOC
+            icon: mdi:battery-high
+            vertical: false
+
+          - type: tile
+            entity: sensor.energy_planner_residual_headroom_shortfall_after_ev_charge
+            name: Residual Headroom Risk After EV
+            icon: mdi:battery-alert
+            vertical: false
+
+          - type: tile
+            entity: sensor.energy_planner_residual_capacity_export_after_ev_charge
+            name: Residual Export After EV
+            icon: mdi:transmission-tower-export
+            vertical: false
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Forecast Quality
+            icon: mdi:chart-bell-curve-cumulative
 
           - type: tile
             entity: sensor.energy_planner_forecast_solar_enhancement_status
@@ -115,136 +200,9 @@ views:
             vertical: false
 
           - type: tile
-            entity: sensor.energy_planner_forecast_solar_weather_sky_next_6_hours
-            name: Forecast Sky — Next 6h
-            icon: mdi:weather-partly-cloudy
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_forecast_solar_weather_temperature
-            name: Forecast Temperature
-            icon: mdi:thermometer
-            vertical: false
-
-      - type: grid
-        cards:
-          - type: heading
-            heading: Rolling Outlook
-            icon: mdi:calendar-sync
-
-          - type: markdown
-            content: >-
-              {% set e = 'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
-              {% set s3 = state_attr(e,'surplus_next_3d_kwh') %}
-              {% set sh = state_attr(e,'surplus_horizon_kwh') %}
-              {% set risk = states('sensor.energy_planner_rolling_headroom_risk_date') %}
-              ### Solar headroom outlook
-              **Next 3 days surplus:** {{ s3 | round(1) if s3 is number else '—' }} kWh  
-              **Full forecast horizon surplus:** {{ sh | round(1) if sh is number else '—' }} kWh  
-              **First headroom-risk day:** {{ risk }}
-
-          - type: tile
-            entity: sensor.energy_planner_rolling_risk_day_projected_sunset_soc
-            name: Risk-Day Sunset SOC
-            icon: mdi:battery-high
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_rolling_risk_day_capacity_export
-            name: Capacity Export Risk
-            icon: mdi:transmission-tower-export
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_residual_headroom_shortfall_after_ev_charge
-            name: Residual Headroom Risk
-            icon: mdi:battery-alert
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_residual_capacity_export_after_ev_charge
-            name: Residual Export After EV
-            icon: mdi:transmission-tower-export
-            vertical: false
-
-      - type: grid
-        cards:
-          - type: heading
-            heading: EV Charging
-            icon: mdi:car-electric
-
-          - type: tile
-            entity: sensor.energy_planner_ev_soc
-            name: Lexus SOC
-            icon: mdi:car-battery
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_ev_available_energy_to_target
-            name: EV Energy Available to Target
-            icon: mdi:battery-arrow-up-outline
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_recommended_ev_charge_energy
-            name: Useful EV Energy
-            icon: mdi:battery-charging-medium
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_recommended_ev_preserved_battery_headroom
-            name: Headroom Preserved by EV
-            icon: mdi:battery-sync-outline
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_ev_learned_charge_power
-            name: Learned Charge Power
-            icon: mdi:ev-plug-type1
-            vertical: false
-
-          - type: tile
-            entity: sensor.car_charger_power
-            name: Charger Now
-            icon: mdi:flash
-            vertical: false
-
-          - type: markdown
-            content: >-
-              {% set e = 'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
-              {% set start = state_attr(e,'preferred_window_start') %}
-              {% set end = state_attr(e,'preferred_window_end') %}
-              {% set solar = state_attr(e,'preferred_window_solar_fraction_pct') %}
-              ### Preferred charging window
-              {% if start and end %}
-              **{{ as_local(as_datetime(start)).strftime('%-I:%M %p') }} – {{ as_local(as_datetime(end)).strftime('%-I:%M %p') }}**  
-              Solar supplied: **{{ solar | round(0) if solar is number else '—' }}%**
-              {% else %}
-              No EV charging window is currently needed.
-              {% endif %}
-
-      - type: grid
-        cards:
-          - type: heading
-            heading: Forecast Quality
-            icon: mdi:chart-bell-curve-cumulative
-
-          - type: tile
-            entity: sensor.energy_planner_forecast_solar_account_type
-            name: Forecast.Solar Account
-            icon: mdi:account-check-outline
-            vertical: false
-
-          - type: tile
             entity: sensor.energy_planner_forecast_solar_interval_resolution
             name: Forecast Resolution
             icon: mdi:timeline-clock-outline
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_forecast_solar_horizon
-            name: Forecast Horizon
-            icon: mdi:calendar-range
             vertical: false
 
           - type: tile
@@ -254,25 +212,7 @@ views:
             vertical: false
 
           - type: tile
-            entity: sensor.energy_planner_daylight_calibration_samples
-            name: Daylight Samples
-            icon: mdi:white-balance-sunny
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_overnight_calibration_samples
-            name: Overnight Samples
-            icon: mdi:weather-night
-            vertical: false
-
-          - type: tile
             entity: sensor.energy_planner_daylight_stored_energy_forecast_mae
             name: Daylight Forecast MAE
             icon: mdi:chart-line-variant
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_confidence_headroom_action_ready
-            name: Calibration Ready
-            icon: mdi:check-decagram-outline
             vertical: false
