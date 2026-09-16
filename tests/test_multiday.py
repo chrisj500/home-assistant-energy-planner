@@ -1,10 +1,12 @@
 from datetime import date, datetime, timezone
+from pathlib import Path
+import sys
 
-from custom_components.energy_planner.multiday import (
-    dynamic_load_required_kwh,
-    serialize_dynamic_load_days,
-)
-from custom_components.energy_planner.rolling_ev import RollingDayPlan
+MODULE_DIR = Path(__file__).resolve().parents[1] / "custom_components" / "energy_planner"
+sys.path.insert(0, str(MODULE_DIR))
+
+from multiday import dynamic_load_required_kwh, serialize_dynamic_load_days  # noqa: E402
+from rolling_ev import RollingDayPlan  # noqa: E402
 
 
 def _plan(*, day: date, shortfall: float, capacity_export: float) -> RollingDayPlan:
