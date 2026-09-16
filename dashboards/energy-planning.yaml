@@ -1,10 +1,12 @@
-# Energy Planning dashboard v5
+# Energy Planning dashboard v6
 #
-# Decision-first Lovelace dashboard for Energy Planner v0.1.19.
+# Decision-first Lovelace dashboard for Energy Planner v0.1.19
+# with EcoFlow Solar Surplus Controller v0.1.6 realtime Envoy diagnostics.
 # Primary questions:
 # 1. Is battery headroom at risk today?
 # 2. Which forecast days need useful dynamic load, and how much?
 # 3. Can the EV absorb that energy without unnecessary grid charging?
+# 4. Is the realtime solar-surplus controller using native Envoy MQTT telemetry?
 
 views:
   - title: Energy Planning
@@ -82,7 +84,7 @@ views:
             tap_action:
               action: navigate
               navigation_path: >-
-                /history?entity_id=sensor.envoy_482538078562_current_net_power_consumption%2Csensor.envoy_482538078562_current_power_production%2Csensor.ecoflow_smart_home_panel_2_grid_power%2Csensor.ecoflow_smart_home_panel_2_home_power%2Csensor.ecoflow_delta_pro_ultra_battery%2Csensor.ecoflow_delta_pro_ultra_battery_2%2Csensor.ecoflow_delta_pro_ultra_battery_3%2Cnumber.ecoflow_smart_home_panel_2_charging_power%2Cnumber.ecoflow_smart_home_panel_2_backup_reserve_level%2Csensor.solar_actual_power%2Csensor.solar_forecast_power_now%2Csensor.energy_production_today%2Csensor.energy_production_today_remaining%2Csensor.energy_production_tomorrow%2Csensor.house_end_use_power%2Csensor.forecast_base_load_3h_average%2Csensor.forecast_base_load_24h_average%2Csensor.energy_planner_whole_bank_soc%2Csensor.energy_planner_battery_headroom%2Csensor.energy_planner_rolling_headroom_shortfall%2Csensor.energy_planner_rolling_risk_day_capacity_export%2Csensor.energy_planner_rolling_headroom_risk_date%2Cbinary_sensor.energy_planner_headroom_risk_today%2Cbinary_sensor.energy_planner_dynamic_load_forecast%2Csensor.energy_planner_ev_soc%2Csensor.car_charger_power%2Csensor.hot_tub_power%2Csensor.hvac_power%2Csensor.networking_servers_power%2Csensor.rear_patio_power
+                /history?entity_id=sensor.envoy_482538078562_current_net_power_consumption%2Csensor.envoy_482538078562_current_power_production%2Csensor.ecoflow_smart_home_panel_2_grid_power%2Csensor.ecoflow_smart_home_panel_2_home_power%2Csensor.ecoflow_delta_pro_ultra_battery%2Csensor.ecoflow_delta_pro_ultra_battery_2%2Csensor.ecoflow_delta_pro_ultra_battery_3%2Cnumber.ecoflow_smart_home_panel_2_charging_power%2Cnumber.ecoflow_smart_home_panel_2_backup_reserve_level%2Csensor.solar_actual_power%2Csensor.solar_forecast_power_now%2Csensor.energy_production_today%2Csensor.energy_production_today_remaining%2Csensor.energy_production_tomorrow%2Csensor.house_end_use_power%2Csensor.forecast_base_load_3h_average%2Csensor.forecast_base_load_24h_average%2Csensor.energy_planner_whole_bank_soc%2Csensor.energy_planner_battery_headroom%2Csensor.energy_planner_rolling_headroom_shortfall%2Csensor.energy_planner_rolling_risk_day_capacity_export%2Csensor.energy_planner_rolling_headroom_risk_date%2Cbinary_sensor.energy_planner_headroom_risk_today%2Cbinary_sensor.energy_planner_dynamic_load_forecast%2Csensor.energy_planner_ev_soc%2Csensor.car_charger_power%2Csensor.hot_tub_power%2Csensor.hvac_power%2Csensor.networking_servers_power%2Csensor.rear_patio_power%2Csensor.ecoflow_solar_surplus_envoy_realtime_grid_power%2Csensor.ecoflow_solar_surplus_envoy_realtime_solar_power%2Csensor.ecoflow_solar_surplus_site_grid_source%2Csensor.ecoflow_solar_surplus_solar_source%2Csensor.ecoflow_solar_surplus_decision_site_grid_power%2Csensor.ecoflow_solar_surplus_decision_solar_power%2Csensor.ecoflow_solar_surplus_physical_charge_power%2Csensor.ecoflow_solar_surplus_target_charge_power%2Csensor.ecoflow_solar_surplus_charge_power_difference%2Csensor.ecoflow_solar_surplus_decision_policy%2Csensor.ecoflow_solar_surplus_last_decision_time%2Cbinary_sensor.ecoflow_solar_surplus_control_ready%2Cbinary_sensor.ecoflow_solar_surplus_control_active%2Cbinary_sensor.ecoflow_solar_surplus_controller_healthy
 
       - type: grid
         cards:
@@ -266,4 +268,83 @@ views:
             entity: sensor.energy_planner_daylight_stored_energy_forecast_mae
             name: Daylight Forecast MAE
             icon: mdi:chart-line-variant
+            vertical: false
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: Realtime Solar Controller
+            icon: mdi:transmission-tower
+
+          - type: markdown
+            content: >-
+              {% set healthy = is_state('binary_sensor.ecoflow_solar_surplus_controller_healthy','on') %}
+              {% set grid_source = states('sensor.ecoflow_solar_surplus_site_grid_source') %}
+              {% set solar_source = states('sensor.ecoflow_solar_surplus_solar_source') %}
+              {% set grid = states('sensor.ecoflow_solar_surplus_decision_site_grid_power') %}
+              {% set solar = states('sensor.ecoflow_solar_surplus_decision_solar_power') %}
+              {% set policy = states('sensor.ecoflow_solar_surplus_decision_policy') %}
+              {% if healthy %}
+              ## 🟢 REALTIME CONTROLLER HEALTHY
+              {% else %}
+              ## 🟡 CHECK CONTROLLER TELEMETRY
+              {% endif %}
+              **Grid source:** {{ grid_source | replace('_',' ') | title if grid_source not in ['unknown','unavailable'] else 'Unavailable' }}  
+              **Solar source:** {{ solar_source | replace('_',' ') | title if solar_source not in ['unknown','unavailable'] else 'Unavailable' }}  
+              **Decision grid:** {{ (grid | float(0)) | round(0) if grid not in ['unknown','unavailable'] else '—' }} W  
+              **Decision solar:** {{ (solar | float(0)) | round(0) if solar not in ['unknown','unavailable'] else '—' }} W  
+              **Policy:** {{ policy | replace('_',' ') if policy not in ['unknown','unavailable'] else '—' }}
+
+          - type: tile
+            entity: binary_sensor.ecoflow_solar_surplus_controller_healthy
+            name: Controller Healthy
+            icon: mdi:heart-pulse
+            vertical: false
+
+          - type: tile
+            entity: sensor.ecoflow_solar_surplus_site_grid_source
+            name: Grid Source
+            icon: mdi:transmission-tower-import
+            vertical: false
+
+          - type: tile
+            entity: sensor.ecoflow_solar_surplus_solar_source
+            name: Solar Source
+            icon: mdi:solar-power-variant
+            vertical: false
+
+          - type: tile
+            entity: sensor.ecoflow_solar_surplus_envoy_realtime_grid_power
+            name: Envoy Realtime Grid
+            icon: mdi:transmission-tower
+            vertical: false
+
+          - type: tile
+            entity: sensor.ecoflow_solar_surplus_envoy_realtime_solar_power
+            name: Envoy Realtime Solar
+            icon: mdi:solar-power
+            vertical: false
+
+          - type: tile
+            entity: sensor.ecoflow_solar_surplus_decision_site_grid_power
+            name: Grid Used by Controller
+            icon: mdi:meter-electric
+            vertical: false
+
+          - type: tile
+            entity: sensor.ecoflow_solar_surplus_target_charge_power
+            name: Target Charge Power
+            icon: mdi:battery-charging
+            vertical: false
+
+          - type: tile
+            entity: sensor.ecoflow_solar_surplus_physical_charge_power
+            name: Physical Charge Power
+            icon: mdi:battery-charging-high
+            vertical: false
+
+          - type: tile
+            entity: sensor.ecoflow_solar_surplus_last_decision_time
+            name: Last Controller Decision
+            icon: mdi:clock-check-outline
             vertical: false
