@@ -128,6 +128,10 @@ class EnergyPlannerAutoChargeEligible(
             "ev_learning_status": data.get("rolling_ev_learning_status"),
             "ev_power_entity": data.get("rolling_ev_power_entity"),
             "ev_current_power_w": data.get("rolling_ev_current_power_w"),
+            "learned_charge_power_w": data.get("rolling_ev_charge_power_w"),
+            "learned_charge_power_source": data.get("rolling_ev_charge_power_source"),
+            "recommended_energy_kwh": data.get("rolling_ev_recommended_energy_kwh"),
+            "headroom_preserved_kwh": data.get("rolling_ev_headroom_preserved_kwh"),
             "surplus_next_3d_kwh": data.get("rolling_ev_surplus_next_3d_kwh"),
             "surplus_horizon_kwh": data.get("rolling_ev_surplus_horizon_kwh"),
         }
