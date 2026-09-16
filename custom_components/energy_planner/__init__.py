@@ -4,14 +4,14 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import PLATFORMS
-from .v016_coordinator import EnergyPlannerV016Coordinator
+from .v017_coordinator import EnergyPlannerV017Coordinator
 
 
-type EnergyPlannerConfigEntry = ConfigEntry[EnergyPlannerV016Coordinator]
+type EnergyPlannerConfigEntry = ConfigEntry[EnergyPlannerV017Coordinator]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: EnergyPlannerConfigEntry) -> bool:
-    coordinator = EnergyPlannerV016Coordinator(hass, entry)
+    coordinator = EnergyPlannerV017Coordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
