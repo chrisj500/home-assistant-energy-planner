@@ -72,6 +72,16 @@ views:
             icon: mdi:transmission-tower-export
             vertical: false
 
+          - type: button
+            name: Energy History Export
+            icon: mdi:history
+            show_name: true
+            show_icon: true
+            tap_action:
+              action: navigate
+              navigation_path: >-
+                /history?entity_id=sensor.envoy_482538078562_current_net_power_consumption%2Csensor.envoy_482538078562_current_power_production%2Csensor.ecoflow_smart_home_panel_2_grid_power%2Csensor.ecoflow_smart_home_panel_2_home_power%2Csensor.ecoflow_delta_pro_ultra_battery%2Csensor.ecoflow_delta_pro_ultra_battery_2%2Csensor.ecoflow_delta_pro_ultra_battery_3%2Cnumber.ecoflow_smart_home_panel_2_charging_power%2Cnumber.ecoflow_smart_home_panel_2_backup_reserve_level%2Csensor.solar_actual_power%2Csensor.solar_forecast_power_now%2Csensor.energy_production_today%2Csensor.energy_production_today_remaining%2Csensor.energy_production_tomorrow%2Csensor.house_end_use_power%2Csensor.forecast_base_load_3h_average%2Csensor.forecast_base_load_24h_average%2Csensor.energy_planner_whole_bank_soc%2Csensor.energy_planner_battery_headroom%2Csensor.energy_planner_rolling_headroom_shortfall%2Csensor.energy_planner_rolling_risk_day_capacity_export%2Csensor.energy_planner_rolling_headroom_risk_date%2Cbinary_sensor.energy_planner_headroom_risk_today%2Csensor.car_charger_power%2Csensor.hot_tub_power%2Csensor.hvac_power%2Csensor.networking_servers_power%2Csensor.rear_patio_power
+
       - type: grid
         cards:
           - type: heading
@@ -123,7 +133,7 @@ views:
               ### Preferred EV charging window
               {% if start and end %}
               **{{ as_local(as_datetime(start)).strftime('%-I:%M %p') }} – {{ as_local(as_datetime(end)).strftime('%-I:%M %p') }}**  
-              Solar supplied: **{{ solar | round(0) if solar is number else '—' }}%**
+              Solar supplied: **{{ solar | round(0) if solar is number else '—' }}%
               {% else %}
               No EV charging window is currently required.
               {% endif %}
