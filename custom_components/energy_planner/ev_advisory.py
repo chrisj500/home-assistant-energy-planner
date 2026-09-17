@@ -124,6 +124,13 @@ def auto_charge_eligibility(
     if ev_home is False:
         return False, "EV is away."
     if available_energy_kwh is None or available_energy_kwh <= 0.05:
+        if outlook_status == "green":
+            return (
+                False,
+                "Headroom risk remains, but the EV is already at its target. "
+                "Create EV charging headroom through normal driving or errands before "
+                "the preferred solar window.",
+            )
         return False, "EV energy-to-target is unavailable or already satisfied."
     if outlook_status != "green":
         return False, f"EV charging outlook is {outlook_status}, not green."
