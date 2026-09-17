@@ -83,6 +83,21 @@ class EvAdvisoryTests(unittest.TestCase):
         )
         self.assertFalse(waiting)
 
+    def test_green_outlook_full_ev_preserves_strategic_headroom_message(self) -> None:
+        now = datetime(2026, 9, 17, 12, 0, tzinfo=timezone.utc)
+        eligible, reason = auto_charge_eligibility(
+            outlook_status="green",
+            now=now,
+            window_start=None,
+            window_end=None,
+            ev_home=True,
+            available_energy_kwh=0.0,
+            solar_fraction=None,
+        )
+        self.assertFalse(eligible)
+        self.assertIn("Headroom risk remains", reason)
+        self.assertIn("driving or errands", reason)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -27,12 +27,13 @@ class EnergyPlannerV017Coordinator(EnergyPlannerV016Coordinator):
             return super()._rolling_ev_outputs(baseline)
 
         now = dt_util.now()
-        _sunrise, sunset = _solar_window(self.hass, now.date())
+        sunrise, sunset = _solar_window(self.hass, now.date())
         points = interval_points_from_payload(payload, now, assume_utc=True)
         corrected_remaining = _num(self.hass, self.cfg.get(CONF_SOLAR_REMAINING))
         correction = correct_current_day_points(
             points=points,
             reference=now,
+            sunrise=sunrise,
             sunset=sunset,
             corrected_remaining_kwh=corrected_remaining,
         )
