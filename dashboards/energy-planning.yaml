@@ -1,7 +1,8 @@
-# Energy Planning dashboard v6
+# Energy Planning dashboard v7
 #
-# Decision-first Lovelace dashboard for Energy Planner v0.1.19
-# with EcoFlow Solar Surplus Controller v0.1.6 realtime Envoy diagnostics.
+# Decision-first Lovelace dashboard for Energy Planner v0.1.20
+# with EcoFlow Solar Surplus Controller v0.1.11 realtime Envoy diagnostics.
+# Requires custom:button-card for the Battery Bank operational card.
 # Primary questions:
 # 1. Is battery headroom at risk today?
 # 2. Which forecast days need useful dynamic load, and how much?
@@ -45,6 +46,199 @@ views:
               {% endif %}
 
               Forecast basis: **{{ source or 'unavailable' }}**{% if scale is number %} · current-day scale **{{ scale | round(2) }}×**{% endif %}
+
+          - type: custom:button-card
+            entity: sensor.ecoflow_smart_home_panel_2_backup_battery
+            show_name: false
+            show_icon: false
+            show_state: false
+            tap_action:
+              action: more-info
+            triggers_update:
+              - sensor.ecoflow_smart_home_panel_2_backup_battery
+              - sensor.ecoflow_smart_home_panel_2_ac1_battery
+              - sensor.ecoflow_smart_home_panel_2_ac1_power
+              - sensor.ecoflow_smart_home_panel_2_ac2_battery
+              - sensor.ecoflow_smart_home_panel_2_ac2_power
+              - sensor.ecoflow_smart_home_panel_2_ac3_battery
+              - sensor.ecoflow_smart_home_panel_2_ac3_power
+              - sensor.patio_ecoflow_smart_home_panel_2_backup_charge_time_remaining
+            custom_fields:
+              content: |
+                [[[
+                  const num = (id) => {
+                    const s = states[id];
+                    if (!s || ['unknown', 'unavailable'].includes(s.state)) return null;
+                    const n = Number(s.state);
+                    return Number.isFinite(n) ? n : null;
+                  };
+
+                  const soc = num('sensor.ecoflow_smart_home_panel_2_backup_battery');
+                  const soc1 = num('sensor.ecoflow_smart_home_panel_2_ac1_battery');
+                  const soc2 = num('sensor.ecoflow_smart_home_panel_2_ac2_battery');
+                  const soc3 = num('sensor.ecoflow_smart_home_panel_2_ac3_battery');
+                  const p1 = num('sensor.ecoflow_smart_home_panel_2_ac1_power') ?? 0;
+                  const p2 = num('sensor.ecoflow_smart_home_panel_2_ac2_power') ?? 0;
+                  const p3 = num('sensor.ecoflow_smart_home_panel_2_ac3_power') ?? 0;
+                  const eta = num('sensor.patio_ecoflow_smart_home_panel_2_backup_charge_time_remaining');
+                  const totalPower = p1 + p2 + p3;
+
+                  const charging = totalPower > 50;
+                  const discharging = totalPower < -50;
+                  const socAccent = '#41e66f';
+                  const flowAccent = charging ? '#41e66f' : discharging ? '#68a8ff' : '#a8adb5';
+                  const status = charging ? 'CHARGING' : discharging ? 'DISCHARGING' : 'IDLE';
+                  const statusIcon = charging
+                    ? 'mdi:lightning-bolt'
+                    : discharging
+                      ? 'mdi:home-lightning-bolt-outline'
+                      : 'mdi:power-sleep';
+
+                  const clamp = (v) => v === null ? 0 : Math.max(0, Math.min(100, v));
+                  const socText = (v) => v === null ? '—' : `${Math.round(v)}%`;
+                  const powerText = (p) => {
+                    const a = Math.abs(p);
+                    return a >= 1000 ? `${(a / 1000).toFixed(2)} kW` : `${Math.round(a)} W`;
+                  };
+                  const formatEta = (minutes) => {
+                    if (minutes === null || minutes <= 0) return 'Calculating remaining time';
+                    const h = Math.floor(minutes / 60);
+                    const m = Math.round(minutes % 60);
+                    if (h === 0) return `Full in ${m}m`;
+                    if (m === 0) return `Full in ${h}h`;
+                    return `Full in ${h}h ${m}m`;
+                  };
+                  const etaText = charging
+                    ? formatEta(eta)
+                    : discharging
+                      ? 'Supplying the home'
+                      : 'Not currently charging';
+                  const stackPower = (p) => {
+                    if (Math.abs(p) < 50) return 'Idle';
+                    return p > 0 ? `${powerText(p)} in` : `${powerText(p)} out`;
+                  };
+
+                  const batteryBar = (level, height = 8) => `
+                    <div style="
+                      position:relative;
+                      height:${height}px;
+                      border-radius:999px;
+                      overflow:hidden;
+                      background:rgba(255,255,255,.09);
+                      box-shadow:inset 0 0 0 1px rgba(255,255,255,.025);
+                    ">
+                      <div style="
+                        position:absolute;
+                        inset:0 auto 0 0;
+                        width:${clamp(level)}%;
+                        border-radius:999px;
+                        background:linear-gradient(90deg,#29c95a 0%,${socAccent} 100%);
+                        box-shadow:0 0 14px rgba(65,230,111,.28);
+                        transition:width .5s ease;
+                      "></div>
+                      <div style="
+                        position:absolute;
+                        inset:0;
+                        background-image:linear-gradient(to right,transparent calc(100% - 2px),rgba(17,18,20,.72) 0);
+                        background-size:10% 100%;
+                        pointer-events:none;
+                      "></div>
+                    </div>`;
+
+                  const stack = (name, battery, power) => `
+                    <div style="
+                      background:linear-gradient(145deg,rgba(255,255,255,.055),rgba(255,255,255,.028));
+                      border:1px solid rgba(255,255,255,.075);
+                      border-radius:17px;
+                      padding:13px 12px 12px;
+                      min-width:0;
+                    ">
+                      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                        <span style="font-size:12px;letter-spacing:.1em;font-weight:750;color:rgba(255,255,255,.62);">${name}</span>
+                        <ha-icon
+                          icon="${power > 50 ? 'mdi:lightning-bolt' : power < -50 ? 'mdi:home-lightning-bolt-outline' : 'mdi:battery'}"
+                          style="width:16px;color:${Math.abs(power) > 50 ? flowAccent : 'rgba(255,255,255,.48)'};">
+                        </ha-icon>
+                      </div>
+                      <div style="font-size:25px;line-height:1;font-weight:650;color:#fff;margin-bottom:10px;letter-spacing:-.03em;">
+                        ${socText(battery)}
+                      </div>
+                      ${batteryBar(battery, 6)}
+                      <div style="margin-top:9px;color:rgba(255,255,255,.62);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+                        ${stackPower(power)}
+                      </div>
+                    </div>`;
+
+                  return `
+                    <div style="padding:1px 0 0;font-family:var(--primary-font-family,sans-serif);">
+                      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:18px;">
+                        <div>
+                          <div style="font-size:21px;font-weight:650;color:#fff;letter-spacing:-.025em;">Battery Bank</div>
+                          <div style="margin-top:4px;font-size:12px;color:rgba(255,255,255,.58);">EcoFlow Smart Home Panel 2</div>
+                        </div>
+                        <div style="
+                          display:flex;
+                          align-items:center;
+                          gap:6px;
+                          padding:6px 9px;
+                          border-radius:999px;
+                          background:${flowAccent}18;
+                          color:${flowAccent};
+                          font-size:10px;
+                          font-weight:800;
+                          letter-spacing:.11em;
+                          white-space:nowrap;
+                        ">
+                          <ha-icon icon="${statusIcon}" style="width:15px;"></ha-icon>
+                          ${status}
+                        </div>
+                      </div>
+
+                      <div style="
+                        display:grid;
+                        grid-template-columns:minmax(0,1.2fr) minmax(118px,.8fr);
+                        gap:18px;
+                        align-items:end;
+                        margin-bottom:20px;
+                      ">
+                        <div>
+                          <div style="font-size:11px;font-weight:750;letter-spacing:.12em;color:rgba(255,255,255,.48);margin-bottom:5px;">BANK SOC</div>
+                          <div style="font-size:55px;line-height:.98;font-weight:560;letter-spacing:-.065em;color:#fff;margin-bottom:14px;">${socText(soc)}</div>
+                          ${batteryBar(soc, 11)}
+                        </div>
+
+                        <div style="padding-bottom:1px;">
+                          <div style="font-size:11px;font-weight:750;letter-spacing:.12em;color:rgba(255,255,255,.48);margin-bottom:6px;">${charging ? 'CHARGE RATE' : discharging ? 'OUTPUT' : 'POWER FLOW'}</div>
+                          <div style="display:flex;align-items:center;gap:7px;">
+                            <ha-icon icon="${statusIcon}" style="width:22px;color:${flowAccent};"></ha-icon>
+                            <span style="font-size:25px;font-weight:600;letter-spacing:-.035em;color:#fff;">${powerText(totalPower)}</span>
+                          </div>
+                          <div style="margin-top:6px;font-size:12px;line-height:1.3;color:rgba(255,255,255,.62);">${etaText}</div>
+                        </div>
+                      </div>
+
+                      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;">
+                        ${stack('AC1', soc1, p1)}
+                        ${stack('AC2', soc2, p2)}
+                        ${stack('AC3', soc3, p3)}
+                      </div>
+                    </div>`;
+                ]]]
+            styles:
+              card:
+                - padding: 18px
+                - border-radius: 26px
+                - background: >-
+                    linear-gradient(145deg, rgba(29,31,34,0.99) 0%, rgba(15,16,18,0.995) 100%)
+                - border: 1px solid rgba(255,255,255,0.065)
+                - box-shadow: 0 12px 32px rgba(0,0,0,0.25)
+              grid:
+                - grid-template-areas: '"content"'
+                - grid-template-columns: 1fr
+                - grid-template-rows: auto
+              custom_fields:
+                content:
+                  - width: 100%
 
           - type: tile
             entity: binary_sensor.energy_planner_headroom_risk_today
