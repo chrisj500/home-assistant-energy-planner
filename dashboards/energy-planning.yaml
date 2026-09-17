@@ -1,13 +1,15 @@
-# Energy Planning dashboard v7
+# Energy Planning dashboard v8
 #
-# Decision-first Lovelace dashboard for Energy Planner v0.1.20
-# with EcoFlow Solar Surplus Controller v0.1.11 realtime Envoy diagnostics.
-# Requires custom:button-card for the Battery Bank operational card.
-# Primary questions:
-# 1. Is battery headroom at risk today?
-# 2. Which forecast days need useful dynamic load, and how much?
-# 3. Can the EV absorb that energy without unnecessary grid charging?
-# 4. Is the realtime solar-surplus controller using native Envoy MQTT telemetry?
+# Action-first Lovelace dashboard for Energy Planner v0.1.20.
+# Requires custom:button-card for the Headroom Decision, Battery Bank,
+# and four-day Battery Outlook cards.
+#
+# Design priorities:
+# 1. Show whether any action is needed at a glance.
+# 2. Show current EcoFlow battery-bank state and charge flow.
+# 3. Show four-day battery trajectory using NOW/SUNRISE and SUNSET SOC.
+# 4. Surface EV/flexible-load actions only when useful.
+# 5. Keep forecast-quality diagnostics available without cluttering decisions.
 
 views:
   - title: Energy Planning
@@ -15,37 +17,266 @@ views:
     icon: mdi:solar-power
     type: sections
     max_columns: 4
+
     sections:
+
+      ##########################################################################
+      # HEADROOM DECISION
+      ##########################################################################
+
       - type: grid
         cards:
+
           - type: heading
             heading: Headroom Decision
             icon: mdi:battery-alert-variant-outline
 
-          - type: markdown
-            content: >-
-              {% set e = 'binary_sensor.energy_planner_headroom_risk_today' %}
-              {% set status = state_attr(e,'status') %}
-              {% set shortfall = state_attr(e,'shortfall_kwh') %}
-              {% set export = state_attr(e,'capacity_export_kwh') %}
-              {% set action = state_attr(e,'action') %}
-              {% set scale = state_attr(e,'current_day_scale_factor') %}
-              {% set source = state_attr(e,'forecast_source') %}
-              {% if is_state(e,'on') %}
-              ## ⚠️ HEADROOM RISK — TODAY
-              **Projected storage shortfall:** {{ shortfall | round(1) if shortfall is number else '—' }} kWh  
-              **Capacity-limited export if no useful load is added:** {{ export | round(1) if export is number else '—' }} kWh  
-              **Action:** {{ action or 'Use useful flexible load before the battery fills.' }}
-              {% elif status == 'risk_future' %}
-              ## 🟡 HEADROOM RISK — FUTURE
-              **First risk day:** {{ state_attr(e,'risk_date') or '—' }}  
-              {{ action or 'Preserve flexible-load capacity for the risk day.' }}
-              {% else %}
-              ## 🟢 NO MATERIAL HEADROOM RISK TODAY
-              {{ action or 'No headroom action is currently required.' }}
-              {% endif %}
+          ######################################################################
+          # SIMPLE TRAFFIC LIGHT
+          ######################################################################
 
-              Forecast basis: **{{ source or 'unavailable' }}**{% if scale is number %} · current-day scale **{{ scale | round(2) }}×**{% endif %}
+          - type: custom:button-card
+            entity: binary_sensor.energy_planner_headroom_risk_today
+            show_name: false
+            show_state: false
+            show_icon: false
+            tap_action:
+              action: more-info
+
+            custom_fields:
+              content: |
+                [[[
+                  const e =
+                    states['binary_sensor.energy_planner_headroom_risk_today'];
+
+                  const status = e?.attributes?.status ?? '';
+                  const shortfall =
+                    Number(e?.attributes?.shortfall_kwh ?? 0);
+                  const exportRisk =
+                    Number(e?.attributes?.capacity_export_kwh ?? 0);
+                  const riskDate =
+                    e?.attributes?.risk_date ?? '—';
+                  const action =
+                    e?.attributes?.action ?? '';
+
+                  let level = 'green';
+
+                  if (e?.state === 'on') {
+                    level = 'red';
+                  } else if (status === 'risk_future') {
+                    level = 'yellow';
+                  }
+
+                  const colors = {
+                    green: '#30d158',
+                    yellow: '#ffd60a',
+                    red: '#ff453a',
+                    off: 'rgba(255,255,255,.13)'
+                  };
+
+                  const active = (c) =>
+                    level === c ? colors[c] : colors.off;
+
+                  const lights = `
+                    <div style="
+                      display:flex;
+                      flex-direction:column;
+                      gap:8px;
+                      padding:10px 0;
+                      align-items:center;
+                      justify-content:center;
+                      border-radius:18px;
+                      background:rgba(255,255,255,.045);
+                      border:1px solid rgba(255,255,255,.06);
+                    ">
+                      <div style="
+                        width:19px;
+                        height:19px;
+                        border-radius:50%;
+                        background:${active('red')};
+                        box-shadow:${level === 'red'
+                          ? '0 0 14px rgba(255,69,58,.5)'
+                          : 'none'};
+                      "></div>
+
+                      <div style="
+                        width:19px;
+                        height:19px;
+                        border-radius:50%;
+                        background:${active('yellow')};
+                        box-shadow:${level === 'yellow'
+                          ? '0 0 14px rgba(255,214,10,.45)'
+                          : 'none'};
+                      "></div>
+
+                      <div style="
+                        width:19px;
+                        height:19px;
+                        border-radius:50%;
+                        background:${active('green')};
+                        box-shadow:${level === 'green'
+                          ? '0 0 14px rgba(48,209,88,.45)'
+                          : 'none'};
+                      "></div>
+                    </div>
+                  `;
+
+                  if (level === 'green') {
+                    return `
+                      <div style="
+                        display:grid;
+                        grid-template-columns:54px minmax(0,1fr);
+                        gap:14px;
+                        align-items:center;
+                      ">
+                        ${lights}
+
+                        <div style="
+                          font-size:21px;
+                          font-weight:750;
+                          line-height:1.1;
+                          letter-spacing:-.025em;
+                          color:#fff;
+                        ">
+                          NO ACTION NEEDED
+                        </div>
+                      </div>
+                    `;
+                  }
+
+                  if (level === 'yellow') {
+                    return `
+                      <div style="
+                        display:grid;
+                        grid-template-columns:54px minmax(0,1fr);
+                        gap:14px;
+                        align-items:center;
+                      ">
+                        ${lights}
+
+                        <div style="min-width:0;">
+
+                          <div style="
+                            font-size:20px;
+                            font-weight:750;
+                            line-height:1.1;
+                            color:#fff;
+                          ">
+                            PLAN FLEXIBLE LOAD
+                          </div>
+
+                          <div style="
+                            margin-top:7px;
+                            font-size:12px;
+                            line-height:1.4;
+                            color:rgba(255,255,255,.65);
+                          ">
+                            Risk day:
+                            <b style="color:#fff;">
+                              ${riskDate}
+                            </b>
+                          </div>
+
+                          ${
+                            action
+                              ? `
+                                <div style="
+                                  margin-top:5px;
+                                  font-size:11px;
+                                  line-height:1.35;
+                                  color:rgba(255,255,255,.50);
+                                ">
+                                  ${action}
+                                </div>
+                              `
+                              : ''
+                          }
+
+                        </div>
+                      </div>
+                    `;
+                  }
+
+                  return `
+                    <div style="
+                      display:grid;
+                      grid-template-columns:54px minmax(0,1fr);
+                      gap:14px;
+                      align-items:center;
+                    ">
+                      ${lights}
+
+                      <div style="min-width:0;">
+
+                        <div style="
+                          font-size:20px;
+                          font-weight:750;
+                          line-height:1.1;
+                          color:#fff;
+                        ">
+                          USE FLEXIBLE LOAD TODAY
+                        </div>
+
+                        <div style="
+                          margin-top:7px;
+                          font-size:12px;
+                          line-height:1.4;
+                          color:rgba(255,255,255,.68);
+                        ">
+                          Shortfall
+                          <b style="color:#fff;">
+                            ${shortfall.toFixed(1)} kWh
+                          </b>
+                          &nbsp;·&nbsp;
+                          Export risk
+                          <b style="color:#fff;">
+                            ${exportRisk.toFixed(1)} kWh
+                          </b>
+                        </div>
+
+                        ${
+                          action
+                            ? `
+                              <div style="
+                                margin-top:5px;
+                                font-size:11px;
+                                line-height:1.35;
+                                color:rgba(255,255,255,.50);
+                              ">
+                                ${action}
+                              </div>
+                            `
+                            : ''
+                        }
+
+                      </div>
+                    </div>
+                  `;
+                ]]]
+
+            styles:
+              card:
+                - padding: 16px
+                - border-radius: 24px
+                - background: >-
+                    linear-gradient(
+                    145deg,
+                    rgba(29,31,34,0.99) 0%,
+                    rgba(15,16,18,0.995) 100%)
+                - border: 1px solid rgba(255,255,255,0.065)
+                - box-shadow: 0 12px 32px rgba(0,0,0,0.25)
+
+              grid:
+                - grid-template-areas: '"content"'
+                - grid-template-columns: 1fr
+
+              custom_fields:
+                content:
+                  - width: 100%
+
+          ######################################################################
+          # BATTERY BANK
+          ######################################################################
 
           - type: custom:button-card
             entity: sensor.ecoflow_smart_home_panel_2_backup_battery
@@ -54,6 +285,7 @@ views:
             show_state: false
             tap_action:
               action: more-info
+
             triggers_update:
               - sensor.ecoflow_smart_home_panel_2_backup_battery
               - sensor.ecoflow_smart_home_panel_2_ac1_battery
@@ -63,298 +295,1048 @@ views:
               - sensor.ecoflow_smart_home_panel_2_ac3_battery
               - sensor.ecoflow_smart_home_panel_2_ac3_power
               - sensor.patio_ecoflow_smart_home_panel_2_backup_charge_time_remaining
+
             custom_fields:
               content: |
                 [[[
                   const num = (id) => {
                     const s = states[id];
-                    if (!s || ['unknown', 'unavailable'].includes(s.state)) return null;
+
+                    if (
+                      !s ||
+                      ['unknown','unavailable'].includes(s.state)
+                    ) {
+                      return null;
+                    }
+
                     const n = Number(s.state);
                     return Number.isFinite(n) ? n : null;
                   };
 
-                  const soc = num('sensor.ecoflow_smart_home_panel_2_backup_battery');
-                  const soc1 = num('sensor.ecoflow_smart_home_panel_2_ac1_battery');
-                  const soc2 = num('sensor.ecoflow_smart_home_panel_2_ac2_battery');
-                  const soc3 = num('sensor.ecoflow_smart_home_panel_2_ac3_battery');
-                  const p1 = num('sensor.ecoflow_smart_home_panel_2_ac1_power') ?? 0;
-                  const p2 = num('sensor.ecoflow_smart_home_panel_2_ac2_power') ?? 0;
-                  const p3 = num('sensor.ecoflow_smart_home_panel_2_ac3_power') ?? 0;
-                  const eta = num('sensor.patio_ecoflow_smart_home_panel_2_backup_charge_time_remaining');
+                  const soc =
+                    num(
+                      'sensor.ecoflow_smart_home_panel_2_backup_battery'
+                    );
+
+                  const soc1 =
+                    num(
+                      'sensor.ecoflow_smart_home_panel_2_ac1_battery'
+                    );
+
+                  const soc2 =
+                    num(
+                      'sensor.ecoflow_smart_home_panel_2_ac2_battery'
+                    );
+
+                  const soc3 =
+                    num(
+                      'sensor.ecoflow_smart_home_panel_2_ac3_battery'
+                    );
+
+                  const p1 =
+                    num(
+                      'sensor.ecoflow_smart_home_panel_2_ac1_power'
+                    ) ?? 0;
+
+                  const p2 =
+                    num(
+                      'sensor.ecoflow_smart_home_panel_2_ac2_power'
+                    ) ?? 0;
+
+                  const p3 =
+                    num(
+                      'sensor.ecoflow_smart_home_panel_2_ac3_power'
+                    ) ?? 0;
+
+                  const eta =
+                    num(
+                      'sensor.patio_ecoflow_smart_home_panel_2_backup_charge_time_remaining'
+                    );
+
                   const totalPower = p1 + p2 + p3;
 
                   const charging = totalPower > 50;
                   const discharging = totalPower < -50;
-                  const socAccent = '#41e66f';
-                  const flowAccent = charging ? '#41e66f' : discharging ? '#68a8ff' : '#a8adb5';
-                  const status = charging ? 'CHARGING' : discharging ? 'DISCHARGING' : 'IDLE';
-                  const statusIcon = charging
-                    ? 'mdi:lightning-bolt'
-                    : discharging
-                      ? 'mdi:home-lightning-bolt-outline'
-                      : 'mdi:power-sleep';
 
-                  const clamp = (v) => v === null ? 0 : Math.max(0, Math.min(100, v));
-                  const socText = (v) => v === null ? '—' : `${Math.round(v)}%`;
+                  const flowAccent =
+                    charging
+                      ? '#41e66f'
+                      : discharging
+                        ? '#68a8ff'
+                        : '#a8adb5';
+
+                  const status =
+                    charging
+                      ? 'CHARGING'
+                      : discharging
+                        ? 'DISCHARGING'
+                        : 'IDLE';
+
+                  const statusIcon =
+                    charging
+                      ? 'mdi:lightning-bolt'
+                      : discharging
+                        ? 'mdi:home-lightning-bolt-outline'
+                        : 'mdi:power-sleep';
+
+                  const clamp = (v) =>
+                    v === null
+                      ? 0
+                      : Math.max(0,Math.min(100,v));
+
+                  const socText = (v) =>
+                    v === null
+                      ? '—'
+                      : `${Math.round(v)}%`;
+
                   const powerText = (p) => {
                     const a = Math.abs(p);
-                    return a >= 1000 ? `${(a / 1000).toFixed(2)} kW` : `${Math.round(a)} W`;
-                  };
-                  const formatEta = (minutes) => {
-                    if (minutes === null || minutes <= 0) return 'Calculating remaining time';
-                    const h = Math.floor(minutes / 60);
-                    const m = Math.round(minutes % 60);
-                    if (h === 0) return `Full in ${m}m`;
-                    if (m === 0) return `Full in ${h}h`;
-                    return `Full in ${h}h ${m}m`;
-                  };
-                  const etaText = charging
-                    ? formatEta(eta)
-                    : discharging
-                      ? 'Supplying the home'
-                      : 'Not currently charging';
-                  const stackPower = (p) => {
-                    if (Math.abs(p) < 50) return 'Idle';
-                    return p > 0 ? `${powerText(p)} in` : `${powerText(p)} out`;
+
+                    return a >= 1000
+                      ? `${(a / 1000).toFixed(2)} kW`
+                      : `${Math.round(a)} W`;
                   };
 
-                  const batteryBar = (level, height = 8) => `
+                  const formatEta = (minutes) => {
+
+                    if (
+                      minutes === null ||
+                      minutes <= 0
+                    ) {
+                      return 'Calculating remaining time';
+                    }
+
+                    const h =
+                      Math.floor(minutes / 60);
+
+                    const m =
+                      Math.round(minutes % 60);
+
+                    if (h === 0)
+                      return `Full in ${m}m`;
+
+                    if (m === 0)
+                      return `Full in ${h}h`;
+
+                    return `Full in ${h}h ${m}m`;
+                  };
+
+                  const etaText =
+                    charging
+                      ? formatEta(eta)
+                      : discharging
+                        ? 'Supplying the home'
+                        : 'Not currently charging';
+
+                  const stackPower = (p) => {
+
+                    if (Math.abs(p) < 50)
+                      return 'Idle';
+
+                    return p > 0
+                      ? `${powerText(p)} in`
+                      : `${powerText(p)} out`;
+                  };
+
+                  const batteryBar = (
+                    level,
+                    height = 8
+                  ) => `
                     <div style="
                       position:relative;
                       height:${height}px;
                       border-radius:999px;
                       overflow:hidden;
                       background:rgba(255,255,255,.09);
-                      box-shadow:inset 0 0 0 1px rgba(255,255,255,.025);
                     ">
+
                       <div style="
                         position:absolute;
                         inset:0 auto 0 0;
                         width:${clamp(level)}%;
                         border-radius:999px;
-                        background:linear-gradient(90deg,#29c95a 0%,${socAccent} 100%);
-                        box-shadow:0 0 14px rgba(65,230,111,.28);
+                        background:
+                          linear-gradient(
+                            90deg,
+                            #29c95a,
+                            #41e66f
+                          );
                         transition:width .5s ease;
-                      "></div>
+                      ">
+                      </div>
+
                       <div style="
                         position:absolute;
                         inset:0;
-                        background-image:linear-gradient(to right,transparent calc(100% - 2px),rgba(17,18,20,.72) 0);
+                        background-image:
+                          linear-gradient(
+                            to right,
+                            transparent calc(100% - 2px),
+                            rgba(17,18,20,.72) 0
+                          );
                         background-size:10% 100%;
-                        pointer-events:none;
-                      "></div>
-                    </div>`;
+                      ">
+                      </div>
 
-                  const stack = (name, battery, power) => `
+                    </div>
+                  `;
+
+                  const stack = (
+                    name,
+                    battery,
+                    power
+                  ) => `
                     <div style="
-                      background:linear-gradient(145deg,rgba(255,255,255,.055),rgba(255,255,255,.028));
-                      border:1px solid rgba(255,255,255,.075);
-                      border-radius:17px;
-                      padding:13px 12px 12px;
+                      background:
+                        rgba(255,255,255,.04);
+                      border:
+                        1px solid
+                        rgba(255,255,255,.07);
+                      border-radius:16px;
+                      padding:12px;
                       min-width:0;
                     ">
-                      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
-                        <span style="font-size:12px;letter-spacing:.1em;font-weight:750;color:rgba(255,255,255,.62);">${name}</span>
+
+                      <div style="
+                        display:flex;
+                        justify-content:
+                          space-between;
+                        align-items:center;
+                        margin-bottom:9px;
+                      ">
+
+                        <span style="
+                          font-size:11px;
+                          letter-spacing:.10em;
+                          font-weight:750;
+                          color:
+                            rgba(255,255,255,.58);
+                        ">
+                          ${name}
+                        </span>
+
                         <ha-icon
-                          icon="${power > 50 ? 'mdi:lightning-bolt' : power < -50 ? 'mdi:home-lightning-bolt-outline' : 'mdi:battery'}"
-                          style="width:16px;color:${Math.abs(power) > 50 ? flowAccent : 'rgba(255,255,255,.48)'};">
+                          icon="${
+                            power > 50
+                              ? 'mdi:lightning-bolt'
+                              : power < -50
+                                ? 'mdi:home-lightning-bolt-outline'
+                                : 'mdi:battery'
+                          }"
+                          style="
+                            width:15px;
+                            color:${
+                              Math.abs(power) > 50
+                                ? flowAccent
+                                : 'rgba(255,255,255,.4)'
+                            };
+                          ">
                         </ha-icon>
+
                       </div>
-                      <div style="font-size:25px;line-height:1;font-weight:650;color:#fff;margin-bottom:10px;letter-spacing:-.03em;">
+
+                      <div style="
+                        font-size:24px;
+                        font-weight:650;
+                        color:#fff;
+                        margin-bottom:9px;
+                      ">
                         ${socText(battery)}
                       </div>
-                      ${batteryBar(battery, 6)}
-                      <div style="margin-top:9px;color:rgba(255,255,255,.62);font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+
+                      ${batteryBar(battery,6)}
+
+                      <div style="
+                        margin-top:8px;
+                        font-size:10px;
+                        color:
+                          rgba(255,255,255,.55);
+                      ">
                         ${stackPower(power)}
                       </div>
-                    </div>`;
+
+                    </div>
+                  `;
 
                   return `
-                    <div style="padding:1px 0 0;font-family:var(--primary-font-family,sans-serif);">
-                      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px;margin-bottom:18px;">
+                    <div>
+
+                      <div style="
+                        display:flex;
+                        justify-content:
+                          space-between;
+                        align-items:flex-start;
+                        gap:10px;
+                        margin-bottom:17px;
+                      ">
+
                         <div>
-                          <div style="font-size:21px;font-weight:650;color:#fff;letter-spacing:-.025em;">Battery Bank</div>
-                          <div style="margin-top:4px;font-size:12px;color:rgba(255,255,255,.58);">EcoFlow Smart Home Panel 2</div>
+
+                          <div style="
+                            font-size:20px;
+                            font-weight:650;
+                            color:#fff;
+                          ">
+                            Battery Bank
+                          </div>
+
+                          <div style="
+                            margin-top:4px;
+                            font-size:11px;
+                            color:
+                              rgba(255,255,255,.55);
+                          ">
+                            EcoFlow Smart Home Panel 2
+                          </div>
+
                         </div>
+
                         <div style="
                           display:flex;
                           align-items:center;
-                          gap:6px;
+                          gap:5px;
                           padding:6px 9px;
                           border-radius:999px;
                           background:${flowAccent}18;
                           color:${flowAccent};
                           font-size:10px;
                           font-weight:800;
-                          letter-spacing:.11em;
-                          white-space:nowrap;
+                          letter-spacing:.10em;
                         ">
-                          <ha-icon icon="${statusIcon}" style="width:15px;"></ha-icon>
+
+                          <ha-icon
+                            icon="${statusIcon}"
+                            style="width:14px;">
+                          </ha-icon>
+
                           ${status}
+
                         </div>
+
                       </div>
 
                       <div style="
                         display:grid;
-                        grid-template-columns:minmax(0,1.2fr) minmax(118px,.8fr);
-                        gap:18px;
+                        grid-template-columns:
+                          1.2fr .8fr;
+                        gap:16px;
                         align-items:end;
-                        margin-bottom:20px;
+                        margin-bottom:19px;
                       ">
+
                         <div>
-                          <div style="font-size:11px;font-weight:750;letter-spacing:.12em;color:rgba(255,255,255,.48);margin-bottom:5px;">BANK SOC</div>
-                          <div style="font-size:55px;line-height:.98;font-weight:560;letter-spacing:-.065em;color:#fff;margin-bottom:14px;">${socText(soc)}</div>
-                          ${batteryBar(soc, 11)}
-                        </div>
 
-                        <div style="padding-bottom:1px;">
-                          <div style="font-size:11px;font-weight:750;letter-spacing:.12em;color:rgba(255,255,255,.48);margin-bottom:6px;">${charging ? 'CHARGE RATE' : discharging ? 'OUTPUT' : 'POWER FLOW'}</div>
-                          <div style="display:flex;align-items:center;gap:7px;">
-                            <ha-icon icon="${statusIcon}" style="width:22px;color:${flowAccent};"></ha-icon>
-                            <span style="font-size:25px;font-weight:600;letter-spacing:-.035em;color:#fff;">${powerText(totalPower)}</span>
+                          <div style="
+                            font-size:10px;
+                            font-weight:750;
+                            letter-spacing:.12em;
+                            color:
+                              rgba(255,255,255,.45);
+                          ">
+                            BANK SOC
                           </div>
-                          <div style="margin-top:6px;font-size:12px;line-height:1.3;color:rgba(255,255,255,.62);">${etaText}</div>
+
+                          <div style="
+                            margin:4px 0 12px;
+                            font-size:53px;
+                            line-height:1;
+                            font-weight:560;
+                            letter-spacing:-.06em;
+                            color:#fff;
+                          ">
+                            ${socText(soc)}
+                          </div>
+
+                          ${batteryBar(soc,10)}
+
                         </div>
+
+                        <div>
+
+                          <div style="
+                            font-size:10px;
+                            font-weight:750;
+                            letter-spacing:.11em;
+                            color:
+                              rgba(255,255,255,.45);
+                          ">
+                            ${
+                              charging
+                                ? 'CHARGE RATE'
+                                : discharging
+                                  ? 'OUTPUT'
+                                  : 'POWER FLOW'
+                            }
+                          </div>
+
+                          <div style="
+                            margin-top:7px;
+                            display:flex;
+                            gap:6px;
+                            align-items:center;
+                          ">
+
+                            <ha-icon
+                              icon="${statusIcon}"
+                              style="
+                                width:20px;
+                                color:${flowAccent};
+                              ">
+                            </ha-icon>
+
+                            <span style="
+                              font-size:24px;
+                              font-weight:600;
+                              color:#fff;
+                            ">
+                              ${powerText(totalPower)}
+                            </span>
+
+                          </div>
+
+                          <div style="
+                            margin-top:5px;
+                            font-size:11px;
+                            color:
+                              rgba(255,255,255,.55);
+                          ">
+                            ${etaText}
+                          </div>
+
+                        </div>
+
                       </div>
 
-                      <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;">
-                        ${stack('AC1', soc1, p1)}
-                        ${stack('AC2', soc2, p2)}
-                        ${stack('AC3', soc3, p3)}
+                      <div style="
+                        display:grid;
+                        grid-template-columns:
+                          repeat(3,minmax(0,1fr));
+                        gap:8px;
+                      ">
+                        ${stack('AC1',soc1,p1)}
+                        ${stack('AC2',soc2,p2)}
+                        ${stack('AC3',soc3,p3)}
                       </div>
-                    </div>`;
+
+                    </div>
+                  `;
                 ]]]
+
             styles:
               card:
                 - padding: 18px
                 - border-radius: 26px
                 - background: >-
-                    linear-gradient(145deg, rgba(29,31,34,0.99) 0%, rgba(15,16,18,0.995) 100%)
+                    linear-gradient(
+                    145deg,
+                    rgba(29,31,34,0.99) 0%,
+                    rgba(15,16,18,0.995) 100%)
                 - border: 1px solid rgba(255,255,255,0.065)
                 - box-shadow: 0 12px 32px rgba(0,0,0,0.25)
+
               grid:
                 - grid-template-areas: '"content"'
                 - grid-template-columns: 1fr
-                - grid-template-rows: auto
+
               custom_fields:
                 content:
                   - width: 100%
 
-          - type: tile
-            entity: binary_sensor.energy_planner_headroom_risk_today
-            name: Headroom Risk Today
-            icon: mdi:battery-alert
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_whole_bank_soc
-            name: Battery Now
-            icon: mdi:battery
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_battery_headroom
-            name: Battery Headroom
-            icon: mdi:battery-plus-outline
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_rolling_headroom_shortfall
-            name: Modeled Headroom Shortfall
-            icon: mdi:battery-minus-outline
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_rolling_risk_day_capacity_export
-            name: Capacity-Limited Export Risk
-            icon: mdi:transmission-tower-export
-            vertical: false
+          ######################################################################
+          # HISTORY EXPORT
+          ######################################################################
 
           - type: button
             name: Energy History Export
             icon: mdi:history
             show_name: true
             show_icon: true
+
             tap_action:
               action: navigate
               navigation_path: >-
-                /history?entity_id=sensor.envoy_482538078562_current_net_power_consumption%2Csensor.envoy_482538078562_current_power_production%2Csensor.ecoflow_smart_home_panel_2_grid_power%2Csensor.ecoflow_smart_home_panel_2_home_power%2Csensor.ecoflow_delta_pro_ultra_battery%2Csensor.ecoflow_delta_pro_ultra_battery_2%2Csensor.ecoflow_delta_pro_ultra_battery_3%2Cnumber.ecoflow_smart_home_panel_2_charging_power%2Cnumber.ecoflow_smart_home_panel_2_backup_reserve_level%2Csensor.solar_actual_power%2Csensor.solar_forecast_power_now%2Csensor.energy_production_today%2Csensor.energy_production_today_remaining%2Csensor.energy_production_tomorrow%2Csensor.house_end_use_power%2Csensor.forecast_base_load_3h_average%2Csensor.forecast_base_load_24h_average%2Csensor.energy_planner_whole_bank_soc%2Csensor.energy_planner_battery_headroom%2Csensor.energy_planner_rolling_headroom_shortfall%2Csensor.energy_planner_rolling_risk_day_capacity_export%2Csensor.energy_planner_rolling_headroom_risk_date%2Cbinary_sensor.energy_planner_headroom_risk_today%2Cbinary_sensor.energy_planner_dynamic_load_forecast%2Csensor.energy_planner_ev_soc%2Csensor.car_charger_power%2Csensor.hot_tub_power%2Csensor.hvac_power%2Csensor.networking_servers_power%2Csensor.rear_patio_power%2Csensor.ecoflow_solar_surplus_envoy_realtime_grid_power%2Csensor.ecoflow_solar_surplus_envoy_realtime_solar_power%2Csensor.ecoflow_solar_surplus_site_grid_source%2Csensor.ecoflow_solar_surplus_solar_source%2Csensor.ecoflow_solar_surplus_decision_site_grid_power%2Csensor.ecoflow_solar_surplus_decision_solar_power%2Csensor.ecoflow_solar_surplus_physical_charge_power%2Csensor.ecoflow_solar_surplus_target_charge_power%2Csensor.ecoflow_solar_surplus_charge_power_difference%2Csensor.ecoflow_solar_surplus_decision_policy%2Csensor.ecoflow_solar_surplus_last_decision_time%2Cbinary_sensor.ecoflow_solar_surplus_control_ready%2Cbinary_sensor.ecoflow_solar_surplus_control_active%2Cbinary_sensor.ecoflow_solar_surplus_controller_healthy
+                /history?entity_id=sensor.envoy_482538078562_current_net_power_consumption%2Csensor.envoy_482538078562_current_power_production%2Csensor.ecoflow_smart_home_panel_2_grid_power%2Csensor.ecoflow_smart_home_panel_2_home_power%2Csensor.ecoflow_delta_pro_ultra_battery%2Csensor.ecoflow_delta_pro_ultra_battery_2%2Csensor.ecoflow_delta_pro_ultra_battery_3%2Cnumber.ecoflow_smart_home_panel_2_charging_power%2Cnumber.ecoflow_smart_home_panel_2_backup_reserve_level%2Csensor.solar_actual_power%2Csensor.solar_forecast_power_now%2Csensor.energy_production_today%2Csensor.energy_production_today_remaining%2Csensor.energy_production_tomorrow%2Csensor.house_end_use_power%2Csensor.forecast_base_load_3h_average%2Csensor.forecast_base_load_24h_average%2Csensor.energy_planner_whole_bank_soc%2Csensor.energy_planner_battery_headroom%2Csensor.energy_planner_rolling_headroom_shortfall%2Csensor.energy_planner_rolling_risk_day_capacity_export%2Csensor.energy_planner_rolling_headroom_risk_date%2Cbinary_sensor.energy_planner_headroom_risk_today%2Cbinary_sensor.energy_planner_dynamic_load_forecast%2Csensor.energy_planner_ev_soc%2Csensor.car_charger_power%2Csensor.hot_tub_power%2Csensor.hvac_power%2Csensor.networking_servers_power%2Csensor.rear_patio_power%2Cbinary_sensor.ecoflow_solar_surplus_control_ready%2Cbinary_sensor.ecoflow_solar_surplus_control_active
+
+
+      ##########################################################################
+      # BATTERY OUTLOOK — NEXT 4 DAYS
+      ##########################################################################
 
       - type: grid
         cards:
+
           - type: heading
-            heading: Dynamic Load Forecast — Next 7 Days
-            icon: mdi:calendar-lightning
+            heading: Battery Outlook — Next 4 Days
+            icon: mdi:battery-clock-outline
 
-          - type: markdown
-            content: |-
-              {% set e = 'binary_sensor.energy_planner_dynamic_load_forecast' %}
-              {% set rows = state_attr(e,'days') or [] %}
-              {% set risk_dates = state_attr(e,'risk_dates') or [] %}
-              {% set next3 = state_attr(e,'dynamic_load_next_3d_kwh') %}
-              {% set horizon = state_attr(e,'dynamic_load_horizon_kwh') %}
-              {% if rows | count == 0 %}
-              ## ⚪ MULTI-DAY FORECAST UNAVAILABLE
-              Waiting for enough interval forecast and battery data.
-              {% else %}
-              {% if risk_dates | count > 0 %}
-              ## ⚠️ DYNAMIC LOAD NEEDED
-              **Risk days:** {{ risk_dates | join(', ') }}  
-              **Useful load needed — next 3 days:** {{ next3 | round(1) if next3 is number else '—' }} kWh  
-              **Useful load needed — full horizon:** {{ horizon | round(1) if horizon is number else '—' }} kWh
-              {% else %}
-              ## 🟢 NO DYNAMIC LOAD NEEDED IN FORECAST HORIZON
-              The modeled battery headroom is sufficient if conditions remain as forecast.
-              {% endif %}
-
-              | Day | Solar | Start SOC | Sunset SOC | Cap. export | Dynamic load | Decision |
-              | --- | ---: | ---: | ---: | ---: | ---: | --- |
-              {% for row in rows -%}
-              | {{ row.date }} | {{ row.solar_kwh | round(1) }} kWh | {{ row.start_soc_pct | round(0) }}% | {{ row.sunset_soc_pct | round(0) }}% | {{ row.capacity_export_kwh | round(1) }} kWh | {{ row.dynamic_load_needed_kwh | round(1) }} kWh | {% if row.dynamic_load_needed %}⚠️ Use load{% else %}🟢 Clear{% endif %} |
-              {% endfor %}
-              {% endif %}
-
-          - type: tile
+          - type: custom:button-card
             entity: binary_sensor.energy_planner_dynamic_load_forecast
-            name: Any Dynamic Load Needed
-            icon: mdi:calendar-alert
-            vertical: false
+            show_name: false
+            show_icon: false
+            show_state: false
+            tap_action:
+              action: more-info
 
-          - type: markdown
-            content: >-
-              ### How to read this
-              **Dynamic load** is the useful AC energy the model expects must be consumed to avoid capacity-driven export.  
-              Today uses the locally corrected solar curve. Future days use Forecast.Solar's interval forecast and will change as weather forecasts update.  
-              Power/control-limited export is tracked separately and cannot necessarily be eliminated by creating more battery headroom.
+            triggers_update:
+              - binary_sensor.energy_planner_dynamic_load_forecast
+              - sun.sun
+
+            custom_fields:
+              content: |
+                [[[
+                  const e =
+                    states[
+                      'binary_sensor.energy_planner_dynamic_load_forecast'
+                    ];
+
+                  const rows =
+                    Array.isArray(e?.attributes?.days)
+                      ? [...e.attributes.days]
+                      : [];
+
+                  rows.sort(
+                    (a,b) =>
+                      new Date(`${a.date}T12:00:00`) -
+                      new Date(`${b.date}T12:00:00`)
+                  );
+
+                  const days = rows.slice(0,4);
+
+                  const now = new Date();
+
+                  const todayKey = [
+                    now.getFullYear(),
+                    String(
+                      now.getMonth() + 1
+                    ).padStart(2,'0'),
+                    String(
+                      now.getDate()
+                    ).padStart(2,'0')
+                  ].join('-');
+
+                  const sunAbove =
+                    states['sun.sun']?.state ===
+                    'above_horizon';
+
+                  const fmtDay = (s) => {
+                    const d =
+                      new Date(`${s}T12:00:00`);
+
+                    const weekday =
+                      d.toLocaleDateString(
+                        undefined,
+                        {
+                          weekday:'short'
+                        }
+                      );
+
+                    const day =
+                      d.getDate();
+
+                    return `${weekday} ${day}`;
+                  };
+
+                  const clamp = (n) =>
+                    Math.max(
+                      0,
+                      Math.min(
+                        100,
+                        Number(n ?? 0)
+                      )
+                    );
+
+                  const statusFor = (
+                    row,
+                    index
+                  ) => {
+
+                    if (
+                      !row?.dynamic_load_needed
+                    ) {
+                      return {
+                        color:'#30d158',
+                        text:'Clear'
+                      };
+                    }
+
+                    const amount =
+                      Number(
+                        row.dynamic_load_needed_kwh
+                        ?? 0
+                      );
+
+                    return {
+                      color:
+                        index === 0
+                          ? '#ff453a'
+                          : '#ffd60a',
+                      text:
+                        `${amount.toFixed(1)} kWh`
+                    };
+                  };
+
+                  const battery = (pct) => {
+
+                    const v =
+                      clamp(pct);
+
+                    return `
+                      <div style="
+                        display:flex;
+                        align-items:center;
+                        justify-content:center;
+                        gap:2px;
+                        width:100%;
+                      ">
+
+                        <div style="
+                          position:relative;
+                          width:100%;
+                          max-width:48px;
+                          height:17px;
+                          padding:2px;
+                          box-sizing:border-box;
+                          border:
+                            1px solid
+                            rgba(255,255,255,.35);
+                          border-radius:4px;
+                          background:
+                            rgba(255,255,255,.03);
+                        ">
+
+                          <div style="
+                            height:100%;
+                            width:${v}%;
+                            max-width:100%;
+                            border-radius:2px;
+                            background:
+                              linear-gradient(
+                                90deg,
+                                #4285e6,
+                                #72b4ff
+                              );
+                          ">
+                          </div>
+
+                        </div>
+
+                        <div style="
+                          width:3px;
+                          height:8px;
+                          border-radius:
+                            0 2px 2px 0;
+                          background:
+                            rgba(255,255,255,.35);
+                        ">
+                        </div>
+
+                      </div>
+                    `;
+                  };
+
+                  const startCell = (
+                    row,
+                    value
+                  ) => {
+
+                    const isToday =
+                      row?.date === todayKey;
+
+                    const label =
+                      isToday && sunAbove
+                        ? 'NOW'
+                        : 'SUNRISE';
+
+                    return `
+                      <div style="
+                        min-width:0;
+                        text-align:center;
+                      ">
+
+                        <div style="
+                          height:12px;
+                          margin-bottom:2px;
+                          font-size:8px;
+                          font-weight:750;
+                          letter-spacing:.08em;
+                          color:${
+                            label === 'NOW'
+                              ? '#ffd166'
+                              : 'rgba(255,255,255,.42)'
+                          };
+                        ">
+                          ${label}
+                        </div>
+
+                        <div style="
+                          font-size:16px;
+                          font-weight:700;
+                          color:#fff;
+                          margin-bottom:7px;
+                        ">
+                          ${clamp(value).toFixed(0)}%
+                        </div>
+
+                        ${battery(value)}
+
+                      </div>
+                    `;
+                  };
+
+                  const sunsetCell = (
+                    value
+                  ) => `
+                    <div style="
+                      min-width:0;
+                      text-align:center;
+                    ">
+
+                      <div style="
+                        font-size:16px;
+                        font-weight:700;
+                        color:#fff;
+                        margin-bottom:7px;
+                      ">
+                        ${clamp(value).toFixed(0)}%
+                      </div>
+
+                      ${battery(value)}
+
+                    </div>
+                  `;
+
+                  const emptyCell = `
+                    <div style="
+                      text-align:center;
+                      color:
+                        rgba(255,255,255,.35);
+                      font-size:13px;
+                    ">
+                      —
+                    </div>
+                  `;
+
+                  const headers =
+                    Array.from(
+                      {length:4},
+                      (_,i) => {
+
+                        const row =
+                          days[i];
+
+                        if (!row) {
+                          return `
+                            <div style="
+                              text-align:center;
+                              color:
+                                rgba(255,255,255,.35);
+                            ">
+                              —
+                            </div>
+                          `;
+                        }
+
+                        const st =
+                          statusFor(row,i);
+
+                        return `
+                          <div style="
+                            min-width:0;
+                            text-align:center;
+                          ">
+
+                            <div style="
+                              font-size:12px;
+                              font-weight:750;
+                              color:#fff;
+                              white-space:nowrap;
+                            ">
+                              ${fmtDay(row.date)}
+                            </div>
+
+                            <div style="
+                              margin-top:5px;
+                              display:flex;
+                              align-items:center;
+                              justify-content:center;
+                              gap:4px;
+                            ">
+
+                              <div style="
+                                width:7px;
+                                height:7px;
+                                flex:0 0 7px;
+                                border-radius:50%;
+                                background:${st.color};
+                                box-shadow:
+                                  0 0 7px
+                                  ${st.color}66;
+                              ">
+                              </div>
+
+                              <span style="
+                                font-size:9px;
+                                color:${st.color};
+                                font-weight:700;
+                                white-space:nowrap;
+                              ">
+                                ${st.text}
+                              </span>
+
+                            </div>
+
+                          </div>
+                        `;
+                      }
+                    ).join('');
+
+                  const starts =
+                    Array.from(
+                      {length:4},
+                      (_,i) =>
+                        days[i]
+                          ? startCell(
+                              days[i],
+                              days[i].start_soc_pct
+                            )
+                          : emptyCell
+                    ).join('');
+
+                  const sunsets =
+                    Array.from(
+                      {length:4},
+                      (_,i) =>
+                        days[i]
+                          ? sunsetCell(
+                              days[i].sunset_soc_pct
+                            )
+                          : emptyCell
+                    ).join('');
+
+                  return `
+                    <div>
+
+                      <div style="
+                        display:grid;
+                        grid-template-columns:
+                          66px
+                          repeat(
+                            4,
+                            minmax(0,1fr)
+                          );
+                        gap:7px;
+                        align-items:end;
+                        padding-bottom:12px;
+                        border-bottom:
+                          1px solid
+                          rgba(255,255,255,.07);
+                      ">
+                        <div></div>
+                        ${headers}
+                      </div>
+
+                      <div style="
+                        display:grid;
+                        grid-template-columns:
+                          66px
+                          repeat(
+                            4,
+                            minmax(0,1fr)
+                          );
+                        gap:7px;
+                        align-items:center;
+                        padding:14px 0 16px;
+                        border-bottom:
+                          1px solid
+                          rgba(255,255,255,.07);
+                      ">
+
+                        <div style="
+                          display:flex;
+                          flex-direction:column;
+                          align-items:flex-start;
+                          gap:4px;
+                        ">
+
+                          <ha-icon
+                            icon="mdi:weather-sunset-up"
+                            style="
+                              width:22px;
+                              color:#ffd166;
+                            ">
+                          </ha-icon>
+
+                          <span style="
+                            font-size:10px;
+                            font-weight:750;
+                            color:
+                              rgba(255,255,255,.58);
+                          ">
+                            SUNRISE
+                          </span>
+
+                        </div>
+
+                        ${starts}
+
+                      </div>
+
+                      <div style="
+                        display:grid;
+                        grid-template-columns:
+                          66px
+                          repeat(
+                            4,
+                            minmax(0,1fr)
+                          );
+                        gap:7px;
+                        align-items:center;
+                        padding:16px 0 5px;
+                      ">
+
+                        <div style="
+                          display:flex;
+                          flex-direction:column;
+                          align-items:flex-start;
+                          gap:4px;
+                        ">
+
+                          <ha-icon
+                            icon="mdi:weather-sunset-down"
+                            style="
+                              width:22px;
+                              color:#ff8c61;
+                            ">
+                          </ha-icon>
+
+                          <span style="
+                            font-size:10px;
+                            font-weight:750;
+                            color:
+                              rgba(255,255,255,.58);
+                          ">
+                            SUNSET
+                          </span>
+
+                        </div>
+
+                        ${sunsets}
+
+                      </div>
+
+                      <div style="
+                        margin-top:11px;
+                        padding-top:10px;
+                        border-top:
+                          1px solid
+                          rgba(255,255,255,.06);
+                        font-size:9px;
+                        line-height:1.5;
+                        color:
+                          rgba(255,255,255,.45);
+                      ">
+
+                        <span style="
+                          color:#30d158;
+                        ">●</span>
+                        clear
+
+                        &nbsp;&nbsp;
+
+                        <span style="
+                          color:#ffd60a;
+                        ">●</span>
+                        future useful load
+
+                        &nbsp;&nbsp;
+
+                        <span style="
+                          color:#ff453a;
+                        ">●</span>
+                        useful load today
+
+                      </div>
+
+                    </div>
+                  `;
+                ]]]
+
+            styles:
+              card:
+                - padding: 15px
+                - border-radius: 24px
+                - background: >-
+                    linear-gradient(
+                    145deg,
+                    rgba(29,31,34,0.99) 0%,
+                    rgba(15,16,18,0.995) 100%)
+                - border: 1px solid rgba(255,255,255,0.065)
+                - box-shadow: 0 12px 32px rgba(0,0,0,0.25)
+
+              grid:
+                - grid-template-areas: '"content"'
+                - grid-template-columns: 1fr
+
+              custom_fields:
+                content:
+                  - width: 100%
+
+
+      ##########################################################################
+      # WHAT TO DO
+      ##########################################################################
 
       - type: grid
         cards:
+
           - type: heading
-            heading: EV / Flexible Load
-            icon: mdi:car-electric
+            heading: What To Do
+            icon: mdi:lightbulb-on-outline
 
           - type: markdown
             content: >-
-              {% set ev = 'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
-              {% set status = states('sensor.energy_planner_rolling_ev_advisory_status') %}
-              {% set reason = state_attr(ev,'reason') %}
-              {% set useful = state_attr(ev,'recommended_energy_kwh') | float(0) %}
-              {% if status == 'green' %}
+              {% set e =
+              'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
+
+              {% set reason =
+              state_attr(e,'reason') %}
+
+              {% set useful =
+              states(
+              'sensor.energy_planner_recommended_ev_charge_energy')
+              | float(0) %}
+
+              {% if is_state(e,'on') %}
+
               ## 🟢 EV CHARGING USEFUL
-              {% elif status == 'yellow' %}
-              ## 🟡 EV CHARGING OPTIONAL
-              {% elif status == 'red' %}
-              ## 🔴 EV CHARGING NOT NEEDED
+
+              {% elif
+              is_state(
+              'binary_sensor.energy_planner_headroom_risk_today',
+              'on') %}
+
+              ## 🟡 FIND ANOTHER USEFUL LOAD
+
               {% else %}
-              ## ⚪ EV OUTLOOK UNAVAILABLE
+
+              ## ⚪ NO EV ACTION REQUIRED
+
               {% endif %}
-              **{{ reason or 'Planner is evaluating the EV as a flexible load.' }}**  
-              {% if useful > 0 %}Recommended EV energy: **{{ useful | round(1) }} kWh**{% endif %}
+
+              **{{ reason or
+              'Planner is evaluating flexible-load options.' }}**
+
+              {% if useful > 0 %}
+
+              Recommended EV energy:
+              **{{ useful | round(1) }} kWh**
+
+              {% endif %}
 
           - type: tile
             entity: sensor.energy_planner_ev_soc
             name: Lexus SOC
-            icon: mdi:car-battery
+            icon: mdi:car-electric
             vertical: false
 
           - type: tile
@@ -366,22 +1348,7 @@ views:
           - type: tile
             entity: sensor.energy_planner_ev_available_energy_to_target
             name: EV Energy Available
-            icon: mdi:battery-arrow-up-outline
-            vertical: false
-
-          - type: markdown
-            content: >-
-              {% set e = 'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
-              {% set learned = state_attr(e,'learned_charge_power_w') %}
-              {% set source = state_attr(e,'learned_charge_power_source') %}
-              ### Learned charge power
-              **{{ (learned / 1000) | round(2) if learned is number else '—' }} kW**  
-              {{ source | replace('_',' ') | title if source else 'Waiting for charge-power learning data' }}
-
-          - type: tile
-            entity: sensor.car_charger_power
-            name: Charger Now
-            icon: mdi:lightning-bolt
+            icon: mdi:car-battery
             vertical: false
 
           - type: tile
@@ -390,43 +1357,148 @@ views:
             icon: mdi:battery-charging-medium
             vertical: false
 
-          - type: tile
-            entity: sensor.energy_planner_recommended_ev_preserved_battery_headroom
-            name: Headroom Preserved by EV
-            icon: mdi:battery-sync-outline
-            vertical: false
-
           - type: markdown
             content: >-
-              {% set e = 'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
-              {% set start = state_attr(e,'preferred_window_start') %}
-              {% set end = state_attr(e,'preferred_window_end') %}
-              {% set solar = state_attr(e,'preferred_window_solar_fraction_pct') %}
+              {% set e =
+              'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
+
+              {% set start =
+              state_attr(e,'preferred_window_start') %}
+
+              {% set end =
+              state_attr(e,'preferred_window_end') %}
+
+              {% set solar =
+              state_attr(
+              e,
+              'preferred_window_solar_fraction_pct') %}
+
               ### Preferred EV charging window
+
               {% if start and end %}
-              **{{ as_local(as_datetime(start)).strftime('%-I:%M %p') }} – {{ as_local(as_datetime(end)).strftime('%-I:%M %p') }}**  
-              Solar supplied: **{{ solar | round(0) if solar is number else '—' }}%**
+
+              **{{ as_local(
+              as_datetime(start)).strftime('%-I:%M %p') }}
+              –
+              {{ as_local(
+              as_datetime(end)).strftime('%-I:%M %p') }}**
+
+              Solar supplied:
+              **{{ solar | round(0)
+              if solar is number
+              else '—' }}%**
+
               {% else %}
-              No EV charging window is currently required or available.
+
+              No EV charging window is currently required.
+
               {% endif %}
+
+
+      ##########################################################################
+      # SOLAR & BATTERY OUTLOOK
+      ##########################################################################
 
       - type: grid
         cards:
+
           - type: heading
-            heading: Solar & Forecast Quality
+            heading: Solar & Battery Outlook
             icon: mdi:weather-sunny
 
           - type: markdown
             content: >-
-              {% set e = 'binary_sensor.energy_planner_next_sunset_forecast_available' %}
-              {% set d = state_attr(e,'date') %}
-              {% set soc = state_attr(e,'soc_pct') %}
-              {% set charge = state_attr(e,'expected_charge_kwh') %}
-              {% set export = state_attr(e,'expected_export_kwh') %}
+              {% set e =
+              'binary_sensor.energy_planner_next_sunset_forecast_available' %}
+
+              {% set d =
+              state_attr(e,'date') %}
+
+              {% set soc =
+              state_attr(e,'soc_pct') %}
+
+              {% set charge =
+              state_attr(e,'expected_charge_kwh') %}
+
+              {% set export =
+              state_attr(e,'expected_export_kwh') %}
+
               ### Next sunset{% if d %} — {{ d }}{% endif %}
-              **Projected SOC:** {{ soc | round(1) if soc is number else '—' }}%  
-              **Expected battery gain:** {{ charge | round(1) if charge is number else '—' }} kWh  
-              **Expected export:** {{ export | round(1) if export is number else '—' }} kWh
+
+              **Projected SOC:**
+              {{ soc | round(1)
+              if soc is number
+              else '—' }}%  
+
+              **Expected battery gain:**
+              {{ charge | round(1)
+              if charge is number
+              else '—' }} kWh  
+
+              **Expected export:**
+              {{ export | round(1)
+              if export is number
+              else '—' }} kWh
+
+          - type: markdown
+            content: >-
+              {% set e =
+              'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
+
+              {% set s3 =
+              state_attr(e,'surplus_next_3d_kwh') %}
+
+              {% set sh =
+              state_attr(e,'surplus_horizon_kwh') %}
+
+              {% set risk =
+              states(
+              'sensor.energy_planner_rolling_headroom_risk_date') %}
+
+              ### Rolling energy outlook
+
+              **Solar after house load — next 3 days:**  
+              {{ s3 | round(1)
+              if s3 is number
+              else '—' }} kWh  
+
+              **Solar after house load — full forecast horizon:**  
+              {{ sh | round(1)
+              if sh is number
+              else '—' }} kWh  
+
+              **First modeled headroom-risk day:**  
+              {{ risk }}
+
+          - type: tile
+            entity: sensor.energy_planner_rolling_risk_day_projected_sunset_soc
+            name: Risk-Day Sunset SOC
+            icon: mdi:battery-high
+            vertical: false
+
+          - type: tile
+            entity: sensor.energy_planner_residual_headroom_shortfall_after_ev_charge
+            name: Residual Headroom Risk After EV
+            icon: mdi:battery-alert
+            vertical: false
+
+          - type: tile
+            entity: sensor.energy_planner_residual_capacity_export_after_ev_charge
+            name: Residual Export After EV
+            icon: mdi:transmission-tower-export
+            vertical: false
+
+
+      ##########################################################################
+      # FORECAST QUALITY
+      ##########################################################################
+
+      - type: grid
+        cards:
+
+          - type: heading
+            heading: Forecast Quality
+            icon: mdi:chart-bell-curve-cumulative
 
           - type: tile
             entity: sensor.energy_planner_forecast_solar_enhancement_status
@@ -436,7 +1508,7 @@ views:
 
           - type: tile
             entity: sensor.energy_planner_forecast_solar_paid_raw_remaining_today
-            name: Raw Remaining Today
+            name: Forecast.Solar Raw Remaining
             icon: mdi:solar-power-variant
             vertical: false
 
@@ -462,83 +1534,4 @@ views:
             entity: sensor.energy_planner_daylight_stored_energy_forecast_mae
             name: Daylight Forecast MAE
             icon: mdi:chart-line-variant
-            vertical: false
-
-      - type: grid
-        cards:
-          - type: heading
-            heading: Realtime Solar Controller
-            icon: mdi:transmission-tower
-
-          - type: markdown
-            content: >-
-              {% set healthy = is_state('binary_sensor.ecoflow_solar_surplus_controller_healthy','on') %}
-              {% set grid_source = states('sensor.ecoflow_solar_surplus_site_grid_source') %}
-              {% set solar_source = states('sensor.ecoflow_solar_surplus_solar_source') %}
-              {% set grid = states('sensor.ecoflow_solar_surplus_decision_site_grid_power') %}
-              {% set solar = states('sensor.ecoflow_solar_surplus_decision_solar_power') %}
-              {% set policy = states('sensor.ecoflow_solar_surplus_decision_policy') %}
-              {% if healthy %}
-              ## 🟢 REALTIME CONTROLLER HEALTHY
-              {% else %}
-              ## 🟡 CHECK CONTROLLER TELEMETRY
-              {% endif %}
-              **Grid source:** {{ grid_source | replace('_',' ') | title if grid_source not in ['unknown','unavailable'] else 'Unavailable' }}  
-              **Solar source:** {{ solar_source | replace('_',' ') | title if solar_source not in ['unknown','unavailable'] else 'Unavailable' }}  
-              **Decision grid:** {{ (grid | float(0)) | round(0) if grid not in ['unknown','unavailable'] else '—' }} W  
-              **Decision solar:** {{ (solar | float(0)) | round(0) if solar not in ['unknown','unavailable'] else '—' }} W  
-              **Policy:** {{ policy | replace('_',' ') if policy not in ['unknown','unavailable'] else '—' }}
-
-          - type: tile
-            entity: binary_sensor.ecoflow_solar_surplus_controller_healthy
-            name: Controller Healthy
-            icon: mdi:heart-pulse
-            vertical: false
-
-          - type: tile
-            entity: sensor.ecoflow_solar_surplus_site_grid_source
-            name: Grid Source
-            icon: mdi:transmission-tower-import
-            vertical: false
-
-          - type: tile
-            entity: sensor.ecoflow_solar_surplus_solar_source
-            name: Solar Source
-            icon: mdi:solar-power-variant
-            vertical: false
-
-          - type: tile
-            entity: sensor.ecoflow_solar_surplus_envoy_realtime_grid_power
-            name: Envoy Realtime Grid
-            icon: mdi:transmission-tower
-            vertical: false
-
-          - type: tile
-            entity: sensor.ecoflow_solar_surplus_envoy_realtime_solar_power
-            name: Envoy Realtime Solar
-            icon: mdi:solar-power
-            vertical: false
-
-          - type: tile
-            entity: sensor.ecoflow_solar_surplus_decision_site_grid_power
-            name: Grid Used by Controller
-            icon: mdi:meter-electric
-            vertical: false
-
-          - type: tile
-            entity: sensor.ecoflow_solar_surplus_target_charge_power
-            name: Target Charge Power
-            icon: mdi:battery-charging
-            vertical: false
-
-          - type: tile
-            entity: sensor.ecoflow_solar_surplus_physical_charge_power
-            name: Physical Charge Power
-            icon: mdi:battery-charging-high
-            vertical: false
-
-          - type: tile
-            entity: sensor.ecoflow_solar_surplus_last_decision_time
-            name: Last Controller Decision
-            icon: mdi:clock-check-outline
             vertical: false
