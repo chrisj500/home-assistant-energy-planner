@@ -8,7 +8,7 @@ import unittest
 MODULE_DIR = Path(__file__).resolve().parents[1] / "custom_components" / "energy_planner"
 sys.path.insert(0, str(MODULE_DIR))
 
-from forecast_solar_shadow import IntervalPoint, integrate_interval_energy_kwh  # noqa: E402
+from forecast_solar_shadow import IntervalPoint, integrate_interval_energy_kwh, power_at  # noqa: E402
 from headroom import correct_current_day_points  # noqa: E402
 
 
@@ -39,6 +39,69 @@ class HeadroomForecastCorrectionTests(unittest.TestCase):
         self.assertEqual(
             correction.source,
             "locally_corrected_current_day_interval_curve",
+        )
+
+    def test_live_anchor_matches_actual_power_and_preserves_remaining_energy(self) -> None:
+        now = datetime(2026, 9, 17, 19, 30, tzinfo=timezone.utc)
+        sunrise = now - timedelta(hours=8)
+        sunset = now + timedelta(hours=3)
+        points = [
+            IntervalPoint(now - timedelta(minutes=15), 2600.0),
+            IntervalPoint(now + timedelta(minutes=15), 2400.0),
+            IntervalPoint(now + timedelta(hours=1), 1800.0),
+            IntervalPoint(now + timedelta(hours=2), 900.0),
+            IntervalPoint(sunset, 0.0),
+            IntervalPoint(now + timedelta(days=1), 4500.0),
+        ]
+        corrected_total = 5.5
+        correction = correct_current_day_points(
+            points=points,
+            reference=now,
+            sunrise=sunrise,
+            sunset=sunset,
+            corrected_remaining_kwh=corrected_total,
+            actual_solar_w=4200.0,
+        )
+
+        self.assertEqual(
+            correction.source,
+            "live_anchored_current_day_interval_curve",
+        )
+        self.assertAlmostEqual(power_at(correction.points, now), 4200.0, places=2)
+        self.assertAlmostEqual(
+            integrate_interval_energy_kwh(correction.points, now, sunset),
+            corrected_total,
+            places=2,
+        )
+        self.assertAlmostEqual(correction.live_anchor_w or 0.0, 4200.0, places=2)
+        self.assertGreater(correction.live_blend_minutes or 0.0, 0.0)
+        self.assertEqual(correction.points[-1].watts, points[-1].watts)
+
+    def test_live_anchor_can_reduce_overstated_current_power_without_changing_energy(self) -> None:
+        now = datetime(2026, 9, 17, 18, 0, tzinfo=timezone.utc)
+        sunrise = now - timedelta(hours=7)
+        sunset = now + timedelta(hours=4)
+        points = [
+            IntervalPoint(now, 6500.0),
+            IntervalPoint(now + timedelta(hours=1), 5000.0),
+            IntervalPoint(now + timedelta(hours=2), 3000.0),
+            IntervalPoint(sunset, 0.0),
+        ]
+        raw = integrate_interval_energy_kwh(points, now, sunset)
+        correction = correct_current_day_points(
+            points=points,
+            reference=now,
+            sunrise=sunrise,
+            sunset=sunset,
+            corrected_remaining_kwh=raw,
+            actual_solar_w=3500.0,
+        )
+
+        self.assertAlmostEqual(power_at(correction.points, now), 3500.0, places=2)
+        self.assertAlmostEqual(
+            integrate_interval_energy_kwh(correction.points, now, sunset),
+            raw,
+            places=2,
         )
 
     def test_falls_back_to_raw_curve_without_corrected_total(self) -> None:
