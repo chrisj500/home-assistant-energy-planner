@@ -10,6 +10,7 @@ except ImportError:  # pragma: no cover - direct unit-test import
 
 
 _MIN_RAW_REMAINING_KWH = 0.05
+_MIN_CORRECTED_REMAINING_KWH = 0.05
 _MIN_SCALE = 0.25
 _MAX_SCALE = 4.0
 
@@ -27,6 +28,7 @@ def correct_current_day_points(
     *,
     points: list[IntervalPoint],
     reference: datetime,
+    sunrise: datetime | None = None,
     sunset: datetime | None,
     corrected_remaining_kwh: float | None,
 ) -> CurrentDayForecastCorrection:
@@ -36,6 +38,13 @@ def correct_current_day_points(
     same-day remaining-energy sensor can incorporate local Enphase evidence. Future
     dates are intentionally left untouched so current-day observations do not leak
     into tomorrow's weather forecast.
+
+    Immediately after midnight, some same-day remaining-energy sensors briefly reset
+    to zero before their new-day forecast is populated. Before sunrise, a near-zero
+    corrected total is therefore ignored when the paid interval curve still contains
+    material solar energy for the day. Once daylight begins, the local correction is
+    trusted normally, including legitimate near-zero remaining-energy values late in
+    the solar day.
     """
     if sunset is None or sunset <= reference or not points:
         return CurrentDayForecastCorrection(
@@ -57,6 +66,20 @@ def correct_current_day_points(
         )
 
     corrected = max(float(corrected_remaining_kwh), 0.0)
+    if (
+        sunrise is not None
+        and reference < sunrise
+        and corrected <= _MIN_CORRECTED_REMAINING_KWH
+        and raw_remaining >= _MIN_RAW_REMAINING_KWH
+    ):
+        return CurrentDayForecastCorrection(
+            points=list(points),
+            scale_factor=1.0,
+            raw_remaining_kwh=raw_remaining,
+            corrected_remaining_kwh=corrected,
+            source="raw_interval_curve_pre_sunrise_rollover",
+        )
+
     scale = corrected / raw_remaining
     scale = min(max(scale, _MIN_SCALE), _MAX_SCALE)
     local_tz = reference.tzinfo
