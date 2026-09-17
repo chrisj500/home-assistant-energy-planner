@@ -42,10 +42,11 @@ class EnergyPlannerV018Coordinator(EnergyPlannerV017Coordinator):
         if len(points) < 2:
             return output
 
-        _sunrise, sunset = _solar_window(self.hass, now.date())
+        sunrise, sunset = _solar_window(self.hass, now.date())
         correction = correct_current_day_points(
             points=points,
             reference=now,
+            sunrise=sunrise,
             sunset=sunset,
             corrected_remaining_kwh=_num(self.hass, self.cfg.get(CONF_SOLAR_REMAINING)),
         )
@@ -93,13 +94,13 @@ class EnergyPlannerV018Coordinator(EnergyPlannerV017Coordinator):
         daylight_windows: list[DaylightWindow] = []
         for offset in range(horizon):
             target_date = now.date() + timedelta(days=offset)
-            sunrise, target_sunset = _solar_window(self.hass, target_date)
-            if sunrise is None or target_sunset is None:
+            target_sunrise, target_sunset = _solar_window(self.hass, target_date)
+            if target_sunrise is None or target_sunset is None:
                 continue
             daylight_windows.append(
                 DaylightWindow(
                     day=target_date,
-                    sunrise=sunrise,
+                    sunrise=target_sunrise,
                     sunset=target_sunset,
                 )
             )
