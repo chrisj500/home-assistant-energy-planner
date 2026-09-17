@@ -58,6 +58,52 @@ class HeadroomForecastCorrectionTests(unittest.TestCase):
         self.assertEqual(correction.points, points)
         self.assertEqual(correction.source, "raw_interval_curve")
 
+    def test_pre_sunrise_zero_uses_raw_curve_during_rollover(self) -> None:
+        now = datetime(2026, 9, 17, 4, 5, tzinfo=timezone.utc)
+        sunrise = now + timedelta(hours=6)
+        sunset = now + timedelta(hours=18)
+        points = [
+            IntervalPoint(now, 0.0),
+            IntervalPoint(sunrise, 500.0),
+            IntervalPoint(sunrise + timedelta(hours=4), 5000.0),
+            IntervalPoint(sunset, 0.0),
+        ]
+        correction = correct_current_day_points(
+            points=points,
+            reference=now,
+            sunrise=sunrise,
+            sunset=sunset,
+            corrected_remaining_kwh=0.0,
+        )
+        self.assertEqual(correction.scale_factor, 1.0)
+        self.assertEqual(correction.points, points)
+        self.assertGreater(correction.raw_remaining_kwh, 0.05)
+        self.assertEqual(
+            correction.source,
+            "raw_interval_curve_pre_sunrise_rollover",
+        )
+
+    def test_daylight_zero_remains_a_valid_local_correction(self) -> None:
+        now = datetime(2026, 9, 17, 16, 0, tzinfo=timezone.utc)
+        sunrise = now - timedelta(hours=6)
+        sunset = now + timedelta(hours=4)
+        points = [
+            IntervalPoint(now, 4000.0),
+            IntervalPoint(sunset, 0.0),
+        ]
+        correction = correct_current_day_points(
+            points=points,
+            reference=now,
+            sunrise=sunrise,
+            sunset=sunset,
+            corrected_remaining_kwh=0.0,
+        )
+        self.assertEqual(correction.scale_factor, 0.25)
+        self.assertEqual(
+            correction.source,
+            "locally_corrected_current_day_interval_curve",
+        )
+
     def test_scale_is_bounded_against_bad_upstream_values(self) -> None:
         now = datetime(2026, 9, 16, 12, 0, tzinfo=timezone.utc)
         sunset = now + timedelta(hours=4)
