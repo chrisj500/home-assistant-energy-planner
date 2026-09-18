@@ -127,6 +127,18 @@ class EnergyPlannerOptionsFlow(config_entries.OptionsFlow):
                 vol.Required(CONF_SOC_2, default=current.get(CONF_SOC_2)): SENSOR_SELECTOR,
                 vol.Required(CONF_SOC_3, default=current.get(CONF_SOC_3)): SENSOR_SELECTOR,
                 vol.Optional(
+                    CONF_BATTERY_POWER_1,
+                    default=current.get(CONF_BATTERY_POWER_1),
+                ): SENSOR_SELECTOR,
+                vol.Optional(
+                    CONF_BATTERY_POWER_2,
+                    default=current.get(CONF_BATTERY_POWER_2),
+                ): SENSOR_SELECTOR,
+                vol.Optional(
+                    CONF_BATTERY_POWER_3,
+                    default=current.get(CONF_BATTERY_POWER_3),
+                ): SENSOR_SELECTOR,
+                vol.Optional(
                     CONF_SOC_WEIGHTS,
                     default=current.get(CONF_SOC_WEIGHTS, DEFAULT_WEIGHTS),
                 ): str,
