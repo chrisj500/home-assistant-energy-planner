@@ -41,7 +41,19 @@ def _energy(key: str, data_key: str, name: str, *, storage: bool = False):
     )
 
 
-def _total_energy(key: str, data_key: str, name: str):\n    return EnergyPlannerSensorDescription(\n        key=key,\n        data_key=data_key,\n        name=name,\n        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,\n        device_class=SensorDeviceClass.ENERGY,\n        state_class=SensorStateClass.TOTAL_INCREASING,\n        suggested_display_precision=3,\n    )\n\n\ndef _soc(key: str, data_key: str, name: str):
+def _total_energy(key: str, data_key: str, name: str):
+    return EnergyPlannerSensorDescription(
+        key=key,
+        data_key=data_key,
+        name=name,
+        native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR,
+        device_class=SensorDeviceClass.ENERGY,
+        state_class=SensorStateClass.TOTAL_INCREASING,
+        suggested_display_precision=3,
+    )
+
+
+def _soc(key: str, data_key: str, name: str):
     return EnergyPlannerSensorDescription(
         key=key,
         data_key=data_key,
