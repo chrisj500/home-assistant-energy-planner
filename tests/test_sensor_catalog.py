@@ -67,6 +67,25 @@ class SensorCatalogTests(unittest.TestCase):
             ("battery_energy_discharged_kwh", "Battery Energy Discharged"),
         )
 
+    def test_existing_entries_can_configure_battery_power_entities(self) -> None:
+        config_flow_path = (
+            Path(__file__).resolve().parents[1]
+            / "custom_components"
+            / "energy_planner"
+            / "config_flow.py"
+        )
+        source = config_flow_path.read_text(encoding="utf-8")
+
+        # Each constant must appear in the import, initial setup schema, and
+        # existing-entry options schema. This guards against exposing a field
+        # only during first-time installation.
+        for key in (
+            "CONF_BATTERY_POWER_1",
+            "CONF_BATTERY_POWER_2",
+            "CONF_BATTERY_POWER_3",
+        ):
+            self.assertGreaterEqual(source.count(key), 3, key)
+
 
 if __name__ == "__main__":
     unittest.main()
