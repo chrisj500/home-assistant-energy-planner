@@ -8,7 +8,10 @@ from homeassistant.helpers import selector
 
 from .const import (
     CONF_ACTUAL_SOLAR_POWER,
-    CONF_BACKUP_RESERVE,\n    CONF_BATTERY_POWER_1,\n    CONF_BATTERY_POWER_2,\n    CONF_BATTERY_POWER_3,
+    CONF_BACKUP_RESERVE,
+    CONF_BATTERY_POWER_1,
+    CONF_BATTERY_POWER_2,
+    CONF_BATTERY_POWER_3,
     CONF_BASE_LOAD_24H,
     CONF_BASE_LOAD_3H,
     CONF_BASE_LOAD_POWER,
@@ -78,7 +81,10 @@ class EnergyPlannerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Required(CONF_SOC_1): SENSOR_SELECTOR,
                 vol.Required(CONF_SOC_2): SENSOR_SELECTOR,
                 vol.Required(CONF_SOC_3): SENSOR_SELECTOR,
-                vol.Optional(CONF_SOC_WEIGHTS, default=DEFAULT_WEIGHTS): str,\n                vol.Optional(CONF_BATTERY_POWER_1): SENSOR_SELECTOR,\n                vol.Optional(CONF_BATTERY_POWER_2): SENSOR_SELECTOR,\n                vol.Optional(CONF_BATTERY_POWER_3): SENSOR_SELECTOR,
+                vol.Optional(CONF_SOC_WEIGHTS, default=DEFAULT_WEIGHTS): str,
+                vol.Optional(CONF_BATTERY_POWER_1): SENSOR_SELECTOR,
+                vol.Optional(CONF_BATTERY_POWER_2): SENSOR_SELECTOR,
+                vol.Optional(CONF_BATTERY_POWER_3): SENSOR_SELECTOR,
                 vol.Optional(CONF_CAPACITY_KWH, default=DEFAULT_CAPACITY_KWH): vol.Coerce(float),
                 vol.Required(CONF_CHARGE_LIMIT): NUMBER_SELECTOR,
                 vol.Required(CONF_BACKUP_RESERVE): NUMBER_SELECTOR,
