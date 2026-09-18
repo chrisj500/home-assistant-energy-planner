@@ -4,7 +4,7 @@ PLATFORMS = ["sensor", "binary_sensor"]
 CONF_SOC_1 = "soc_entity_1"
 CONF_SOC_2 = "soc_entity_2"
 CONF_SOC_3 = "soc_entity_3"
-CONF_SOC_WEIGHTS = "soc_weights"
+CONF_SOC_WEIGHTS = "soc_weights"\nCONF_BATTERY_POWER_1 = "battery_power_entity_1"\nCONF_BATTERY_POWER_2 = "battery_power_entity_2"\nCONF_BATTERY_POWER_3 = "battery_power_entity_3"
 CONF_CAPACITY_KWH = "capacity_kwh"
 CONF_CHARGE_LIMIT = "charge_limit_entity"
 CONF_BACKUP_RESERVE = "backup_reserve_entity"
