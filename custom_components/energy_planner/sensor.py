@@ -80,6 +80,25 @@ SENSORS = (
     _soc("weighted_soc", "weighted_soc", "Whole Bank SOC"),
     _energy("stored_energy", "stored_energy", "Whole Bank Stored Energy", storage=True),
     _energy("battery_headroom", "battery_headroom", "Battery Headroom", storage=True),
+    EnergyPlannerSensorDescription(
+        key="battery_bank_power",
+        data_key="battery_bank_power_w",
+        name="Battery Bank Power",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+    ),
+    _total_energy(
+        "battery_energy_charged",
+        "battery_energy_charged_kwh",
+        "Battery Energy Charged",
+    ),
+    _total_energy(
+        "battery_energy_discharged",
+        "battery_energy_discharged_kwh",
+        "Battery Energy Discharged",
+    ),
     _energy("upcoming_solar", "upcoming_solar", "Upcoming Solar"),
     _soc("projected_sunset_soc", "projected_sunset_soc", "Live Projected Sunset SOC"),
     _energy(
