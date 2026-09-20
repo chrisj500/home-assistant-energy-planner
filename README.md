@@ -1,5 +1,15 @@
 # Home Assistant Energy Planner
 
+## v0.1.25 reliability revision
+
+Rolling forecasts now expose SOC scenario ranges and horizon-specific confidence.
+Unstable, uncalibrated, or stale forecasts withhold discretionary advice. EV advice
+requires conservative headroom need, repeated provider confirmations, and sustained
+measured solar surplus. Automatic stationary-battery headroom release is disabled
+in this revision. See [release notes](RELEASE_NOTES_0.1.25.md) for thresholds,
+learning requirements, dashboard changes, and validation limits. Earlier version
+descriptions below are historical; the reliability checks take precedence.
+
 Forecast-aware battery headroom, solar-export, and flexible-load planning for Home Assistant.
 
 ## v0.1.12 scope

@@ -77,6 +77,10 @@ def _percent(key: str, data_key: str, name: str):
 
 
 SENSORS = (
+    EnergyPlannerSensorDescription(key="forecast_confidence", data_key="forecast_confidence", name="Forecast Confidence"),
+    EnergyPlannerSensorDescription(key="forecast_reliability_status", data_key="forecast_reliability_status", name="Forecast Reliability Status"),
+    EnergyPlannerSensorDescription(key="forecast_reliability_reason", data_key="forecast_reliability_reason", name="Forecast Reliability Reason"),
+    EnergyPlannerSensorDescription(key="forecast_error_samples", data_key="forecast_error_samples", name="Forecast Error Samples"),
     _soc("weighted_soc", "weighted_soc", "Whole Bank SOC"),
     _energy("stored_energy", "stored_energy", "Whole Bank Stored Energy", storage=True),
     _energy("battery_headroom", "battery_headroom", "Battery Headroom", storage=True),
@@ -722,3 +726,16 @@ class EnergyPlannerSensor(CoordinatorEntity[EnergyPlannerCoordinator], SensorEnt
         if isinstance(value, bool):
             return "On" if value else "Off"
         return value
+
+    @property
+    def extra_state_attributes(self):
+        if self.entity_description.key not in {"forecast_confidence", "forecast_reliability_status"}:
+            return None
+        data = self.coordinator.data or {}
+        return {"reason": data.get("forecast_reliability_reason"),
+                "historical_mae_soc_percentage_points": data.get("forecast_historical_mae_soc"),
+                "error_samples": data.get("forecast_error_samples", 0),
+                "confirmed_refreshes": data.get("forecast_confirmation_count", 0),
+                "provider_refreshed_at": data.get("forecast_revision_at"),
+                "days": data.get("rolling_day_plans", []),
+                "range_kind": "scenario envelope; not a probability interval"}

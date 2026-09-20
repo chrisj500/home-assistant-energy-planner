@@ -166,6 +166,8 @@ class EnergyPlannerNextSunsetAvailable(
         return {
             "date": data.get("next_sunset_date"),
             "soc_pct": data.get("next_sunset_soc"),
+            "soc_low_pct": next((r.get("sunset_soc_low_pct") for r in data.get("rolling_day_plans", []) if r["date"] == data.get("next_sunset_date")), None),
+            "soc_high_pct": next((r.get("sunset_soc_high_pct") for r in data.get("rolling_day_plans", []) if r["date"] == data.get("next_sunset_date")), None),
             "expected_charge_kwh": data.get("next_sunset_expected_charge"),
             "expected_grid_import_kwh": data.get("next_sunset_expected_grid_import"),
             "expected_export_kwh": data.get("next_sunset_expected_export"),

@@ -1,6 +1,6 @@
-# Energy Planning dashboard v8
+# Energy Planning dashboard v9
 #
-# Action-first Lovelace dashboard for Energy Planner v0.1.20.
+# Action-first Lovelace dashboard for Energy Planner v0.1.25.
 # Requires custom:button-card for the Headroom Decision, Battery Bank,
 # and four-day Battery Outlook cards.
 #
@@ -31,6 +31,14 @@ views:
             heading: Headroom Decision
             icon: mdi:battery-alert-variant-outline
 
+          - type: entities
+            title: Forecast reliability
+            entities:
+              - sensor.energy_planner_forecast_reliability_status
+              - sensor.energy_planner_forecast_confidence
+              - sensor.energy_planner_forecast_error_samples
+              - sensor.energy_planner_forecast_reliability_reason
+
           ######################################################################
           # SIMPLE TRAFFIC LIGHT
           ######################################################################
@@ -58,6 +66,12 @@ views:
                     e?.attributes?.risk_date ?? '—';
                   const action =
                     e?.attributes?.action ?? '';
+
+                  if (!['clear', 'risk_today', 'risk_future'].includes(status)) {
+                    return `<div style="padding:14px;color:#ffd60a">
+                      <strong>DO NOT ACT — ${status || 'unavailable'}</strong>
+                      <p>${action || 'Waiting for verified forecast inputs.'}</p></div>`;
+                  }
 
                   let level = 'green';
 
@@ -850,6 +864,10 @@ views:
                     index
                   ) => {
 
+                    if (!['clear', 'confirmed_headroom_risk'].includes(row?.status)) {
+                      return {color:'#ffd60a', text:row?.status || 'Unverified'};
+                    }
+
                     if (
                       !row?.dynamic_load_needed
                     ) {
@@ -984,7 +1002,7 @@ views:
                   };
 
                   const sunsetCell = (
-                    value
+                    value, row
                   ) => `
                     <div style="
                       min-width:0;
@@ -997,8 +1015,12 @@ views:
                         color:#fff;
                         margin-bottom:7px;
                       ">
-                        ${clamp(value).toFixed(0)}%
+                        ${row?.sunset_soc_low_pct != null && row?.sunset_soc_high_pct != null
+                          ? `${clamp(row.sunset_soc_low_pct).toFixed(0)}–${clamp(row.sunset_soc_high_pct).toFixed(0)}%`
+                          : 'Unverified'}
                       </div>
+
+                      <div style="font-size:11px;margin-bottom:5px;">${row?.confidence || 'learning'} · scenario range</div>
 
                       ${battery(value)}
 
@@ -1108,7 +1130,7 @@ views:
                       (_,i) =>
                         days[i]
                           ? sunsetCell(
-                              days[i].sunset_soc_pct
+                              days[i].sunset_soc_pct, days[i]
                             )
                           : emptyCell
                     ).join('');
@@ -1390,7 +1412,7 @@ views:
 
               {% else %}
 
-              No EV charging window is currently required.
+              {{ state_attr(e, 'reason') or 'No verified EV charging window. Do not act on the point forecast.' }}
 
               {% endif %}
 
