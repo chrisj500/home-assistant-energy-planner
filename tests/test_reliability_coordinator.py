@@ -84,6 +84,18 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(candidate, "2026-09-18")
         self.assertGreater(amount, 0)
 
+    def test_sunset_scenario_never_crosses_grid_connected_reserve(self):
+        self.data["effective_reserve_floor"] = 25
+        self.data["rolling_day_plans"][0]["sunset_soc_pct"] = 27
+        self.states["s1"].state = "25"
+        self.states["s2"].state = "25"
+        self.states["s3"].state = "25"
+        self.c._scenarios(self.data, self.now)
+        row = self.data["rolling_day_plans"][0]
+        self.assertGreaterEqual(row["sunset_soc_low_pct"], 25)
+        self.assertGreaterEqual(row["sunset_soc_high_pct"], 25)
+        self.assertEqual(row["range_assumption"], "grid_connected_reserve_enforced")
+
     def test_low_solar_does_not_justify_headroom(self):
         self.states["remaining"].state = "1"
         self.states["solar"].state = "200"

@@ -1,5 +1,12 @@
 # Home Assistant Energy Planner
 
+## v0.1.26 dashboard and reserve-floor correction
+
+Battery Outlook scenario ranges now respect the configured reserve while the
+planner assumes grid-connected operation. The compact four-day card no longer
+prints overlapping range captions, and reliability hold states retain the
+yellow stoplight graphic. See [release notes](RELEASE_NOTES_0.1.26.md).
+
 ## v0.1.25 reliability revision
 
 Rolling forecasts now expose SOC scenario ranges and horizon-specific confidence.

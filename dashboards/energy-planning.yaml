@@ -1,6 +1,6 @@
-# Energy Planning dashboard v9
+# Energy Planning dashboard v10
 #
-# Action-first Lovelace dashboard for Energy Planner v0.1.25.
+# Action-first Lovelace dashboard for Energy Planner v0.1.26.
 # Requires custom:button-card for the Headroom Decision, Battery Bank,
 # and four-day Battery Outlook cards.
 #
@@ -67,13 +67,10 @@ views:
                   const action =
                     e?.attributes?.action ?? '';
 
-                  if (!['clear', 'risk_today', 'risk_future'].includes(status)) {
-                    return `<div style="padding:14px;color:#ffd60a">
-                      <strong>DO NOT ACT — ${status || 'unavailable'}</strong>
-                      <p>${action || 'Waiting for verified forecast inputs.'}</p></div>`;
-                  }
+                  const hold =
+                    !['clear', 'risk_today', 'risk_future'].includes(status);
 
-                  let level = 'green';
+                  let level = hold ? 'yellow' : 'green';
 
                   if (e?.state === 'on') {
                     level = 'red';
@@ -134,6 +131,40 @@ views:
                       "></div>
                     </div>
                   `;
+
+                  if (hold) {
+                    return `
+                      <div style="
+                        display:grid;
+                        grid-template-columns:54px minmax(0,1fr);
+                        gap:14px;
+                        align-items:center;
+                      ">
+                        ${lights}
+
+                        <div style="min-width:0;">
+                          <div style="
+                            font-size:20px;
+                            font-weight:750;
+                            line-height:1.1;
+                            color:#ffd60a;
+                          ">
+                            DO NOT ACT
+                          </div>
+
+                          <div style="
+                            margin-top:5px;
+                            font-size:12px;
+                            line-height:1.35;
+                            color:rgba(255,255,255,.68);
+                          ">
+                            ${status || 'unavailable'} ·
+                            ${action || 'Waiting for verified forecast inputs.'}
+                          </div>
+                        </div>
+                      </div>
+                    `;
+                  }
 
                   if (level === 'green') {
                     return `
@@ -1019,8 +1050,6 @@ views:
                           ? `${clamp(row.sunset_soc_low_pct).toFixed(0)}–${clamp(row.sunset_soc_high_pct).toFixed(0)}%`
                           : 'Unverified'}
                       </div>
-
-                      <div style="font-size:11px;margin-bottom:5px;">${row?.confidence || 'learning'} · scenario range</div>
 
                       ${battery(value)}
 

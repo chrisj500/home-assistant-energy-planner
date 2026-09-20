@@ -112,6 +112,7 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             raise ValueError("Incomplete scenario horizon")
         candidate = None
         amount = 0.0
+        reserve_floor = min(max(float(reserve), 0.0), 100.0)
         for row, lo, hi in zip(rows, low, high):
             profile = profiles[row["date"]]
             width = profile["width_soc"]
@@ -119,12 +120,15 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             robust = max(0.0, min(lo.headroom_shortfall_kwh,
                                   lo.capacity_export_kwh * efficiency) - margin)
             row.update({
-                "sunset_soc_low_pct": round(max(0, min(lo.end_soc_pct, row["sunset_soc_pct"] - width)), 1),
-                "sunset_soc_high_pct": round(min(100, max(hi.end_soc_pct, row["sunset_soc_pct"] + width)), 1),
+                # This planner assumes grid-connected operation. EcoFlow reserve is
+                # therefore a hard policy floor for displayed SOC scenarios.
+                "sunset_soc_low_pct": round(max(reserve_floor, min(lo.end_soc_pct, row["sunset_soc_pct"] - width)), 1),
+                "sunset_soc_high_pct": round(max(reserve_floor, min(100, max(hi.end_soc_pct, row["sunset_soc_pct"] + width))), 1),
                 "confidence": profile["confidence"], "error_samples": profile["samples"],
                 "historical_mae_soc": profile["mae_soc"], "safety_margin_kwh": round(margin, 2),
                 "conservative_headroom_kwh": round(robust, 2),
                 "range_kind": "scenario_envelope_not_probability_interval",
+                "range_assumption": "grid_connected_reserve_enforced",
             })
             lead = (lo.day - now.date()).days
             if candidate is None and robust > 0 and lead <= 2:
