@@ -1,5 +1,12 @@
 # Home Assistant Energy Planner
 
+## v0.1.27 dashboard reserve-floor guard
+
+The Battery Outlook now independently clamps displayed sunset ranges to the
+Effective Reserve Floor entity. This also protects the dashboard from stale
+pre-v0.1.26 forecast attributes after an integration or dashboard update. See
+[release notes](RELEASE_NOTES_0.1.27.md).
+
 ## v0.1.26 dashboard and reserve-floor correction
 
 Battery Outlook scenario ranges now respect the configured reserve while the

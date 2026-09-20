@@ -1,6 +1,6 @@
-# Energy Planning dashboard v10
+# Energy Planning dashboard v11
 #
-# Action-first Lovelace dashboard for Energy Planner v0.1.26.
+# Action-first Lovelace dashboard for Energy Planner v0.1.27.
 # Requires custom:button-card for the Headroom Decision, Battery Bank,
 # and four-day Battery Outlook cards.
 #
@@ -824,6 +824,7 @@ views:
 
             triggers_update:
               - binary_sensor.energy_planner_dynamic_load_forecast
+              - sensor.energy_planner_effective_reserve_floor
               - sun.sun
 
             custom_fields:
@@ -889,6 +890,17 @@ views:
                         Number(n ?? 0)
                       )
                     );
+
+                  const reserveState = Number(
+                    states[
+                      'sensor.energy_planner_effective_reserve_floor'
+                    ]?.state
+                  );
+
+                  const reserveFloor =
+                    Number.isFinite(reserveState)
+                      ? clamp(reserveState)
+                      : 10;
 
                   const statusFor = (
                     row,
@@ -1047,7 +1059,7 @@ views:
                         margin-bottom:7px;
                       ">
                         ${row?.sunset_soc_low_pct != null && row?.sunset_soc_high_pct != null
-                          ? `${clamp(row.sunset_soc_low_pct).toFixed(0)}–${clamp(row.sunset_soc_high_pct).toFixed(0)}%`
+                          ? `${Math.max(reserveFloor, clamp(row.sunset_soc_low_pct)).toFixed(0)}–${Math.max(reserveFloor, clamp(row.sunset_soc_high_pct)).toFixed(0)}%`
                           : 'Unverified'}
                       </div>
 
