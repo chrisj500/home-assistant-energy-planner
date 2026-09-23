@@ -1,5 +1,17 @@
 # Home Assistant Energy Planner
 
+## v0.1.36 Battery Outlook resilience
+
+Battery Outlook now survives Home Assistant/integration restarts and transient
+Forecast.Solar refresh failures by persisting and reusing the last successful
+interval forecast. Numeric battery SOC values also remain valid while unchanged
+instead of being rejected by an arbitrary 15-minute report-age rule.
+
+When the rolling battery model genuinely cannot run, Dashboard v18 now shows
+the exact failed prerequisite instead of unexplained dashes, and stored forecast
+learning counts remain visible during the outage. See
+[release notes](RELEASE_NOTES_0.1.36.md).
+
 ## v0.1.35 HVAC context and cost display
 
 Dashboard v17 moves outdoor temperature context out of the thermostat dial and
