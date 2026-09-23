@@ -4,7 +4,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "energy_planner"))
-from hvac import celsius, hourly_forecast, observe, room_summary
+from hvac import HVAC_READY_DAYS, HVAC_READY_SAMPLES, celsius, hourly_forecast, learning_progress, observe, room_summary
 
 
 class HVACTests(unittest.TestCase):
@@ -85,6 +85,23 @@ class HVACTests(unittest.TestCase):
         restored = deepcopy(memory)
         observe(restored, self.sample(1300))
         self.assertEqual(len(restored["samples"]), 1)
+
+    def test_general_learning_has_explicit_completion_criteria(self):
+        rows = []
+        for day in range(HVAC_READY_DAYS):
+            for i in range(HVAC_READY_SAMPLES // HVAC_READY_DAYS):
+                row = self.sample(1000 + day * 86400 + i * 300)
+                row.update(day=f"2026-09-{20 + day:02d}", response_c_per_hour=0)
+                rows.append(row)
+        progress = learning_progress(rows)
+        self.assertTrue(progress["learning_ready"])
+        self.assertEqual(progress["learning_samples"], HVAC_READY_SAMPLES)
+        self.assertEqual(progress["learning_days"], HVAC_READY_DAYS)
+
+        memory = {"samples": rows}
+        result = observe(memory, self.sample(rows[-1]["at"] + 300))
+        self.assertEqual(result["status"], "ready")
+        self.assertTrue(result["learning_ready"])
 
     def test_hourly_forecast_needs_multiple_days_and_conditions(self):
         hours = [{"at": 400000, "temperature_c": 30, "humidity": 60}]
