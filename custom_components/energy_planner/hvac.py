@@ -11,6 +11,57 @@ HVAC_READY_SAMPLES = 36
 HVAC_READY_DAYS = 3
 
 
+VALID_ACTIONS = ("cooling", "heating", "idle", "off", "fan")
+CONDENSER_RUNNING_W = 100
+BLOWER_RUNNING_W = 20
+
+
+def effective_action(mode, reported_action, condenser_w, blower_w):
+    """Return a conservative HVAC action and its source.
+
+    Prefer the thermostat's explicit hvac_action. Some climate integrations
+    expose only the HVAC mode; for those, infer only states supported by the
+    measured circuit loads. This avoids treating mode=cool as proof that the
+    compressor is running.
+    """
+    if reported_action in VALID_ACTIONS:
+        return reported_action, "thermostat"
+
+    mode = str(mode or "").lower()
+    condenser = number(condenser_w)
+    blower = number(blower_w)
+
+    if mode == "off":
+        return "off", "inferred_mode"
+
+    if condenser is None or blower is None:
+        return None, "insufficient_power"
+
+    if mode in ("cool", "dry"):
+        if condenser >= CONDENSER_RUNNING_W:
+            return "cooling", "inferred_power"
+        if blower >= BLOWER_RUNNING_W:
+            return "fan", "inferred_power"
+        return "idle", "inferred_power"
+
+    if mode == "heat":
+        if blower >= BLOWER_RUNNING_W:
+            return "heating", "inferred_power"
+        return "idle", "inferred_power"
+
+    if mode == "fan_only":
+        if blower >= BLOWER_RUNNING_W:
+            return "fan", "inferred_power"
+        return "idle", "inferred_power"
+
+    # Auto/heat-cool without an explicit thermostat action is ambiguous for gas
+    # heat when only blower/control power is measured. Refuse to invent one.
+    if mode == "heat_cool" and condenser >= CONDENSER_RUNNING_W:
+        return "cooling", "inferred_power"
+
+    return None, "unsupported_mode"
+
+
 def number(value):
     try:
         result = float(value)
@@ -96,21 +147,33 @@ def observe(memory, sample):
         "blower_w",
         "humidity",
     )
-    valid = all(number(sample.get(key)) is not None for key in required)
+    missing_inputs = [
+        key for key in required if number(sample.get(key)) is None
+    ]
+    valid = not missing_inputs
     if valid:
         valid = (
             0 <= sample["humidity"] <= 100
             and sample["blower_w"] >= 0
             and sample["condenser_w"] >= 0
         )
-    if not valid or action not in ("cooling", "heating", "idle", "off", "fan"):
+    if not valid or action not in VALID_ACTIONS:
         memory.pop("call", None)
         memory.pop("missing_since", None)
         memory["previous"] = None
         progress = learning_progress(rows)
+        issues = list(missing_inputs)
+        if valid and action not in VALID_ACTIONS:
+            issues.append("hvac_action")
+        reason = (
+            "HVAC inputs unavailable: " + ", ".join(issues)
+            if issues
+            else "HVAC inputs invalid"
+        )
         return {
             "status": "unavailable",
-            "reason": "HVAC inputs missing or unavailable",
+            "reason": reason,
+            "input_issues": issues,
             "samples": len(rows),
             **progress,
         }
