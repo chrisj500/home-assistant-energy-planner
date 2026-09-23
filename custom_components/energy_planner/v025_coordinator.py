@@ -62,11 +62,6 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         reserve = number(data.get("effective_reserve_floor"))
         if any(number(v) is None for v in (*socs, limit, load, reserve)) or capacity <= 0:
             raise ValueError("Missing physical inputs")
-        for key in (CONF_SOC_1, CONF_SOC_2, CONF_SOC_3):
-            state = self.hass.states.get(cfg.get(key))
-            reported = getattr(state, "last_reported", state.last_updated)
-            if not 0 <= (now - reported).total_seconds() <= 900:
-                raise ValueError("Battery SOC telemetry is stale")
         windows = []
         for row in rows:
             day = dt_util.parse_date(row["date"])
@@ -183,7 +178,32 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             self._trust["revisions"] = []
         previous_trust = deepcopy(self._trust)
         status, reason = "unavailable", "Forecast inputs unavailable—do not act."
-        data.update(forecast_confidence="learning", forecast_error_samples=0)
+
+        # Learning evidence is persistent and independent of whether today's
+        # battery simulation can be built. Never render a model-input outage as
+        # "0/3" and imply that historical learning was erased.
+        stored_sunset_samples = len(self._trust.get("records", []))
+        overnight_records = (self._calibration_data or {}).get("overnight_records", [])
+        stored_overnight_samples = len(
+            [
+                row for row in overnight_records
+                if number(row.get("drop_rate_kw")) is not None
+                and number(row.get("drop_rate_kw")) >= 0
+            ]
+        )
+        data.update(
+            forecast_confidence="learning",
+            forecast_error_samples=stored_sunset_samples,
+            forecast_learning_ready=False,
+            forecast_learning_sunset_samples=stored_sunset_samples,
+            forecast_learning_sunset_required=MIN_EVIDENCE_SAMPLES,
+            forecast_learning_overnight_samples=stored_overnight_samples,
+            forecast_learning_overnight_required=MIN_EVIDENCE_SAMPLES,
+            forecast_learning_progress=(
+                f"{stored_sunset_samples}/{MIN_EVIDENCE_SAMPLES} scored sunsets · "
+                f"{stored_overnight_samples}/{MIN_EVIDENCE_SAMPLES} overnight records"
+            ),
+        )
         try:
             profiles, candidate, amount, points, windows, load, efficiency = self._scenarios(data, now)
             self._score_forecasts(data, now)
@@ -255,9 +275,22 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 self._verified_ev(data, now, candidate, amount, points, windows, load, efficiency)
             else:
                 self._surplus_since = None
-        except Exception:
+        except Exception as err:
             _LOGGER.exception("Reliability evaluation failed; withholding all discretionary advice")
-            status, reason = "unavailable", "Reliability evaluation unavailable—do not act."
+            battery_reason = data.get("battery_outlook_reason")
+            if data.get("battery_outlook_status") == "unavailable" and battery_reason:
+                reason = f"Battery outlook unavailable: {battery_reason}—do not act."
+            elif isinstance(err, ValueError) and str(err):
+                reason = f"Reliability evaluation unavailable: {err}—do not act."
+            else:
+                reason = "Reliability evaluation unavailable—do not act."
+            status = "unavailable"
+            data["forecast_reliability_error"] = {
+                "type": type(err).__name__,
+                "message": str(err),
+                "battery_outlook_status": data.get("battery_outlook_status"),
+                "battery_outlook_reason": battery_reason,
+            }
             suppress_actions(data, status, reason)
             self._surplus_since = None
         data.update(forecast_reliability_status=status, forecast_reliability_reason=reason)
