@@ -1,6 +1,6 @@
-# Energy Planning dashboard v12
+# Energy Planning dashboard v13
 #
-# Action-first Lovelace dashboard for Energy Planner v0.1.29.
+# Action-first Lovelace dashboard for Energy Planner v0.1.30.
 # Requires custom:button-card for the Headroom Decision, Battery Bank,
 # and four-day Battery Outlook cards.
 #
@@ -71,9 +71,9 @@ views:
                     (num(a.target_temp_low) !== null && num(a.target_temp_high) !== null ? `${fmt(num(a.target_temp_low))}–${fmt(num(a.target_temp_high))}${esc(unit)}` : '—');
                   const rooms = [
                     ['Living room','sensor.homepod_indoor_climate_living_room_temperature'],
-                    ['Guest bedroom','sensor.home_homepod_indoor_climate_guest_bedroom_temperature'],
-                    ['Main bedroom · left','sensor.home_homepod_indoor_climate_main_bedroom_left_temperature'],
-                    ['Main bedroom · right','sensor.home_homepod_indoor_climate_main_bedroom_right_temperature']
+                    ['Guest bedroom','sensor.homepod_indoor_climate_guest_bedroom_temperature'],
+                    ['Main bedroom · left','sensor.homepod_indoor_climate_main_bedroom_left_temperature'],
+                    ['Main bedroom · right','sensor.homepod_indoor_climate_main_bedroom_right_temperature']
                   ].map(([name,id]) => {
                     const s = states[id];
                     const age = s ? (Date.now() - Date.parse(s.attributes.last_received)) / 60000 : NaN;
@@ -87,16 +87,52 @@ views:
                   const coverage = num(e?.attributes.coverage_percent);
                   const energyLabel = kwh === null ? 'Unavailable' : `${kwh.toFixed(2)} kWh`;
                   const powerLabel = p === null ? 'Unavailable' : p >= 1000 ? `${(p/1000).toFixed(2)} kW` : `${Math.round(p)} W`;
+                  const model = states['sensor.energy_planner_hvac_model_status'];
+                  const m = model?.attributes || {};
+                  const learningState = model?.state || 'unavailable';
+                  const learningSamples = num(m.learning_samples) ?? 0;
+                  const learningSamplesRequired = num(m.learning_samples_required) ?? 36;
+                  const learningDays = num(m.learning_days) ?? 0;
+                  const learningDaysRequired = num(m.learning_days_required) ?? 3;
+                  const learningPct = num(m.learning_progress_pct) ?? 0;
+                  const learningColor = learningState === 'ready' ? '#30d158' : learningState === 'suspected_fault' || learningState === 'unavailable' ? '#ff453a' : '#ffd60a';
+                  const hourlySupported = num(m.hourly_supported_hours) ?? 0;
+                  const hourlyTotal = num(m.hourly_forecast_hours) ?? 0;
+                  const sourceData = states['sensor.energy_planner_hvac_electrical_power']?.attributes?.power_sources || {};
+                  const sourceIssues = Object.values(sourceData).filter(x => x && x.available === false).map(x => `${esc(x.entity_id)}: ${esc(x.raw_state)} (${esc(x.reason)})`);
+                  const sourceLabel = sourceIssues.length ? sourceIssues.join(' · ') : 'Condenser and blower/control sources available';
+                  const targetMain = target !== null ? target.toFixed(0) : '—';
                   return `<div style="color:var(--primary-text-color);font-family:inherit">
                     <div style="display:flex;align-items:center;justify-content:center;gap:8px;color:${color};font-size:20px;font-weight:600"><ha-icon icon="${icon}" style="width:26px"></ha-icon>${label}</div>
                     <div style="font-size:12px;margin-top:6px">Thermostat-reported state · Mode: ${esc(valid ? t.state : 'unknown')}</div>
-                    <div style="position:relative;width:min(100%,250px);aspect-ratio:1;margin:18px auto">
-                      <svg viewBox="0 0 240 240" style="width:100%;height:100%" aria-hidden="true"><circle cx="120" cy="120" r="105" fill="none" stroke="var(--divider-color)" stroke-width="12"/><circle cx="120" cy="120" r="105" fill="none" stroke="${color}" stroke-width="12" stroke-linecap="round" stroke-dasharray="495 660" transform="rotate(135 120 120)"/><circle cx="120" cy="120" r="89" fill="none" stroke="var(--divider-color)" stroke-width="1"/></svg>
-                      <div style="position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:center"><div style="font-size:12px;letter-spacing:1px">THERMOSTAT</div><div style="font-size:46px;font-weight:650;margin:6px 0">${fmt(current)}<span style="font-size:19px">${esc(unit)}</span></div><div style="font-size:15px">Target ${setpoint}</div><div style="font-size:13px;margin-top:8px">Humidity ${fmt(num(a.current_humidity))}%</div></div>
+                    <div style="position:relative;width:min(100%,292px);aspect-ratio:1;margin:18px auto 20px;border-radius:56px;background:radial-gradient(circle at 50% 34%,#24272b 0%,#111315 48%,#050607 100%);border:1px solid rgba(255,255,255,.10);box-shadow:inset 0 1px 0 rgba(255,255,255,.08),0 18px 36px rgba(0,0,0,.32);overflow:hidden">
+                      <svg viewBox="0 0 300 300" style="position:absolute;inset:0;width:100%;height:100%" aria-hidden="true">
+                        <path d="M48 126 A102 102 0 0 1 252 126" fill="none" stroke="rgba(255,255,255,.10)" stroke-width="9" stroke-linecap="round"/>
+                        <path d="M48 126 A102 102 0 0 1 252 126" fill="none" stroke="${color}" stroke-width="9" stroke-linecap="round"/>
+                      </svg>
+                      <div style="position:absolute;left:25px;top:121px;font-size:30px;font-weight:300;color:rgba(255,255,255,.62)">−</div>
+                      <div style="position:absolute;right:25px;top:121px;font-size:30px;font-weight:300;color:rgba(255,255,255,.62)">+</div>
+                      <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;color:#fff">
+                        <div style="margin-top:48px;font-size:10px;font-weight:700;letter-spacing:.18em;color:rgba(255,255,255,.45)">SET TO</div>
+                        <div style="font-size:68px;line-height:.98;font-weight:300;letter-spacing:-.06em;margin-top:5px">${targetMain}<span style="font-size:24px;vertical-align:top;margin-left:3px">${esc(unit)}</span></div>
+                        <div style="display:flex;gap:18px;margin-top:11px;font-size:13px;color:rgba(255,255,255,.72)">
+                          <span>${current === null ? "—" : fmt(current)}${current === null ? "" : esc(unit)} room</span>
+                          <span>${num(a.current_humidity) === null ? "—" : fmt(num(a.current_humidity))}% RH</span>
+                        </div>
+                        <div style="position:absolute;left:23px;right:23px;bottom:24px;display:grid;grid-template-columns:repeat(3,1fr);gap:6px">
+                          <div style="text-align:center"><ha-icon icon="${icon}" style="width:22px;color:${color}"></ha-icon><div style="margin-top:4px;font-size:9px;letter-spacing:.08em;color:rgba(255,255,255,.55)">${esc(valid ? t.state : "—")}</div></div>
+                          <div style="text-align:center"><ha-icon icon="mdi:fan" style="width:22px;color:rgba(255,255,255,.78)"></ha-icon><div style="margin-top:4px;font-size:9px;letter-spacing:.08em;color:rgba(255,255,255,.55)">${esc(a.fan_mode || (action === "fan" ? "on" : "auto"))}</div></div>
+                          <div style="text-align:center"><ha-icon icon="mdi:home" style="width:22px;color:rgba(255,255,255,.78)"></ha-icon><div style="margin-top:4px;font-size:9px;letter-spacing:.08em;color:rgba(255,255,255,.55)">${esc(a.preset_mode || "home")}</div></div>
+                        </div>
+                      </div>
                     </div>
                     <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">${rooms}</div>
                     <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:18px;border-top:1px solid var(--divider-color);padding-top:18px"><div><div style="font-size:13px">Electricity now</div><div style="font-size:24px;font-weight:600;margin-top:6px">${powerLabel}</div></div><div><div style="font-size:13px">Electricity today</div><div style="font-size:24px;font-weight:600;margin-top:6px">${energyLabel}</div></div></div>
-                    <div style="font-size:12px;line-height:1.5;margin-top:12px">Condenser + blower/controls · Gas excluded<br>${kwh === null ? 'Daily tracking unavailable' : `${e.attributes.partial ? 'Partial day' : 'Day coverage'} · ${coverage ?? 0}% measured coverage`}</div>
+                    <div style="margin-top:16px;padding:13px 14px;border-radius:16px;background:rgba(255,255,255,.045);text-align:left">
+                      <div style="display:flex;align-items:center;justify-content:space-between;gap:10px"><span style="font-size:12px;font-weight:700">HVAC learner</span><span style="font-size:12px;font-weight:750;color:${learningColor}">${esc(learningState)}</span></div>
+                      <div style="margin-top:7px;font-size:12px;line-height:1.5;color:rgba(255,255,255,.62)">${learningSamples}/${learningSamplesRequired} clean five-minute samples · ${learningDays}/${learningDaysRequired} days · ${learningPct.toFixed(0)}% ready<br>Hourly weather-matched support: ${hourlySupported}/${hourlyTotal} forecast hours</div>
+                    </div>
+                    <div style="font-size:11px;line-height:1.5;margin-top:11px;color:rgba(255,255,255,.50)">${sourceLabel}<br>Condenser + blower/controls · Gas excluded · ${kwh === null ? "Daily tracking unavailable" : `${e.attributes.partial ? "Partial day" : "Day coverage"} · ${coverage ?? 0}% measured coverage`}</div>
                   </div>`;
                 ]]]
 
@@ -111,10 +147,41 @@ views:
             heading: Headroom Decision
             icon: mdi:battery-alert-variant-outline
 
+          - type: markdown
+            content: >-
+              {% set r = 'sensor.energy_planner_forecast_reliability_status' %}
+
+              {% set l = 'sensor.energy_planner_forecast_learning_progress' %}
+
+              {% set s = 'sensor.energy_planner_storm_safety_status' %}
+
+              {% set storm_entity = state_attr(s, 'entity_id') %}
+
+              {% set storm_raw = state_attr(s, 'raw_state') %}
+
+              {% if is_state(s, 'active') %}
+              ### 🔴 Forecast guard — STORM ACTIVE
+              {% elif is_state(s, 'sensor_unavailable') %}
+              ### 🟠 Forecast guard — STORM SENSOR UNAVAILABLE
+              {% elif is_state(r, 'ready') or is_state(r, 'clear') %}
+              ### 🟢 Forecast guard — {{ states(r) | upper }}
+              {% else %}
+              ### 🟡 Forecast guard — {{ states(r) | upper }}
+              {% endif %}
+
+              **Learning:** {{ states(l) }}
+
+              **Storm safety:** {{ states(s) | replace('_', ' ') | title }}  
+              `{{ storm_entity or 'not configured' }}` = `{{ storm_raw or 'missing' }}`
+
+              {{ state_attr(r, 'reason') or states('sensor.energy_planner_forecast_reliability_reason') }}
+
           - type: entities
             title: Forecast reliability
             entities:
               - sensor.energy_planner_forecast_reliability_status
+              - sensor.energy_planner_forecast_learning_progress
+              - sensor.energy_planner_storm_safety_status
               - sensor.energy_planner_forecast_confidence
               - sensor.energy_planner_forecast_error_samples
               - sensor.energy_planner_forecast_reliability_reason
