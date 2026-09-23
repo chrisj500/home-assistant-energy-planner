@@ -10,7 +10,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "energy_planner"
 sys.path.insert(0, str(ROOT))
-from hvac import celsius, hourly_forecast, number, observe, room_summary
+from hvac import celsius, effective_action, hourly_forecast, number, observe, room_summary
 from hvac_energy import update_energy
 from reliability import suppress_actions
 
@@ -72,6 +72,34 @@ class HVACCoordinatorTests(unittest.TestCase):
         self.assertEqual(result["hvac_diagnostics"]["rooms"]["room_count"], 3)
         self.assertIsNone(result["hvac_diagnostics"]["hourly_shadow"][0]["expected_w"])
         self.assertEqual(result["effective_reserve_floor"], 10)
+
+    def test_missing_hvac_action_uses_mode_and_power(self):
+        self.states["climate.thermostat"].attributes.pop("hvac_action", None)
+        result = asyncio.run(self.c._async_update_data())
+        self.assertEqual(result["hvac_status"], "learning")
+        self.assertIsNone(result["hvac_diagnostics"]["thermostat_action_reported"])
+        self.assertEqual(
+            result["hvac_diagnostics"]["thermostat_action_effective"],
+            "idle",
+        )
+        self.assertEqual(
+            result["hvac_diagnostics"]["thermostat_action_source"],
+            "inferred_power",
+        )
+
+    def test_missing_hvac_action_detects_active_cooling_from_condenser(self):
+        self.states["climate.thermostat"].attributes.pop("hvac_action", None)
+        self.states["sensor.hvac_power"].state = "2200"
+        self.states["sensor.ecoflow_smart_home_panel_2_circuit_4_power"].state = "150"
+        result = asyncio.run(self.c._async_update_data())
+        self.assertEqual(
+            result["hvac_diagnostics"]["thermostat_action_effective"],
+            "cooling",
+        )
+        self.assertEqual(
+            result["hvac_diagnostics"]["thermostat_action_source"],
+            "inferred_power",
+        )
 
     def test_unchanged_numeric_power_remains_valid(self):
         for entity in (
