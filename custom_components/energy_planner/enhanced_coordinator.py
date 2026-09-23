@@ -72,6 +72,7 @@ _PROFESSIONAL_REFRESH = timedelta(minutes=30)
 _API_CALL_SPACING = timedelta(minutes=5)
 _REQUEST_TIMEOUT_SECONDS = 20
 _EV_LEARNING_STORE_VERSION = 1
+_ESTIMATE_CACHE_STORE_VERSION = 1
 _MAX_EV_POWER_SAMPLES = 120
 _MAX_EV_ENERGY_SAMPLES = 20
 _MAX_SAMPLE_GAP_SECONDS = 300.0
@@ -114,12 +115,57 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
         self._professional_attempts: dict[str, datetime] = {}
         self._professional_entitled: bool | None = None
         self._active_api_key: str | None = None
+        self._estimate_origin = "none"
+        self._estimate_cache_loaded = False
+        self._estimate_cache_store: Store[dict[str, Any]] = Store(
+            hass,
+            _ESTIMATE_CACHE_STORE_VERSION,
+            f"energy_planner.{entry.entry_id}.forecast_estimate",
+        )
         self._ev_learning_store: Store[dict[str, Any]] = Store(
             hass,
             _EV_LEARNING_STORE_VERSION,
             f"energy_planner.{entry.entry_id}.ev_learning",
         )
         self._ev_learning_data: dict[str, Any] | None = None
+
+    @staticmethod
+    def _estimate_source_signature(source: ForecastSolarSource) -> dict[str, Any]:
+        return {
+            "latitude": source.latitude,
+            "longitude": source.longitude,
+            "plane_path": source.plane_path,
+            "params": dict(sorted(source.params.items())),
+        }
+
+    async def _restore_estimate_cache(self, source: ForecastSolarSource) -> None:
+        """Restore the last good interval forecast after HA/integration restart."""
+        if self._estimate_cache_loaded:
+            return
+        self._estimate_cache_loaded = True
+        loaded = await self._estimate_cache_store.async_load()
+        if not isinstance(loaded, dict):
+            return
+        if loaded.get("source") != self._estimate_source_signature(source):
+            return
+        payload = loaded.get("payload")
+        last_success = dt_util.parse_datetime(str(loaded.get("last_success", "")))
+        if not isinstance(payload, dict) or last_success is None:
+            return
+        self._estimate_payload = payload
+        self._estimate_last_success = last_success
+        self._estimate_origin = "cache"
+
+    async def _save_estimate_cache(self, source: ForecastSolarSource) -> None:
+        if self._estimate_payload is None or self._estimate_last_success is None:
+            return
+        await self._estimate_cache_store.async_save(
+            {
+                "source": self._estimate_source_signature(source),
+                "last_success": self._estimate_last_success.isoformat(),
+                "payload": self._estimate_payload,
+            }
+        )
 
     async def _capture_daylight_forecast(
         self,
@@ -372,6 +418,8 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
         self._estimate_last_success = None
         self._estimate_last_attempt = None
         self._estimate_error = None
+        self._estimate_origin = "none"
+        self._estimate_cache_loaded = False
         self._last_api_call_at = None
         self._professional_cache = {}
         self._professional_attempts = {}
@@ -432,9 +480,13 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
                 self._estimate_payload = payload
                 self._estimate_last_success = now
                 self._estimate_error = None
+                self._estimate_origin = "live"
+                await self._save_estimate_cache(source)
             else:
+                # A transient provider/API failure must not erase a previously
+                # valid interval curve. Reliability freshness still gates advice,
+                # while the battery outlook remains inspectable from cached data.
                 self._estimate_error = error or "estimate_failed"
-                self._estimate_payload = None
                 if error in {"http_401", "http_403"}:
                     self._professional_entitled = False
             return
@@ -488,6 +540,7 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
         if source is None:
             return self._fallback_shadow(reason=source_error or "forecast_solar_source_unavailable")
 
+        await self._restore_estimate_cache(source)
         now = dt_util.now()
         cfg = self.cfg
         remaining_solar = _num(self.hass, cfg.get(CONF_SOLAR_REMAINING))
@@ -533,6 +586,13 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
                 "forecast_solar_interval_resolution_min": resolution,
                 "forecast_solar_horizon_days": horizon,
                 "forecast_solar_interval_points": len(points),
+                "forecast_solar_interval_source": self._estimate_origin,
+                "forecast_solar_interval_last_success": (
+                    self._estimate_last_success.isoformat()
+                    if self._estimate_last_success is not None
+                    else None
+                ),
+                "forecast_solar_interval_refresh_error": self._estimate_error,
             }
         )
 
