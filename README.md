@@ -1,5 +1,16 @@
 # Home Assistant Energy Planner
 
+## v0.1.35 HVAC context and cost display
+
+Dashboard v17 moves outdoor temperature context out of the thermostat dial and
+places it between the dial and room tiles for better readability. It now shows
+outside temperature vs thermostat target, outside vs inside humidity, and the
+signed deltas for both.
+
+The HVAC electricity section also shows estimated cost-to-date using the current
+base import rate of **$0.25/kWh**. See
+[release notes](RELEASE_NOTES_0.1.35.md).
+
 ## v0.1.34 HVAC recovery and passive thermal learning
 
 Dashboard v16 adds current outdoor temperature and the signed difference from
