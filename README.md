@@ -1,5 +1,17 @@
 # Home Assistant Energy Planner
 
+## v0.1.32 dashboard hierarchy refinement
+
+Dashboard v15 keeps Battery Bank at the top of Headroom Decision and moves
+Solar & Battery Outlook directly beneath it. Global forecast-learning/hold
+states are no longer repeated as if they were day-specific Battery Outlook
+conditions, and the What To Do column withholds a recommendation while the
+forecast is still learning.
+
+Forecast Guard is now concise: evidence progress, storm safety, and the exact
+remaining learning requirement. See
+[release notes](RELEASE_NOTES_0.1.32.md).
+
 ## v0.1.31 HVAC room layout refinement
 
 Dashboard v14 restores the circular thermostat face and arranges indoor climate

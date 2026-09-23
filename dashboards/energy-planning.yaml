@@ -1,6 +1,6 @@
-# Energy Planning dashboard v14
+# Energy Planning dashboard v15
 #
-# Action-first Lovelace dashboard for Energy Planner v0.1.31.
+# Action-first Lovelace dashboard for Energy Planner v0.1.32.
 # Requires custom:button-card for the Headroom Decision, Battery Bank,
 # and four-day Battery Outlook cards.
 #
@@ -190,325 +190,6 @@ views:
           - type: heading
             heading: Headroom Decision
             icon: mdi:battery-alert-variant-outline
-
-          - type: markdown
-            content: >-
-              {% set r = 'sensor.energy_planner_forecast_reliability_status' %}
-
-              {% set l = 'sensor.energy_planner_forecast_learning_progress' %}
-
-              {% set s = 'sensor.energy_planner_storm_safety_status' %}
-
-              {% set storm_entity = state_attr(s, 'entity_id') %}
-
-              {% set storm_raw = state_attr(s, 'raw_state') %}
-
-              {% if is_state(s, 'active') %}
-              ### 🔴 Forecast guard — STORM ACTIVE
-              {% elif is_state(s, 'sensor_unavailable') %}
-              ### 🟠 Forecast guard — STORM SENSOR UNAVAILABLE
-              {% elif is_state(r, 'ready') or is_state(r, 'clear') %}
-              ### 🟢 Forecast guard — {{ states(r) | upper }}
-              {% else %}
-              ### 🟡 Forecast guard — {{ states(r) | upper }}
-              {% endif %}
-
-              **Learning:** {{ states(l) }}
-
-              **Storm safety:** {{ states(s) | replace('_', ' ') | title }}  
-              `{{ storm_entity or 'not configured' }}` = `{{ storm_raw or 'missing' }}`
-
-              {{ state_attr(r, 'reason') or states('sensor.energy_planner_forecast_reliability_reason') }}
-
-          - type: entities
-            title: Forecast reliability
-            entities:
-              - sensor.energy_planner_forecast_reliability_status
-              - sensor.energy_planner_forecast_learning_progress
-              - sensor.energy_planner_storm_safety_status
-              - sensor.energy_planner_forecast_confidence
-              - sensor.energy_planner_forecast_error_samples
-              - sensor.energy_planner_forecast_reliability_reason
-
-          ######################################################################
-          # SIMPLE TRAFFIC LIGHT
-          ######################################################################
-
-          - type: custom:button-card
-            entity: binary_sensor.energy_planner_headroom_risk_today
-            show_name: false
-            show_state: false
-            show_icon: false
-            tap_action:
-              action: more-info
-
-            custom_fields:
-              content: |
-                [[[
-                  const e =
-                    states['binary_sensor.energy_planner_headroom_risk_today'];
-
-                  const status = e?.attributes?.status ?? '';
-                  const shortfall =
-                    Number(e?.attributes?.shortfall_kwh ?? 0);
-                  const exportRisk =
-                    Number(e?.attributes?.capacity_export_kwh ?? 0);
-                  const riskDate =
-                    e?.attributes?.risk_date ?? '—';
-                  const action =
-                    e?.attributes?.action ?? '';
-
-                  const hold =
-                    !['clear', 'risk_today', 'risk_future'].includes(status);
-
-                  let level = hold ? 'yellow' : 'green';
-
-                  if (e?.state === 'on') {
-                    level = 'red';
-                  } else if (status === 'risk_future') {
-                    level = 'yellow';
-                  }
-
-                  const colors = {
-                    green: '#30d158',
-                    yellow: '#ffd60a',
-                    red: '#ff453a',
-                    off: 'rgba(255,255,255,.13)'
-                  };
-
-                  const active = (c) =>
-                    level === c ? colors[c] : colors.off;
-
-                  const lights = `
-                    <div style="
-                      display:flex;
-                      flex-direction:column;
-                      gap:8px;
-                      padding:10px 0;
-                      align-items:center;
-                      justify-content:center;
-                      border-radius:18px;
-                      background:rgba(255,255,255,.045);
-                      border:1px solid rgba(255,255,255,.06);
-                    ">
-                      <div style="
-                        width:19px;
-                        height:19px;
-                        border-radius:50%;
-                        background:${active('red')};
-                        box-shadow:${level === 'red'
-                          ? '0 0 14px rgba(255,69,58,.5)'
-                          : 'none'};
-                      "></div>
-
-                      <div style="
-                        width:19px;
-                        height:19px;
-                        border-radius:50%;
-                        background:${active('yellow')};
-                        box-shadow:${level === 'yellow'
-                          ? '0 0 14px rgba(255,214,10,.45)'
-                          : 'none'};
-                      "></div>
-
-                      <div style="
-                        width:19px;
-                        height:19px;
-                        border-radius:50%;
-                        background:${active('green')};
-                        box-shadow:${level === 'green'
-                          ? '0 0 14px rgba(48,209,88,.45)'
-                          : 'none'};
-                      "></div>
-                    </div>
-                  `;
-
-                  if (hold) {
-                    return `
-                      <div style="
-                        display:grid;
-                        grid-template-columns:54px minmax(0,1fr);
-                        gap:14px;
-                        align-items:center;
-                      ">
-                        ${lights}
-
-                        <div style="min-width:0;">
-                          <div style="
-                            font-size:20px;
-                            font-weight:750;
-                            line-height:1.1;
-                            color:#ffd60a;
-                          ">
-                            DO NOT ACT
-                          </div>
-
-                          <div style="
-                            margin-top:5px;
-                            font-size:12px;
-                            line-height:1.35;
-                            color:rgba(255,255,255,.68);
-                          ">
-                            ${status || 'unavailable'} ·
-                            ${action || 'Waiting for verified forecast inputs.'}
-                          </div>
-                        </div>
-                      </div>
-                    `;
-                  }
-
-                  if (level === 'green') {
-                    return `
-                      <div style="
-                        display:grid;
-                        grid-template-columns:54px minmax(0,1fr);
-                        gap:14px;
-                        align-items:center;
-                      ">
-                        ${lights}
-
-                        <div style="
-                          font-size:21px;
-                          font-weight:750;
-                          line-height:1.1;
-                          letter-spacing:-.025em;
-                          color:#fff;
-                        ">
-                          NO ACTION NEEDED
-                        </div>
-                      </div>
-                    `;
-                  }
-
-                  if (level === 'yellow') {
-                    return `
-                      <div style="
-                        display:grid;
-                        grid-template-columns:54px minmax(0,1fr);
-                        gap:14px;
-                        align-items:center;
-                      ">
-                        ${lights}
-
-                        <div style="min-width:0;">
-
-                          <div style="
-                            font-size:20px;
-                            font-weight:750;
-                            line-height:1.1;
-                            color:#fff;
-                          ">
-                            PLAN FLEXIBLE LOAD
-                          </div>
-
-                          <div style="
-                            margin-top:7px;
-                            font-size:12px;
-                            line-height:1.4;
-                            color:rgba(255,255,255,.65);
-                          ">
-                            Risk day:
-                            <b style="color:#fff;">
-                              ${riskDate}
-                            </b>
-                          </div>
-
-                          ${
-                            action
-                              ? `
-                                <div style="
-                                  margin-top:5px;
-                                  font-size:11px;
-                                  line-height:1.35;
-                                  color:rgba(255,255,255,.50);
-                                ">
-                                  ${action}
-                                </div>
-                              `
-                              : ''
-                          }
-
-                        </div>
-                      </div>
-                    `;
-                  }
-
-                  return `
-                    <div style="
-                      display:grid;
-                      grid-template-columns:54px minmax(0,1fr);
-                      gap:14px;
-                      align-items:center;
-                    ">
-                      ${lights}
-
-                      <div style="min-width:0;">
-
-                        <div style="
-                          font-size:20px;
-                          font-weight:750;
-                          line-height:1.1;
-                          color:#fff;
-                        ">
-                          USE FLEXIBLE LOAD TODAY
-                        </div>
-
-                        <div style="
-                          margin-top:7px;
-                          font-size:12px;
-                          line-height:1.4;
-                          color:rgba(255,255,255,.68);
-                        ">
-                          Shortfall
-                          <b style="color:#fff;">
-                            ${shortfall.toFixed(1)} kWh
-                          </b>
-                          &nbsp;·&nbsp;
-                          Export risk
-                          <b style="color:#fff;">
-                            ${exportRisk.toFixed(1)} kWh
-                          </b>
-                        </div>
-
-                        ${
-                          action
-                            ? `
-                              <div style="
-                                margin-top:5px;
-                                font-size:11px;
-                                line-height:1.35;
-                                color:rgba(255,255,255,.50);
-                              ">
-                                ${action}
-                              </div>
-                            `
-                            : ''
-                        }
-
-                      </div>
-                    </div>
-                  `;
-                ]]]
-
-            styles:
-              card:
-                - padding: 16px
-                - border-radius: 24px
-                - background: >-
-                    linear-gradient(
-                    145deg,
-                    rgba(29,31,34,0.99) 0%,
-                    rgba(15,16,18,0.995) 100%)
-                - border: 1px solid rgba(255,255,255,0.065)
-                - box-shadow: 0 12px 32px rgba(0,0,0,0.25)
-
-              grid:
-                - grid-template-areas: '"content"'
-                - grid-template-columns: 1fr
-
-              custom_fields:
-                content:
-                  - width: 100%
 
           ######################################################################
           # BATTERY BANK
@@ -978,6 +659,426 @@ views:
                 content:
                   - width: 100%
 
+          - type: heading
+            heading: Solar & Battery Outlook
+            icon: mdi:weather-sunny
+
+          - type: markdown
+            content: >-
+              {% set e =
+              'binary_sensor.energy_planner_next_sunset_forecast_available' %}
+
+              {% set d =
+              state_attr(e,'date') %}
+
+              {% set soc =
+              state_attr(e,'soc_pct') %}
+
+              {% set charge =
+              state_attr(e,'expected_charge_kwh') %}
+
+              {% set export =
+              state_attr(e,'expected_export_kwh') %}
+
+              ### Next sunset{% if d %} — {{ d }}{% endif %}
+
+              **Projected SOC:**
+              {{ soc | round(1)
+              if soc is number
+              else '—' }}%  
+
+              **Expected battery gain:**
+              {{ charge | round(1)
+              if charge is number
+              else '—' }} kWh  
+
+              **Expected export:**
+              {{ export | round(1)
+              if export is number
+              else '—' }} kWh
+
+          - type: markdown
+            content: >-
+              {% set e =
+              'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
+
+              {% set s3 =
+              state_attr(e,'surplus_next_3d_kwh') %}
+
+              {% set sh =
+              state_attr(e,'surplus_horizon_kwh') %}
+
+              {% set risk =
+              states(
+              'sensor.energy_planner_rolling_headroom_risk_date') %}
+
+              ### Rolling energy outlook
+
+              **Solar after house load — next 3 days:**  
+              {{ s3 | round(1)
+              if s3 is number
+              else '—' }} kWh  
+
+              **Solar after house load — full forecast horizon:**  
+              {{ sh | round(1)
+              if sh is number
+              else '—' }} kWh  
+
+              **First modeled headroom-risk day:**  
+              {{ risk }}
+
+          - type: tile
+            entity: sensor.energy_planner_rolling_risk_day_projected_sunset_soc
+            name: Risk-Day Sunset SOC
+            icon: mdi:battery-high
+            vertical: false
+
+          - type: tile
+            entity: sensor.energy_planner_residual_headroom_shortfall_after_ev_charge
+            name: Residual Headroom Risk After EV
+            icon: mdi:battery-alert
+            vertical: false
+
+          - type: tile
+            entity: sensor.energy_planner_residual_capacity_export_after_ev_charge
+            name: Residual Export After EV
+            icon: mdi:transmission-tower-export
+            vertical: false
+
+
+
+          - type: markdown
+            content: >-
+              {% set r = 'sensor.energy_planner_forecast_reliability_status' %}
+
+              {% set l = 'sensor.energy_planner_forecast_learning_progress' %}
+
+              {% set s = 'sensor.energy_planner_storm_safety_status' %}
+
+              {% set sunset = state_attr(l, 'scored_sunset_samples') | int(0) %}
+
+              {% set sunset_req = state_attr(l, 'scored_sunset_samples_required') | int(3) %}
+
+              {% set overnight = state_attr(l, 'overnight_records') | int(0) %}
+
+              {% set overnight_req = state_attr(l, 'overnight_records_required') | int(3) %}
+
+              {% set sunset_left = [sunset_req - sunset, 0] | max %}
+
+              {% set overnight_left = [overnight_req - overnight, 0] | max %}
+
+              {% if is_state(s, 'active') %}
+              ### 🔴 Forecast guard — STORM ACTIVE
+              {% elif is_state(s, 'sensor_unavailable') %}
+              ### 🟠 Forecast guard — STORM SENSOR UNAVAILABLE
+              {% elif is_state(r, 'learning') %}
+              ### 🟡 Forecast guard — LEARNING
+              {% elif is_state(r, 'ready') or is_state(r, 'clear') %}
+              ### 🟢 Forecast guard — READY
+              {% else %}
+              ### 🟡 Forecast guard — {{ states(r) | upper }}
+              {% endif %}
+
+              **Learning:** {{ sunset }}/{{ sunset_req }} sunsets · {{ overnight }}/{{ overnight_req }} overnight
+
+              **Storm protection:** {{ 'Active' if is_state(s, 'active') else 'Unavailable' if is_state(s, 'sensor_unavailable') else 'Clear' }}
+
+              {% if is_state(r, 'learning') and (sunset_left > 0 or overnight_left > 0) %}
+              Still needed:{% if sunset_left > 0 %} **{{ sunset_left }}** qualifying sunset evaluation{{ '' if sunset_left == 1 else 's' }}{% endif %}{% if sunset_left > 0 and overnight_left > 0 %} ·{% endif %}{% if overnight_left > 0 %} **{{ overnight_left }}** overnight record{{ '' if overnight_left == 1 else 's' }}{% endif %}.
+              {% elif not (is_state(r, 'ready') or is_state(r, 'clear') or is_state(r, 'learning')) %}
+              {{ state_attr(r, 'reason') or states('sensor.energy_planner_forecast_reliability_reason') }}
+              {% endif %}
+
+          - type: entities
+            title: Forecast reliability
+            entities:
+              - sensor.energy_planner_forecast_reliability_status
+              - sensor.energy_planner_forecast_learning_progress
+              - sensor.energy_planner_storm_safety_status
+              - sensor.energy_planner_forecast_confidence
+              - sensor.energy_planner_forecast_error_samples
+              - sensor.energy_planner_forecast_reliability_reason
+
+          ######################################################################
+          # SIMPLE TRAFFIC LIGHT
+          ######################################################################
+
+          - type: custom:button-card
+            entity: binary_sensor.energy_planner_headroom_risk_today
+            show_name: false
+            show_state: false
+            show_icon: false
+            tap_action:
+              action: more-info
+
+            custom_fields:
+              content: |
+                [[[
+                  const e =
+                    states['binary_sensor.energy_planner_headroom_risk_today'];
+
+                  const status = e?.attributes?.status ?? '';
+                  const shortfall =
+                    Number(e?.attributes?.shortfall_kwh ?? 0);
+                  const exportRisk =
+                    Number(e?.attributes?.capacity_export_kwh ?? 0);
+                  const riskDate =
+                    e?.attributes?.risk_date ?? '—';
+                  const action =
+                    e?.attributes?.action ?? '';
+
+                  const hold =
+                    !['clear', 'risk_today', 'risk_future'].includes(status);
+
+                  let level = hold ? 'yellow' : 'green';
+
+                  if (e?.state === 'on') {
+                    level = 'red';
+                  } else if (status === 'risk_future') {
+                    level = 'yellow';
+                  }
+
+                  const colors = {
+                    green: '#30d158',
+                    yellow: '#ffd60a',
+                    red: '#ff453a',
+                    off: 'rgba(255,255,255,.13)'
+                  };
+
+                  const active = (c) =>
+                    level === c ? colors[c] : colors.off;
+
+                  const lights = `
+                    <div style="
+                      display:flex;
+                      flex-direction:column;
+                      gap:8px;
+                      padding:10px 0;
+                      align-items:center;
+                      justify-content:center;
+                      border-radius:18px;
+                      background:rgba(255,255,255,.045);
+                      border:1px solid rgba(255,255,255,.06);
+                    ">
+                      <div style="
+                        width:19px;
+                        height:19px;
+                        border-radius:50%;
+                        background:${active('red')};
+                        box-shadow:${level === 'red'
+                          ? '0 0 14px rgba(255,69,58,.5)'
+                          : 'none'};
+                      "></div>
+
+                      <div style="
+                        width:19px;
+                        height:19px;
+                        border-radius:50%;
+                        background:${active('yellow')};
+                        box-shadow:${level === 'yellow'
+                          ? '0 0 14px rgba(255,214,10,.45)'
+                          : 'none'};
+                      "></div>
+
+                      <div style="
+                        width:19px;
+                        height:19px;
+                        border-radius:50%;
+                        background:${active('green')};
+                        box-shadow:${level === 'green'
+                          ? '0 0 14px rgba(48,209,88,.45)'
+                          : 'none'};
+                      "></div>
+                    </div>
+                  `;
+
+                  if (hold) {
+                    return `
+                      <div style="
+                        display:grid;
+                        grid-template-columns:54px minmax(0,1fr);
+                        gap:14px;
+                        align-items:center;
+                      ">
+                        ${lights}
+
+                        <div style="min-width:0;">
+                          <div style="
+                            font-size:20px;
+                            font-weight:750;
+                            line-height:1.1;
+                            color:#ffd60a;
+                          ">
+                            DO NOT ACT
+                          </div>
+
+                          <div style="
+                            margin-top:5px;
+                            font-size:12px;
+                            line-height:1.35;
+                            color:rgba(255,255,255,.68);
+                          ">
+                            ${status || 'unavailable'} ·
+                            ${action || 'Waiting for verified forecast inputs.'}
+                          </div>
+                        </div>
+                      </div>
+                    `;
+                  }
+
+                  if (level === 'green') {
+                    return `
+                      <div style="
+                        display:grid;
+                        grid-template-columns:54px minmax(0,1fr);
+                        gap:14px;
+                        align-items:center;
+                      ">
+                        ${lights}
+
+                        <div style="
+                          font-size:21px;
+                          font-weight:750;
+                          line-height:1.1;
+                          letter-spacing:-.025em;
+                          color:#fff;
+                        ">
+                          NO ACTION NEEDED
+                        </div>
+                      </div>
+                    `;
+                  }
+
+                  if (level === 'yellow') {
+                    return `
+                      <div style="
+                        display:grid;
+                        grid-template-columns:54px minmax(0,1fr);
+                        gap:14px;
+                        align-items:center;
+                      ">
+                        ${lights}
+
+                        <div style="min-width:0;">
+
+                          <div style="
+                            font-size:20px;
+                            font-weight:750;
+                            line-height:1.1;
+                            color:#fff;
+                          ">
+                            PLAN FLEXIBLE LOAD
+                          </div>
+
+                          <div style="
+                            margin-top:7px;
+                            font-size:12px;
+                            line-height:1.4;
+                            color:rgba(255,255,255,.65);
+                          ">
+                            Risk day:
+                            <b style="color:#fff;">
+                              ${riskDate}
+                            </b>
+                          </div>
+
+                          ${
+                            action
+                              ? `
+                                <div style="
+                                  margin-top:5px;
+                                  font-size:11px;
+                                  line-height:1.35;
+                                  color:rgba(255,255,255,.50);
+                                ">
+                                  ${action}
+                                </div>
+                              `
+                              : ''
+                          }
+
+                        </div>
+                      </div>
+                    `;
+                  }
+
+                  return `
+                    <div style="
+                      display:grid;
+                      grid-template-columns:54px minmax(0,1fr);
+                      gap:14px;
+                      align-items:center;
+                    ">
+                      ${lights}
+
+                      <div style="min-width:0;">
+
+                        <div style="
+                          font-size:20px;
+                          font-weight:750;
+                          line-height:1.1;
+                          color:#fff;
+                        ">
+                          USE FLEXIBLE LOAD TODAY
+                        </div>
+
+                        <div style="
+                          margin-top:7px;
+                          font-size:12px;
+                          line-height:1.4;
+                          color:rgba(255,255,255,.68);
+                        ">
+                          Shortfall
+                          <b style="color:#fff;">
+                            ${shortfall.toFixed(1)} kWh
+                          </b>
+                          &nbsp;·&nbsp;
+                          Export risk
+                          <b style="color:#fff;">
+                            ${exportRisk.toFixed(1)} kWh
+                          </b>
+                        </div>
+
+                        ${
+                          action
+                            ? `
+                              <div style="
+                                margin-top:5px;
+                                font-size:11px;
+                                line-height:1.35;
+                                color:rgba(255,255,255,.50);
+                              ">
+                                ${action}
+                              </div>
+                            `
+                            : ''
+                        }
+
+                      </div>
+                    </div>
+                  `;
+                ]]]
+
+            styles:
+              card:
+                - padding: 16px
+                - border-radius: 24px
+                - background: >-
+                    linear-gradient(
+                    145deg,
+                    rgba(29,31,34,0.99) 0%,
+                    rgba(15,16,18,0.995) 100%)
+                - border: 1px solid rgba(255,255,255,0.065)
+                - box-shadow: 0 12px 32px rgba(0,0,0,0.25)
+
+              grid:
+                - grid-template-areas: '"content"'
+                - grid-template-columns: 1fr
+
+              custom_fields:
+                content:
+                  - width: 100%
+
           ######################################################################
           # HISTORY EXPORT
           ######################################################################
@@ -1098,12 +1199,8 @@ views:
                     index
                   ) => {
 
-                    if (['storm_active', 'storm_sensor_unavailable'].includes(row?.status)) {
-                      return {color:'transparent', text:''};
-                    }
-
                     if (!['clear', 'confirmed_headroom_risk'].includes(row?.status)) {
-                      return {color:'#ffd60a', text:row?.status || 'Unverified'};
+                      return {color:'transparent', text:''};
                     }
 
                     if (
@@ -1558,6 +1655,9 @@ views:
               {% set e =
               'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
 
+              {% set reliability =
+              states('sensor.energy_planner_forecast_reliability_status') %}
+
               {% set reason =
               state_attr(e,'reason') %}
 
@@ -1566,9 +1666,23 @@ views:
               'sensor.energy_planner_recommended_ev_charge_energy')
               | float(0) %}
 
-              {% if is_state(e,'on') %}
+              {% if reliability == 'learning' %}
+
+              ## 🟡 FORECAST LEARNING — NO RECOMMENDATION YET
+
+              **{{ states('sensor.energy_planner_forecast_learning_progress') }}. Do not act yet.**
+
+              {% elif reliability not in ['ready', 'clear'] %}
+
+              ## 🟡 FORECAST HOLD — NO RECOMMENDATION
+
+              **{{ states('sensor.energy_planner_forecast_reliability_reason') }}**
+
+              {% elif is_state(e,'on') %}
 
               ## 🟢 EV CHARGING USEFUL
+
+              **{{ reason or 'Verified solar/headroom conditions support EV charging.' }}**
 
               {% elif
               is_state(
@@ -1577,16 +1691,17 @@ views:
 
               ## 🟡 FIND ANOTHER USEFUL LOAD
 
+              **{{ reason or 'Headroom is useful, but EV charging is not currently verified.' }}**
+
               {% else %}
 
               ## ⚪ NO EV ACTION REQUIRED
 
+              **{{ reason or 'No verified EV charging action is needed.' }}**
+
               {% endif %}
 
-              **{{ reason or
-              'Planner is evaluating flexible-load options.' }}**
-
-              {% if useful > 0 %}
+              {% if useful > 0 and reliability in ['ready', 'clear'] %}
 
               Recommended EV energy:
               **{{ useful | round(1) }} kWh**
@@ -1653,100 +1768,6 @@ views:
               {{ state_attr(e, 'reason') or 'No verified EV charging window. Do not act on the point forecast.' }}
 
               {% endif %}
-
-
-      ##########################################################################
-      # SOLAR & BATTERY OUTLOOK
-      ##########################################################################
-
-      - type: grid
-        cards:
-
-          - type: heading
-            heading: Solar & Battery Outlook
-            icon: mdi:weather-sunny
-
-          - type: markdown
-            content: >-
-              {% set e =
-              'binary_sensor.energy_planner_next_sunset_forecast_available' %}
-
-              {% set d =
-              state_attr(e,'date') %}
-
-              {% set soc =
-              state_attr(e,'soc_pct') %}
-
-              {% set charge =
-              state_attr(e,'expected_charge_kwh') %}
-
-              {% set export =
-              state_attr(e,'expected_export_kwh') %}
-
-              ### Next sunset{% if d %} — {{ d }}{% endif %}
-
-              **Projected SOC:**
-              {{ soc | round(1)
-              if soc is number
-              else '—' }}%  
-
-              **Expected battery gain:**
-              {{ charge | round(1)
-              if charge is number
-              else '—' }} kWh  
-
-              **Expected export:**
-              {{ export | round(1)
-              if export is number
-              else '—' }} kWh
-
-          - type: markdown
-            content: >-
-              {% set e =
-              'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
-
-              {% set s3 =
-              state_attr(e,'surplus_next_3d_kwh') %}
-
-              {% set sh =
-              state_attr(e,'surplus_horizon_kwh') %}
-
-              {% set risk =
-              states(
-              'sensor.energy_planner_rolling_headroom_risk_date') %}
-
-              ### Rolling energy outlook
-
-              **Solar after house load — next 3 days:**  
-              {{ s3 | round(1)
-              if s3 is number
-              else '—' }} kWh  
-
-              **Solar after house load — full forecast horizon:**  
-              {{ sh | round(1)
-              if sh is number
-              else '—' }} kWh  
-
-              **First modeled headroom-risk day:**  
-              {{ risk }}
-
-          - type: tile
-            entity: sensor.energy_planner_rolling_risk_day_projected_sunset_soc
-            name: Risk-Day Sunset SOC
-            icon: mdi:battery-high
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_residual_headroom_shortfall_after_ev_charge
-            name: Residual Headroom Risk After EV
-            icon: mdi:battery-alert
-            vertical: false
-
-          - type: tile
-            entity: sensor.energy_planner_residual_capacity_export_after_ev_charge
-            name: Residual Export After EV
-            icon: mdi:transmission-tower-export
-            vertical: false
 
 
       ##########################################################################
