@@ -1,5 +1,25 @@
 # Home Assistant Energy Planner
 
+## v0.1.30 HVAC dashboard and observability
+
+Dashboard v13 fixes the HomePod room entity mappings, gives the HVAC learner an
+explicit readiness target of **36 clean five-minute samples across at least 3
+days**, and redesigns the thermostat card around the Aqara-style black face:
+upper arc, large setpoint, measured temperature/humidity, plus/minus marks and
+mode/fan/home indicators.
+
+HVAC electrical power now treats a numeric Home Assistant circuit state as valid
+until Home Assistant marks that source `unknown` or `unavailable`; an
+unchanged `0 W` state no longer becomes unavailable merely because its state
+timestamp is older than five minutes. Daily integration still excludes actual
+unavailable periods and exposes source/coverage diagnostics.
+
+Forecast reliability now exposes its action-learning prerequisites directly:
+**3 scored sunset forecasts and 3 valid overnight calibration records**. Storm
+safety also distinguishes `active` from `sensor_unavailable` and reports the
+configured storm entity and raw state. See
+[release notes](RELEASE_NOTES_0.1.30.md).
+
 ## v0.1.28 HVAC-aware safety and learning
 
 Enable **Read-only HVAC learning and safety holds** in Energy Planner options,
