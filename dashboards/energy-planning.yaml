@@ -665,6 +665,90 @@ views:
 
           - type: markdown
             content: >-
+              {% set e =
+              'binary_sensor.energy_planner_next_sunset_forecast_available' %}
+
+              {% set d =
+              state_attr(e,'date') %}
+
+              {% set soc =
+              state_attr(e,'soc_pct') %}
+
+              {% set charge =
+              state_attr(e,'expected_charge_kwh') %}
+
+              {% set export =
+              state_attr(e,'expected_export_kwh') %}
+
+              ### Next sunset{% if d %} — {{ d }}{% endif %}
+
+              **Projected SOC:**
+              {{ soc | round(1)
+              if soc is number
+              else '—' }}%  
+
+              **Expected battery gain:**
+              {{ charge | round(1)
+              if charge is number
+              else '—' }} kWh  
+
+              **Expected export:**
+              {{ export | round(1)
+              if export is number
+              else '—' }} kWh
+
+          - type: markdown
+            content: >-
+              {% set e =
+              'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
+
+              {% set s3 =
+              state_attr(e,'surplus_next_3d_kwh') %}
+
+              {% set sh =
+              state_attr(e,'surplus_horizon_kwh') %}
+
+              {% set risk =
+              states(
+              'sensor.energy_planner_rolling_headroom_risk_date') %}
+
+              ### Rolling energy outlook
+
+              **Solar after house load — next 3 days:**  
+              {{ s3 | round(1)
+              if s3 is number
+              else '—' }} kWh  
+
+              **Solar after house load — full forecast horizon:**  
+              {{ sh | round(1)
+              if sh is number
+              else '—' }} kWh  
+
+              **First modeled headroom-risk day:**  
+              {{ risk }}
+
+          - type: tile
+            entity: sensor.energy_planner_rolling_risk_day_projected_sunset_soc
+            name: Risk-Day Sunset SOC
+            icon: mdi:battery-high
+            vertical: false
+
+          - type: tile
+            entity: sensor.energy_planner_residual_headroom_shortfall_after_ev_charge
+            name: Residual Headroom Risk After EV
+            icon: mdi:battery-alert
+            vertical: false
+
+          - type: tile
+            entity: sensor.energy_planner_residual_capacity_export_after_ev_charge
+            name: Residual Export After EV
+            icon: mdi:transmission-tower-export
+            vertical: false
+
+
+
+          - type: markdown
+            content: >-
               {% set r = 'sensor.energy_planner_forecast_reliability_status' %}
 
               {% set l = 'sensor.energy_planner_forecast_learning_progress' %}
