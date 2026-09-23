@@ -45,28 +45,40 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
         return self.cfg.get(key, DEFAULT_ENTITIES[key])
 
     def _room_prefixes(self):
-        """Resolve configured room prefixes and repair the v0.1.29 typo safely."""
+        """Resolve configured room prefixes against the entities HA actually has."""
         raw = self.cfg.get("hvac_room_prefixes", ",".join(ROOM_PREFIXES))
         prefixes = []
         for value in str(raw).split(","):
             prefix = value.strip()
             if not prefix:
                 continue
+
+            candidates = [prefix]
             if prefix.startswith(_LEGACY_HOMEPOD_PREFIX):
-                corrected = prefix.replace(
-                    _LEGACY_HOMEPOD_PREFIX, _CANONICAL_HOMEPOD_PREFIX, 1
+                candidates.append(
+                    prefix.replace(
+                        _LEGACY_HOMEPOD_PREFIX,
+                        _CANONICAL_HOMEPOD_PREFIX,
+                        1,
+                    )
                 )
-                old_exists = any(
-                    self.hass.states.get(prefix + suffix) is not None
+            elif prefix.startswith(_CANONICAL_HOMEPOD_PREFIX):
+                candidates.append(
+                    prefix.replace(
+                        _CANONICAL_HOMEPOD_PREFIX,
+                        _LEGACY_HOMEPOD_PREFIX,
+                        1,
+                    )
+                )
+
+            def score(candidate):
+                return sum(
+                    self.hass.states.get(candidate + suffix) is not None
                     for suffix in ("_temperature", "_humidity")
                 )
-                corrected_exists = any(
-                    self.hass.states.get(corrected + suffix) is not None
-                    for suffix in ("_temperature", "_humidity")
-                )
-                if not old_exists and corrected_exists:
-                    prefix = corrected
-            prefixes.append(prefix)
+
+            best = max(candidates, key=score)
+            prefixes.append(best if score(best) > 0 else prefix)
         return tuple(prefixes)
 
     def _fresh_state(self, entity, now, *, room=False):

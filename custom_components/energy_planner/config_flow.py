@@ -271,9 +271,8 @@ class EnergyPlannerOptionsFlow(config_entries.OptionsFlow):
         for key, entity in DEFAULT_ENTITIES.items():
             domain = "climate" if key == "hvac_thermostat" else "weather" if key == "hvac_weather" else "binary_sensor" if key == "hvac_stale" else "sensor"
             hvac_fields[vol.Optional(key, default=current.get(key, entity))] = selector.EntitySelector(selector.EntitySelectorConfig(domain=domain))
-        room_prefix_default = str(current.get("hvac_room_prefixes", ",".join(ROOM_PREFIXES))).replace(
-            "sensor.home_homepod_indoor_climate_",
-            "sensor.homepod_indoor_climate_",
+        room_prefix_default = str(
+            current.get("hvac_room_prefixes", ",".join(ROOM_PREFIXES))
         )
         hvac_fields[vol.Optional("hvac_room_prefixes", default=room_prefix_default)] = str
         schema = schema.extend(hvac_fields)

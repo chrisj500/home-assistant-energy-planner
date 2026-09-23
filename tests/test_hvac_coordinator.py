@@ -118,6 +118,25 @@ class HVACCoordinatorTests(unittest.TestCase):
         )
         self.assertTrue(result["hvac_diagnostics"]["room_data_healthy"])
 
+    def test_canonical_prefixes_resolve_to_persisted_legacy_entities(self):
+        for room in ("guest_bedroom", "main_bedroom_left", "main_bedroom_right"):
+            canonical = f"sensor.homepod_indoor_climate_{room}"
+            legacy = f"sensor.home_homepod_indoor_climate_{room}"
+            for suffix in ("_temperature", "_humidity"):
+                self.states[legacy + suffix] = self.states.pop(canonical + suffix)
+
+        result = asyncio.run(self.c._async_update_data())
+        self.assertEqual(
+            result["hvac_diagnostics"]["room_prefixes"],
+            [
+                "sensor.homepod_indoor_climate_living_room",
+                "sensor.home_homepod_indoor_climate_guest_bedroom",
+                "sensor.home_homepod_indoor_climate_main_bedroom_left",
+                "sensor.home_homepod_indoor_climate_main_bedroom_right",
+            ],
+        )
+        self.assertTrue(result["hvac_diagnostics"]["room_data_healthy"])
+
     def test_stale_room_blocks_existing_advice(self):
         self.states["binary_sensor.homepod_indoor_climate_stale_readings"].state = "on"
         result = asyncio.run(self.c._async_update_data())
