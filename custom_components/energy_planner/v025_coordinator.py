@@ -18,7 +18,7 @@ from .coordinator import _controller_settings, _num, _solar_window
 from .enhanced_coordinator import _parse_weights
 from .forecast_solar_shadow import IntervalPoint, interval_points_from_payload
 from .headroom import correct_current_day_points
-from .reliability import MIN_EVIDENCE_SAMPLES, evidence, gate, number, observe, suppress_actions
+from .reliability import MIN_EVIDENCE_SAMPLES, evidence, gate, number, observe, suppress_actions, sunset_envelope
 from .rolling_ev import DaylightWindow, simulate_rolling_days, choose_ev_charge_window
 from .v022_coordinator import EnergyPlannerV022Coordinator
 
@@ -119,17 +119,28 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         candidate = None
         amount = 0.0
         reserve_floor = min(max(float(reserve), 0.0), 100.0)
+        window_by_date = {window.day: window for window in windows}
+        current_soc = sum(soc * cap for soc, cap in zip(socs, capacities)) / capacity
         for row, lo, hi in zip(rows, low, high):
             profile = profiles[row["date"]]
             width = profile["width_soc"]
+            window = window_by_date[lo.day]
+            lower_soc, upper_soc, remaining_fraction = sunset_envelope(
+                now=now, sunrise=window.sunrise, sunset=window.sunset,
+                target_date=lo.day, current_soc=current_soc,
+                point_soc=row["sunset_soc_pct"], low_soc=lo.end_soc_pct,
+                high_soc=hi.end_soc_pct, historical_width=width,
+                reserve_floor=reserve_floor,
+            )
             margin = max(2.0, capacity * .05, capacity * width / 100)
             robust = max(0.0, min(lo.headroom_shortfall_kwh,
                                   lo.capacity_export_kwh * efficiency) - margin)
             row.update({
                 # This planner assumes grid-connected operation. EcoFlow reserve is
                 # therefore a hard policy floor for displayed SOC scenarios.
-                "sunset_soc_low_pct": round(max(reserve_floor, min(lo.end_soc_pct, row["sunset_soc_pct"] - width)), 1),
-                "sunset_soc_high_pct": round(max(reserve_floor, min(100, max(hi.end_soc_pct, row["sunset_soc_pct"] + width))), 1),
+                "sunset_soc_low_pct": lower_soc,
+                "sunset_soc_high_pct": upper_soc,
+                "range_remaining_daylight_fraction": remaining_fraction,
                 "confidence": profile["confidence"], "error_samples": profile["samples"],
                 "historical_mae_soc": profile["mae_soc"], "safety_margin_kwh": round(margin, 2),
                 "conservative_headroom_kwh": round(robust, 2),

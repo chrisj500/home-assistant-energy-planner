@@ -188,14 +188,31 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
         state = self.hass.states.get(entity)
         if state is None or state.state in ("unavailable", "unknown"):
             return None
-        stamp = getattr(state, "last_reported", state.last_updated)
         if room:
             stamp = dt_util.parse_datetime(state.attributes.get("last_received", ""))
             if not state.attributes.get("fresh"):
                 return None
-        if stamp is None or not 0 <= (now - stamp).total_seconds() <= 900:
-            return None
+            if stamp is None or not 0 <= (now - stamp).total_seconds() <= 900:
+                return None
+        # HA climate, weather and numeric outdoor states can remain unchanged for
+        # hours. Their report timestamp is not a validity deadline. HomePod room
+        # entities carry an explicit freshness signal and receive time above.
         return state
+
+    def _input_state_details(self, entity, now):
+        state = self.hass.states.get(entity)
+        if state is None:
+            return {"entity_id": entity, "raw_state": "missing", "available": False,
+                    "reason": "entity_missing"}
+        stamp = getattr(state, "last_reported", state.last_updated)
+        return {"entity_id": entity, "raw_state": state.state,
+                "available": state.state not in ("unavailable", "unknown"),
+                "reason": "ha_state_available" if state.state not in ("unavailable", "unknown") else "ha_state_unavailable",
+                "last_reported": stamp.isoformat() if stamp else None,
+                "report_age_minutes": round((now - stamp).total_seconds() / 60, 1) if stamp else None,
+                "current_temperature": state.attributes.get("current_temperature"),
+                "target_temperature": state.attributes.get("temperature"),
+                "current_humidity": state.attributes.get("current_humidity")}
 
     def _available_power(self, entity):
         """Read a numeric HA power state without requiring a recent state change.
@@ -499,6 +516,8 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                 thermostat_control_enabled=False,
                 weather_available=bool(hours),
                 entities={k: self._entity(k) for k in DEFAULT_ENTITIES},
+                input_states={key: self._input_state_details(self._entity(key), now)
+                              for key in ("hvac_thermostat", "hvac_outdoor_temperature", "hvac_weather", "hvac_stale")},
                 power_sources=power_sources,
                 power_mapping_valid=power_mapping_valid,
                 persistence=dict(getattr(self, "_hvac_persistence", {})),

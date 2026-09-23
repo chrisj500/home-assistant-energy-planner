@@ -1,5 +1,17 @@
 # Home Assistant Energy Planner
 
+## v0.1.39 HVAC input continuity and converging sunset ranges
+
+An unchanged numeric thermostat or outdoor reading remains valid until Home
+Assistant marks its entity unavailable. HomePod room readings still require
+their explicit fresh flag and recent receipt time. Diagnostics include raw HVAC
+input states and timestamps to identify a genuine outage.
+
+Today's Battery Outlook range anchors its lower end to the measured bank SOC
+during daylight and reduces the historical error allowance as sunset approaches.
+Future-day ranges retain the full allowance. See
+[release notes](RELEASE_NOTES_0.1.39.md).
+
 ## v0.1.38 compact overview and diagnostics
 
 Dashboard v19 keeps Thermostat, Battery Bank, four-day Battery Outlook, and
