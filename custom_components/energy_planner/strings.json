@@ -77,7 +77,11 @@
           "hvac_outdoor_temperature": "Measured outdoor temperature",
           "hvac_weather": "Hourly weather forecast",
           "hvac_stale": "HomePod stale readings problem sensor",
-          "hvac_room_prefixes": "Room entity prefixes: living, guest, main left, main right (comma separated, omit _temperature/_humidity)"
+          "hvac_room_prefixes": "Room entity prefixes: living, guest, main left, main right (comma separated, omit _temperature/_humidity)",
+          "solar_learning_enabled": "Collect and evaluate solar forecasts (shadow only)",
+          "solar_learning_radiation_entity": "Local solar radiation (W/m²)",
+          "solar_learning_temperature_entity": "Local outdoor temperature",
+          "solar_learning_energy_entity": "Lifetime solar production (optional; one Enphase meter is auto-detected)"
         }
       }
     }

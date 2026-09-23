@@ -5,10 +5,10 @@ from homeassistant.core import HomeAssistant
 
 from .const import PLATFORMS
 from .solar_policy import migrated_solar_options
-from .hvac_coordinator import EnergyPlannerHVACCoordinator
+from .solar_learning_coordinator import EnergyPlannerSolarLearningCoordinator
 
 
-type EnergyPlannerConfigEntry = ConfigEntry[EnergyPlannerHVACCoordinator]
+type EnergyPlannerConfigEntry = ConfigEntry[EnergyPlannerSolarLearningCoordinator]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: EnergyPlannerConfigEntry) -> bool:
@@ -17,7 +17,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: EnergyPlannerConfigEntry
     options = migrated_solar_options(entry.data, entry.options)
     if options is not None:
         hass.config_entries.async_update_entry(entry, options=options)
-    coordinator = EnergyPlannerHVACCoordinator(hass, entry)
+    coordinator = EnergyPlannerSolarLearningCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator
     entry.async_on_unload(entry.add_update_listener(_async_update_listener))
