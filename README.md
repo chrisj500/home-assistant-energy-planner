@@ -1,5 +1,14 @@
 # Home Assistant Energy Planner
 
+## v0.1.33 HVAC action inference
+
+The HVAC learner now supports climate entities that expose an HVAC mode but no
+`hvac_action` attribute. Explicit thermostat actions remain authoritative;
+otherwise Energy Planner conservatively combines mode with measured condenser
+and blower/control power to distinguish active cooling/heating/fan operation
+from idle. The inferred action and its source are exposed in HVAC diagnostics.
+See [release notes](RELEASE_NOTES_0.1.33.md).
+
 ## v0.1.32 dashboard hierarchy refinement
 
 Dashboard v15 keeps Battery Bank at the top of Headroom Decision and moves
