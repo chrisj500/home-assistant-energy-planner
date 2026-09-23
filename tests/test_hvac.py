@@ -173,7 +173,9 @@ class HVACTests(unittest.TestCase):
 
     def test_passive_thermal_drift_becomes_provisional_after_long_idle_window(self):
         memory = {}
-        for at, indoor in ((1000, 22.0), (1900, 21.9), (2800, 21.7)):
+        for i in range(7):
+            at = 1000 + i * 300
+            indoor = 22.0 - 0.3 * (i / 6)
             sample = self.sample(at)
             sample.update(
                 action="idle",
@@ -197,7 +199,9 @@ class HVACTests(unittest.TestCase):
         start = 1000
         for window in range(3):
             base = start + window * 7200
-            for at, indoor in ((base, 22.0), (base + 1800, 21.7)):
+            for i in range(7):
+                at = base + i * 300
+                indoor = 22.0 - 0.3 * (i / 6)
                 sample = self.sample(at)
                 sample.update(
                     action="idle",
