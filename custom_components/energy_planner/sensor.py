@@ -84,6 +84,8 @@ SENSORS = (
     EnergyPlannerSensorDescription(key="forecast_reliability_status", data_key="forecast_reliability_status", name="Forecast Reliability Status"),
     EnergyPlannerSensorDescription(key="forecast_reliability_reason", data_key="forecast_reliability_reason", name="Forecast Reliability Reason"),
     EnergyPlannerSensorDescription(key="forecast_error_samples", data_key="forecast_error_samples", name="Forecast Error Samples"),
+    EnergyPlannerSensorDescription(key="forecast_learning_progress", data_key="forecast_learning_progress", name="Forecast Learning Progress"),
+    EnergyPlannerSensorDescription(key="storm_safety_status", data_key="storm_safety_status", name="Storm Safety Status"),
     _soc("weighted_soc", "weighted_soc", "Whole Bank SOC"),
     _energy("stored_energy", "stored_energy", "Whole Bank Stored Energy", storage=True),
     _energy("battery_headroom", "battery_headroom", "Battery Headroom", storage=True),
@@ -732,17 +734,72 @@ class EnergyPlannerSensor(CoordinatorEntity[EnergyPlannerCoordinator], SensorEnt
 
     @property
     def extra_state_attributes(self):
-        if self.entity_description.key == "hvac_daily_electricity":
-            return (self.coordinator.data or {}).get("hvac_energy_coverage", {})
-        if self.entity_description.key == "hvac_status":
-            return (self.coordinator.data or {}).get("hvac_diagnostics", {})
-        if self.entity_description.key not in {"forecast_confidence", "forecast_reliability_status"}:
-            return None
         data = self.coordinator.data or {}
-        return {"reason": data.get("forecast_reliability_reason"),
-                "historical_mae_soc_percentage_points": data.get("forecast_historical_mae_soc"),
-                "error_samples": data.get("forecast_error_samples", 0),
-                "confirmed_refreshes": data.get("forecast_confirmation_count", 0),
-                "provider_refreshed_at": data.get("forecast_revision_at"),
-                "days": data.get("rolling_day_plans", []),
-                "range_kind": "scenario envelope; not a probability interval"}
+        if self.entity_description.key == "hvac_daily_electricity":
+            return {
+                **data.get("hvac_energy_coverage", {}),
+                "power_sources": data.get("hvac_power_sources", {}),
+                "power_mapping_valid": data.get("hvac_power_mapping_valid"),
+            }
+        if self.entity_description.key == "hvac_electrical_power":
+            return {
+                "power_sources": data.get("hvac_power_sources", {}),
+                "power_mapping_valid": data.get("hvac_power_mapping_valid"),
+                "validity_policy": (
+                    "numeric available Home Assistant state; unchanged values remain "
+                    "valid until HA marks the source unknown/unavailable"
+                ),
+            }
+        if self.entity_description.key == "hvac_status":
+            return data.get("hvac_diagnostics", {})
+        if self.entity_description.key == "storm_safety_status":
+            return {
+                "entity_id": data.get("storm_warning_entity"),
+                "raw_state": data.get("storm_warning_state"),
+                "active": data.get("storm"),
+            }
+        if self.entity_description.key == "forecast_learning_progress":
+            return {
+                "ready": data.get("forecast_learning_ready"),
+                "scored_sunset_samples": data.get("forecast_learning_sunset_samples", 0),
+                "scored_sunset_samples_required": data.get(
+                    "forecast_learning_sunset_required", 3
+                ),
+                "overnight_records": data.get("forecast_learning_overnight_samples", 0),
+                "overnight_records_required": data.get(
+                    "forecast_learning_overnight_required", 3
+                ),
+            }
+        if self.entity_description.key not in {
+            "forecast_confidence",
+            "forecast_reliability_status",
+        }:
+            return None
+        return {
+            "reason": data.get("forecast_reliability_reason"),
+            "historical_mae_soc_percentage_points": data.get(
+                "forecast_historical_mae_soc"
+            ),
+            "error_samples": data.get("forecast_error_samples", 0),
+            "confirmed_refreshes": data.get("forecast_confirmation_count", 0),
+            "provider_refreshed_at": data.get("forecast_revision_at"),
+            "forecast_learning_ready": data.get("forecast_learning_ready"),
+            "forecast_learning_progress": data.get("forecast_learning_progress"),
+            "forecast_learning_sunset_samples": data.get(
+                "forecast_learning_sunset_samples", 0
+            ),
+            "forecast_learning_sunset_required": data.get(
+                "forecast_learning_sunset_required", 3
+            ),
+            "forecast_learning_overnight_samples": data.get(
+                "forecast_learning_overnight_samples", 0
+            ),
+            "forecast_learning_overnight_required": data.get(
+                "forecast_learning_overnight_required", 3
+            ),
+            "storm_safety_status": data.get("storm_safety_status"),
+            "storm_warning_entity": data.get("storm_warning_entity"),
+            "storm_warning_state": data.get("storm_warning_state"),
+            "days": data.get("rolling_day_plans", []),
+            "range_kind": "scenario envelope; not a probability interval",
+        }

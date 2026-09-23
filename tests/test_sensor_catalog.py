@@ -66,6 +66,14 @@ class SensorCatalogTests(unittest.TestCase):
             descriptions["battery_energy_discharged"],
             ("battery_energy_discharged_kwh", "Battery Energy Discharged"),
         )
+        self.assertEqual(
+            descriptions["forecast_learning_progress"],
+            ("forecast_learning_progress", "Forecast Learning Progress"),
+        )
+        self.assertEqual(
+            descriptions["storm_safety_status"],
+            ("storm_safety_status", "Storm Safety Status"),
+        )
 
     def test_existing_entries_can_configure_battery_power_entities(self) -> None:
         config_flow_path = (

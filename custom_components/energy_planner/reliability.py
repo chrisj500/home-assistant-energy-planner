@@ -5,6 +5,9 @@ from datetime import datetime, timedelta
 from math import isfinite
 
 
+MIN_EVIDENCE_SAMPLES = 3
+
+
 def number(value):
     try:
         result = float(value)
@@ -19,8 +22,8 @@ def evidence(records, lead):
     # Engineering floor, not a claimed statistical confidence interval.
     width = max([10.0 + 3.0 * lead, *errors])
     mae = sum(errors) / len(errors) if errors else None
-    confidence = "learning" if len(errors) < 3 else "low"
-    if len(errors) >= 3 and mae <= 10:
+    confidence = "learning" if len(errors) < MIN_EVIDENCE_SAMPLES else "low"
+    if len(errors) >= MIN_EVIDENCE_SAMPLES and mae <= 10:
         confidence = "medium"
     if len(errors) >= 10 and mae <= 5:
         confidence = "high"
@@ -65,11 +68,33 @@ def observe(history, *, now, revision, rows, candidate):
     return recent[-240:], unstable, stable, len(streak)
 
 
-def gate(*, fresh, unstable, confidence, candidate, stable, storm):
+def gate(
+    *,
+    fresh,
+    unstable,
+    confidence,
+    candidate,
+    stable,
+    storm,
+    storm_entity=None,
+    storm_state=None,
+):
     if not fresh:
         return "unavailable", "Forecast inputs are missing or stale—do not act."
-    if storm is not False:
-        return "blocked", "Storm protection is active or unknown—do not act."
+    if storm is None:
+        entity = storm_entity or "configured storm safety sensor"
+        state = storm_state or "missing"
+        return (
+            "storm_sensor_unavailable",
+            f"Storm safety sensor unavailable: {entity} = {state}—do not act.",
+        )
+    if storm is True:
+        entity = storm_entity or "configured storm safety sensor"
+        state = storm_state or "on"
+        return (
+            "storm_active",
+            f"Storm protection is active: {entity} = {state}—do not act.",
+        )
     if unstable:
         return "unstable", "Forecast unstable—do not act."
     if confidence in {"learning", "low"}:

@@ -76,10 +76,37 @@ class ReliabilityTests(unittest.TestCase):
 
     def test_fail_closed_conditions(self):
         defaults = dict(fresh=True, unstable=False, confidence="high", candidate=self.day, stable=True, storm=False)
-        for changes, expected in [({"fresh": False}, "unavailable"), ({"storm": None}, "blocked"),
-                                  ({"storm": True}, "blocked"), ({"confidence": "learning"}, "learning"),
+        for changes, expected in [({"fresh": False}, "unavailable"), ({"storm": None}, "storm_sensor_unavailable"),
+                                  ({"storm": True}, "storm_active"), ({"confidence": "learning"}, "learning"),
                                   ({"candidate": None}, "clear"), ({"stable": False}, "pending")]:
             self.assertEqual(gate(**{**defaults, **changes})[0], expected)
+
+    def test_storm_reason_exposes_entity_and_raw_state(self):
+        status, reason = gate(
+            fresh=True,
+            unstable=False,
+            confidence="high",
+            candidate=self.day,
+            stable=True,
+            storm=None,
+            storm_entity="binary_sensor.storm_watch",
+            storm_state="unknown",
+        )
+        self.assertEqual(status, "storm_sensor_unavailable")
+        self.assertIn("binary_sensor.storm_watch = unknown", reason)
+
+        status, reason = gate(
+            fresh=True,
+            unstable=False,
+            confidence="high",
+            candidate=self.day,
+            stable=True,
+            storm=True,
+            storm_entity="binary_sensor.storm_watch",
+            storm_state="on",
+        )
+        self.assertEqual(status, "storm_active")
+        self.assertIn("binary_sensor.storm_watch = on", reason)
 
     def test_legacy_actions_are_all_closed(self):
         data = {"headroom_release": True, "rolling_ev_auto_charge_eligible": True,

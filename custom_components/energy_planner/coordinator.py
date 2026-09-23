@@ -570,8 +570,22 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         solar_tomorrow = _num(self.hass, cfg.get(CONF_SOLAR_TOMORROW))
         upcoming = solar_today if now.hour < 12 else solar_tomorrow
         reserve = _num(self.hass, cfg.get(CONF_BACKUP_RESERVE))
-        storm_state = _is_on(self.hass, cfg.get(CONF_STORM_WARNING))
+        storm_entity = cfg.get(CONF_STORM_WARNING)
+        storm_sensor = self.hass.states.get(storm_entity) if storm_entity else None
+        storm_raw_state = (
+            str(storm_sensor.state)
+            if storm_sensor is not None
+            else ("not_configured" if not storm_entity else "missing")
+        )
+        storm_state = _is_on(self.hass, storm_entity)
         storm = bool(storm_state)
+        storm_safety_status = (
+            "active"
+            if storm_state is True
+            else "clear"
+            if storm_state is False
+            else "sensor_unavailable"
+        )
         configured_minimum_reserve = float(cfg.get(OPT_MIN_RESERVE, DEFAULT_MIN_RESERVE))
         effective_reserve = max(
             configured_minimum_reserve,
@@ -1087,6 +1101,9 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "reserve": reserve,
             "effective_reserve_floor": effective_reserve,
             "storm": storm_state,
+            "storm_safety_status": storm_safety_status,
+            "storm_warning_entity": storm_entity,
+            "storm_warning_state": storm_raw_state,
             "control_ready": ready,
             "headroom_release": release,
             "controller_model_source": controller.source,

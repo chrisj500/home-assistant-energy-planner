@@ -1,7 +1,7 @@
 """Exercise coordinator wiring with HA storage/services replaced by fakes."""
 import ast
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 import logging
 from pathlib import Path
 from types import SimpleNamespace
@@ -45,6 +45,10 @@ class HVACCoordinatorTests(unittest.TestCase):
         self.states["climate.thermostat"] = state("cool", current_temperature=72,
             temperature=72, current_humidity=60, hvac_action="idle")
         self.states["sensor.ecowitt_outdoor_temperature"] = state(80, unit_of_measurement="°F")
+        self.states["sensor.hvac_power"] = state(0, unit_of_measurement="W")
+        self.states["sensor.ecoflow_smart_home_panel_2_circuit_4_power"] = state(
+            10, unit_of_measurement="W"
+        )
         self.states["weather.forecast_home"] = state("sunny", humidity=65, temperature_unit="°F")
         self.states["binary_sensor.homepod_indoor_climate_stale_readings"] = state("off")
         for prefix in ns["ROOM_PREFIXES"]:
@@ -60,7 +64,6 @@ class HVACCoordinatorTests(unittest.TestCase):
         self.c._hvac_energy_store = SimpleNamespace(async_load=load, async_save=save)
         self.c.hass = SimpleNamespace(states=self.states, services=SimpleNamespace(async_call=call),
             config=SimpleNamespace(units=SimpleNamespace(temperature_unit="°F")))
-        self.c._fresh_power = lambda entity, now: 0 if entity == "sensor.hvac_power" else 10
 
     def test_live_mapping_and_weather_and_shadow_only(self):
         result = asyncio.run(self.c._async_update_data())
@@ -69,6 +72,51 @@ class HVACCoordinatorTests(unittest.TestCase):
         self.assertEqual(result["hvac_diagnostics"]["rooms"]["room_count"], 3)
         self.assertIsNone(result["hvac_diagnostics"]["hourly_shadow"][0]["expected_w"])
         self.assertEqual(result["effective_reserve_floor"], 10)
+
+    def test_unchanged_numeric_power_remains_valid(self):
+        for entity in (
+            "sensor.hvac_power",
+            "sensor.ecoflow_smart_home_panel_2_circuit_4_power",
+        ):
+            self.states[entity].last_reported = self.now - timedelta(hours=2)
+            self.states[entity].last_updated = self.now - timedelta(hours=2)
+        result = asyncio.run(self.c._async_update_data())
+        self.assertEqual(result["hvac_electrical_power_w"], 10)
+        self.assertTrue(result["hvac_power_sources"]["condenser"]["available"])
+        self.assertEqual(
+            result["hvac_power_sources"]["blower_controls"]["reason"],
+            "numeric_available",
+        )
+
+    def test_unavailable_power_is_not_integrated_as_zero(self):
+        self.states["sensor.hvac_power"].state = "unavailable"
+        result = asyncio.run(self.c._async_update_data())
+        self.assertIsNone(result["hvac_electrical_power_w"])
+        self.assertEqual(
+            result["hvac_power_sources"]["condenser"]["reason"],
+            "state_unavailable",
+        )
+
+    def test_legacy_homepod_prefixes_resolve_to_created_entities(self):
+        self.c.cfg["hvac_room_prefixes"] = ",".join(
+            (
+                "sensor.homepod_indoor_climate_living_room",
+                "sensor.home_homepod_indoor_climate_guest_bedroom",
+                "sensor.home_homepod_indoor_climate_main_bedroom_left",
+                "sensor.home_homepod_indoor_climate_main_bedroom_right",
+            )
+        )
+        result = asyncio.run(self.c._async_update_data())
+        self.assertEqual(
+            result["hvac_diagnostics"]["room_prefixes"],
+            [
+                "sensor.homepod_indoor_climate_living_room",
+                "sensor.homepod_indoor_climate_guest_bedroom",
+                "sensor.homepod_indoor_climate_main_bedroom_left",
+                "sensor.homepod_indoor_climate_main_bedroom_right",
+            ],
+        )
+        self.assertTrue(result["hvac_diagnostics"]["room_data_healthy"])
 
     def test_stale_room_blocks_existing_advice(self):
         self.states["binary_sensor.homepod_indoor_climate_stale_readings"].state = "on"

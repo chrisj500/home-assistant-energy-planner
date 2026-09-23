@@ -26,7 +26,9 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      - name: Run projection regression tests
+      - name: Install test dependencies
+        run: python -m pip install PyYAML
+      - name: Run regression tests
         run: python -m unittest discover -s tests -v
 
   validate-hassfest:
@@ -43,3 +45,106 @@ jobs:
         with:
           category: integration
           ignore: "topics brands license"
+
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Require an unpublished version for integration or dashboard changes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            compare_sha="$BASE_SHA"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            compare_sha="$BEFORE_SHA"
+          else
+            echo "Manual validation; no version comparison required."
+            exit 0
+          fi
+
+          if [ -z "$compare_sha" ] || [ "$compare_sha" = "0000000000000000000000000000000000000000" ]; then
+            echo "No comparable base SHA; skipping version gate."
+            exit 0
+          fi
+
+          if git diff --quiet "$compare_sha" "$GITHUB_SHA" --             custom_components/energy_planner             dashboards/energy-planning.yaml; then
+            echo "Published deliverables are unchanged; no version bump required."
+            exit 0
+          fi
+
+          version="$(python - <<'PY'
+          import json
+          from pathlib import Path
+
+          manifest = Path("custom_components/energy_planner/manifest.json")
+          print(json.loads(manifest.read_text())["version"])
+          PY
+          )"
+          tag="v$version"
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "::error::Energy Planner or its dashboard changed but $tag is already published. Bump manifest.json before merging."
+            exit 1
+          fi
+
+          echo "Published changes use unpublished version $tag."
+
+  release:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - public-repo-safety
+      - regression-tests
+      - validate-hassfest
+      - validate-hacs
+      - version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Publish current Energy Planner version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+
+          if [ -n "$BEFORE_SHA" ] && [ "$BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            if git diff --quiet "$BEFORE_SHA" "$GITHUB_SHA" --               custom_components/energy_planner               dashboards/energy-planning.yaml; then
+              echo "Published deliverables are unchanged; no release needed."
+              exit 0
+            fi
+          fi
+
+          version="$(python - <<'PY'
+          import json
+          from pathlib import Path
+
+          manifest = Path("custom_components/energy_planner/manifest.json")
+          print(json.loads(manifest.read_text())["version"])
+          PY
+          )"
+          tag="v$version"
+          notes="RELEASE_NOTES_$version.md"
+
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "$tag is already published."
+            exit 0
+          fi
+
+          if [ -f "$notes" ]; then
+            gh release create "$tag"               --repo "$GITHUB_REPOSITORY"               --target "$GITHUB_SHA"               --title "$tag"               --notes-file "$notes"               --latest
+          else
+            gh release create "$tag"               --repo "$GITHUB_REPOSITORY"               --target "$GITHUB_SHA"               --title "$tag"               --generate-notes               --latest
+          fi

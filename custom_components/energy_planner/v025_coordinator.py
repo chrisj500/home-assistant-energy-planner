@@ -18,7 +18,7 @@ from .coordinator import _controller_settings, _num, _solar_window
 from .enhanced_coordinator import _parse_weights
 from .forecast_solar_shadow import IntervalPoint, interval_points_from_payload
 from .headroom import correct_current_day_points
-from .reliability import evidence, gate, number, observe, suppress_actions
+from .reliability import MIN_EVIDENCE_SAMPLES, evidence, gate, number, observe, suppress_actions
 from .rolling_ev import DaylightWindow, simulate_rolling_days, choose_ev_charge_window
 from .v022_coordinator import EnergyPlannerV022Coordinator
 
@@ -94,8 +94,19 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         overnight = (self._calibration_data or {}).get("overnight_records", [])
         drops = [number(r.get("drop_rate_kw")) for r in overnight]
         drops = [v for v in drops if v is not None and v >= 0]
-        if len(drops) < 3:
-            for profile in profiles.values():
+        for profile in profiles.values():
+            learning_ready = (
+                profile["samples"] >= MIN_EVIDENCE_SAMPLES
+                and len(drops) >= MIN_EVIDENCE_SAMPLES
+            )
+            profile.update(
+                learning_ready=learning_ready,
+                sunset_samples=profile["samples"],
+                sunset_samples_required=MIN_EVIDENCE_SAMPLES,
+                overnight_samples=len(drops),
+                overnight_samples_required=MIN_EVIDENCE_SAMPLES,
+            )
+            if not learning_ready:
                 profile["confidence"] = "learning"
         # Stress assumptions are explicit engineering bounds, not learned HVAC.
         lower_points = [IntervalPoint(p.at, p.watts * .70) for p in points]
@@ -185,18 +196,46 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 revision=revision.isoformat() if revision else None,
                 rows=data["rolling_day_plans"], candidate=candidate)
             self._trust["revisions"] = history
-            status, reason = gate(fresh=fresh, unstable=unstable,
-                                  confidence=profile["confidence"], candidate=candidate,
-                                  stable=stable, storm=data.get("storm"))
+            status, reason = gate(
+                fresh=fresh,
+                unstable=unstable,
+                confidence=profile["confidence"],
+                candidate=candidate,
+                stable=stable,
+                storm=data.get("storm"),
+                storm_entity=data.get("storm_warning_entity"),
+                storm_state=data.get("storm_warning_state"),
+            )
+            if status == "learning":
+                reason = (
+                    "Forecast reliability is learning: "
+                    f"{profile['sunset_samples']}/{profile['sunset_samples_required']} "
+                    "scored sunset forecasts and "
+                    f"{profile['overnight_samples']}/{profile['overnight_samples_required']} "
+                    "overnight calibration records. Do not act yet."
+                )
             if unstable:
                 for row in data["rolling_day_plans"]:
                     row["historical_confidence"] = row["confidence"]
                     row["confidence"] = "low"
-            data.update(forecast_confidence="low" if unstable else profile["confidence"],
-                        forecast_error_samples=profile["samples"],
-                        forecast_historical_mae_soc=profile["mae_soc"],
-                        forecast_confirmation_count=count,
-                        forecast_revision_at=revision.isoformat() if revision else None)
+            data.update(
+                forecast_confidence="low" if unstable else profile["confidence"],
+                forecast_error_samples=profile["samples"],
+                forecast_historical_mae_soc=profile["mae_soc"],
+                forecast_confirmation_count=count,
+                forecast_revision_at=revision.isoformat() if revision else None,
+                forecast_learning_ready=profile["learning_ready"],
+                forecast_learning_sunset_samples=profile["sunset_samples"],
+                forecast_learning_sunset_required=profile["sunset_samples_required"],
+                forecast_learning_overnight_samples=profile["overnight_samples"],
+                forecast_learning_overnight_required=profile["overnight_samples_required"],
+                forecast_learning_progress=(
+                    f"{profile['sunset_samples']}/{profile['sunset_samples_required']} "
+                    "scored sunsets · "
+                    f"{profile['overnight_samples']}/{profile['overnight_samples_required']} "
+                    "overnight records"
+                ),
+            )
             # Always close old advice before selectively publishing verified advice.
             suppress_actions(data, status, reason)
             if status == "ready":
