@@ -4,7 +4,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "energy_planner"))
-from reliability import evidence, observe, gate, suppress_actions, number
+from reliability import evidence, observe, gate, suppress_actions, number, sunset_envelope
 
 
 class ReliabilityTests(unittest.TestCase):
@@ -73,6 +73,29 @@ class ReliabilityTests(unittest.TestCase):
         self.assertEqual(evidence(records, 4)["confidence"], "learning")
         self.assertIsNone(evidence([], 0)["mae_soc"])
         self.assertEqual(evidence([{"lead": 0, "error_soc": 30}] * 10, 0)["confidence"], "low")
+
+    def test_today_envelope_anchors_to_live_soc_and_converges(self):
+        sunrise = self.now.replace(hour=6)
+        sunset = self.now.replace(hour=18)
+        args = dict(sunrise=sunrise, sunset=sunset, target_date=self.now.date(),
+                    current_soc=24.25, point_soc=32.05, low_soc=29,
+                    high_soc=35, historical_width=10, reserve_floor=20)
+        morning = sunset_envelope(now=self.now, **args)
+        late = sunset_envelope(now=self.now.replace(hour=17), **args)
+        self.assertGreaterEqual(morning[0], 24.25)
+        self.assertGreater(late[0], morning[0])
+        self.assertLess(late[1], morning[1])
+        self.assertLess(late[2], morning[2])
+
+    def test_future_envelope_preserves_full_uncertainty_and_overnight_drop(self):
+        sunrise = self.now.replace(hour=6) + timedelta(days=1)
+        sunset = sunrise + timedelta(hours=12)
+        low, high, fraction = sunset_envelope(
+            now=self.now, sunrise=sunrise, sunset=sunset,
+            target_date=sunrise.date(), current_soc=80,
+            point_soc=50, low_soc=45, high_soc=55,
+            historical_width=13, reserve_floor=20)
+        self.assertEqual((low, high, fraction), (37, 63, 1.0))
 
     def test_fail_closed_conditions(self):
         defaults = dict(fresh=True, unstable=False, confidence="high", candidate=self.day, stable=True, storm=False)

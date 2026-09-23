@@ -31,6 +31,27 @@ def evidence(records, lead):
             "confidence": confidence}
 
 
+def sunset_envelope(*, now, sunrise, sunset, target_date, current_soc,
+                    point_soc, low_soc, high_soc, historical_width, reserve_floor):
+    """Bound remaining uncertainty; daylight simulation never discharges batteries.
+
+    Historical sunset errors cover a full day. Only the unobserved share of
+    today's daylight contributes to the current-day historical error allowance.
+    Future days retain their full horizon-specific allowance.
+    """
+    remaining_fraction = 1.0
+    daylight = (sunset - sunrise).total_seconds()
+    if target_date == now.date() and daylight > 0:
+        remaining_fraction = min(max((sunset - now).total_seconds() / daylight, 0.0), 1.0)
+    width = historical_width * remaining_fraction
+    floor = max(0.0, min(float(reserve_floor), 100.0))
+    if target_date == now.date() and sunrise <= now < sunset:
+        floor = max(floor, float(current_soc))
+    lower = max(floor, min(float(low_soc), float(point_soc) - width))
+    upper = max(lower, min(100.0, max(float(high_soc), float(point_soc) + width)))
+    return round(lower, 1), round(upper, 1), round(remaining_fraction, 3)
+
+
 def observe(history, *, now, revision, rows, candidate):
     """Count successful provider refreshes, never minute-by-minute cache reads.
 

@@ -20,7 +20,7 @@ from forecast_solar_shadow import IntervalPoint, interval_points_from_payload
 from headroom import correct_current_day_points
 from rolling_ev import DaylightWindow, simulate_rolling_days, choose_ev_charge_window
 from simulation import ControllerSettings
-from reliability import MIN_EVIDENCE_SAMPLES, evidence, gate, number, observe, suppress_actions
+from reliability import MIN_EVIDENCE_SAMPLES, evidence, gate, number, observe, suppress_actions, sunset_envelope
 
 
 class Parent:
@@ -95,6 +95,16 @@ class CoordinatorTests(unittest.TestCase):
         self.assertGreaterEqual(row["sunset_soc_low_pct"], 25)
         self.assertGreaterEqual(row["sunset_soc_high_pct"], 25)
         self.assertEqual(row["range_assumption"], "grid_connected_reserve_enforced")
+
+    def test_afternoon_range_uses_current_soc_and_remaining_daylight(self):
+        afternoon = self.now.replace(hour=15)
+        for key in ("s1", "s2", "s3"):
+            self.states[key].state = "24.25"
+        self.data["rolling_day_plans"][0]["sunset_soc_pct"] = 32.05
+        self.c._scenarios(self.data, afternoon)
+        row = self.data["rolling_day_plans"][0]
+        self.assertGreaterEqual(row["sunset_soc_low_pct"], 24.25)
+        self.assertEqual(row["range_remaining_daylight_fraction"], 0.25)
 
     def test_low_solar_does_not_justify_headroom(self):
         self.states["remaining"].state = "1"

@@ -116,6 +116,24 @@ class HVACCoordinatorTests(unittest.TestCase):
             "numeric_available",
         )
 
+    def test_unchanged_thermostat_and_outdoor_readings_remain_valid(self):
+        for entity in ("climate.thermostat", "sensor.ecowitt_outdoor_temperature"):
+            self.states[entity].last_reported -= timedelta(hours=2)
+            self.states[entity].last_updated -= timedelta(hours=2)
+        result = asyncio.run(self.c._async_update_data())
+        self.assertEqual(result["hvac_status"], "learning")
+        details = result["hvac_diagnostics"]["input_states"]["hvac_thermostat"]
+        self.assertEqual(details["raw_state"], "cool")
+        self.assertEqual(details["report_age_minutes"], 120)
+        self.assertTrue(details["available"])
+
+    def test_unknown_thermostat_still_blocks_hvac_advice(self):
+        self.states["climate.thermostat"].state = "unavailable"
+        result = asyncio.run(self.c._async_update_data())
+        self.assertEqual(result["hvac_status"], "unavailable")
+        self.assertEqual(result["forecast_reliability_status"], "hvac_hold")
+        self.assertFalse(result["hvac_diagnostics"]["input_states"]["hvac_thermostat"]["available"])
+
     def test_unavailable_power_is_not_integrated_as_zero(self):
         self.states["sensor.hvac_power"].state = "unavailable"
         result = asyncio.run(self.c._async_update_data())

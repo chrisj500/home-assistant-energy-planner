@@ -11,6 +11,10 @@ from homeassistant.core import HomeAssistant, State
 from .const import CONF_FORECAST_SOLAR_API_KEY
 
 TO_REDACT = {CONF_FORECAST_SOLAR_API_KEY}
+HVAC_ENTITY_KEYS = {
+    "hvac_thermostat", "hvac_condenser", "hvac_blower",
+    "hvac_outdoor_temperature", "hvac_weather", "hvac_stale",
+}
 
 
 def _state_payload(state: State | None) -> dict[str, Any]:
@@ -43,6 +47,7 @@ def _configured_entity_ids(entry: ConfigEntry) -> dict[str, str]:
             key.startswith("soc_entity_")
             or key.endswith("_entity")
             or key.startswith("battery_power_entity_")
+            or key in HVAC_ENTITY_KEYS
         ):
             entities[key] = value
     return entities

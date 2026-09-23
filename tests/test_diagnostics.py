@@ -22,6 +22,7 @@ class DiagnosticsTests(unittest.TestCase):
         self.assertIn('"forecast_interval_origin"', raw)
         self.assertIn('"hvac_persistence"', raw)
         self.assertIn('"hvac_memory_counts"', raw)
+        self.assertIn('"hvac_thermostat"', raw)
 
 
 if __name__ == "__main__":
