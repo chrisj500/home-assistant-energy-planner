@@ -34,6 +34,13 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
         super().__init__(hass, entry)
         self._hvac_store = Store(hass, 1, f"energy_planner.{entry.entry_id}.hvac")
         self._hvac_memory = None
+        self._hvac_persistence = {
+            "status": "not_loaded",
+            "restored_samples": 0,
+            "restored_recovery_cycles": 0,
+            "restored_thermal_samples": 0,
+            "reset_reason": None,
+        }
         self._hvac_energy_store = Store(
             hass, 1, f"energy_planner.{entry.entry_id}.hvac_energy"
         )
@@ -80,6 +87,102 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
             best = max(candidates, key=score)
             prefixes.append(best if score(best) > 0 else prefix)
         return tuple(prefixes)
+
+    @staticmethod
+    def _canonical_room_prefix(prefix):
+        """Treat legacy/current HomePod entity prefixes as one logical source."""
+        prefix = str(prefix or "").strip()
+        if prefix.startswith(_LEGACY_HOMEPOD_PREFIX):
+            return prefix.replace(
+                _LEGACY_HOMEPOD_PREFIX,
+                _CANONICAL_HOMEPOD_PREFIX,
+                1,
+            )
+        return prefix
+
+    def _model_identity(self, prefixes):
+        """Return a stable identity for data that materially affects learning."""
+        identity = {k: self._entity(k) for k in DEFAULT_ENTITIES}
+        identity["room_prefixes"] = ",".join(
+            self._canonical_room_prefix(prefix) for prefix in prefixes
+        )
+        return identity
+
+    def _normalize_stored_identity(self, identity):
+        """Normalize historical identity records before comparing them."""
+        if not isinstance(identity, dict):
+            return None
+        normalized = dict(identity)
+        raw = normalized.get("room_prefixes", "")
+        values = raw if isinstance(raw, (list, tuple)) else str(raw).split(",")
+        normalized["room_prefixes"] = ",".join(
+            self._canonical_room_prefix(value)
+            for value in values
+            if str(value).strip()
+        )
+        return normalized
+
+    @staticmethod
+    def _clear_restart_continuity(memory):
+        """Discard only state that falsely implies continuity across a reboot."""
+        for key in (
+            "previous",
+            "call",
+            "missing_since",
+            "recovery_call",
+            "thermal_window",
+        ):
+            memory.pop(key, None)
+
+    def _restore_hvac_memory(self, loaded, identity):
+        """Restore learned history without alias-only startup resets."""
+        memory = loaded if isinstance(loaded, dict) else {}
+        stored_identity = self._normalize_stored_identity(
+            memory.get("entity_mapping")
+        )
+        current_identity = self._normalize_stored_identity(identity)
+
+        restored = {
+            "samples": len(memory.get("samples", [])),
+            "recovery_cycles": len(memory.get("recovery_cycles", [])),
+            "thermal_samples": len(memory.get("thermal_samples", [])),
+        }
+
+        # Older stores may not have an identity marker. Adopt the current
+        # identity rather than destroying otherwise valid learned history.
+        if stored_identity is None:
+            memory["entity_mapping"] = identity
+            status = "restored_identity_adopted"
+            reset_reason = None
+        elif stored_identity == current_identity:
+            # Write back the normalized identity so legacy/canonical HomePod
+            # aliases converge permanently after this successful load.
+            memory["entity_mapping"] = identity
+            status = "restored"
+            reset_reason = None
+        else:
+            # A real source mapping change can make historical power/temperature
+            # relationships incompatible. Reset only for this material change.
+            memory = {"entity_mapping": identity}
+            status = "reset_mapping_changed"
+            reset_reason = {
+                "stored": stored_identity,
+                "current": current_identity,
+            }
+
+        self._clear_restart_continuity(memory)
+        self._hvac_persistence = {
+            "status": status,
+            "restored_samples": restored["samples"] if reset_reason is None else 0,
+            "restored_recovery_cycles": (
+                restored["recovery_cycles"] if reset_reason is None else 0
+            ),
+            "restored_thermal_samples": (
+                restored["thermal_samples"] if reset_reason is None else 0
+            ),
+            "reset_reason": reset_reason,
+        }
+        return memory
 
     def _fresh_state(self, entity, now, *, room=False):
         state = self.hass.states.get(entity)
@@ -251,17 +354,39 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
             return data
 
         try:
-            if self._hvac_memory is None:
-                self._hvac_memory = await self._hvac_store.async_load() or {}
-                # A restart is a gap, never evidence of continuous unmet demand.
-                self._hvac_memory.pop("previous", None)
-
             prefixes = self._room_prefixes()
-            identity = {k: self._entity(k) for k in DEFAULT_ENTITIES}
-            identity["room_prefixes"] = ",".join(prefixes)
-            if self._hvac_memory.get("entity_mapping") != identity:
-                self._hvac_memory = {"entity_mapping": identity}
+            identity = self._model_identity(prefixes)
+
+            if self._hvac_memory is None:
+                loaded = await self._hvac_store.async_load() or {}
+                self._hvac_memory = self._restore_hvac_memory(loaded, identity)
                 self._weather_at = None
+            elif (
+                self._normalize_stored_identity(
+                    self._hvac_memory.get("entity_mapping")
+                )
+                != self._normalize_stored_identity(identity)
+            ):
+                # Runtime option changes are different from alias-only startup
+                # resolution. Reset learned relationships only when the actual
+                # configured source mapping materially changes.
+                previous_identity = self._normalize_stored_identity(
+                    self._hvac_memory.get("entity_mapping")
+                )
+                self._hvac_memory = {"entity_mapping": identity}
+                self._hvac_persistence = {
+                    "status": "reset_mapping_changed",
+                    "restored_samples": 0,
+                    "restored_recovery_cycles": 0,
+                    "restored_thermal_samples": 0,
+                    "reset_reason": {
+                        "stored": previous_identity,
+                        "current": self._normalize_stored_identity(identity),
+                    },
+                }
+                self._weather_at = None
+            else:
+                self._hvac_memory["entity_mapping"] = identity
 
             thermostat = self._fresh_state(self._entity("hvac_thermostat"), now)
             attrs = thermostat.attributes if thermostat else {}
@@ -376,6 +501,7 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                 entities={k: self._entity(k) for k in DEFAULT_ENTITIES},
                 power_sources=power_sources,
                 power_mapping_valid=power_mapping_valid,
+                persistence=dict(getattr(self, "_hvac_persistence", {})),
             )
             if not room_health:
                 diagnostics.update(
