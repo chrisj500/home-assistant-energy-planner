@@ -1,5 +1,18 @@
 # Home Assistant Energy Planner
 
+## v0.1.38 compact overview and diagnostics
+
+Dashboard v19 keeps Thermostat, Battery Bank, four-day Battery Outlook, and
+What To Do in a compact four-column operating view designed to fit a normal
+desktop/tablet viewport. Detailed forecast, battery-model, HVAC, and
+Forecast.Solar troubleshooting information now lives on a separate Diagnostics
+view.
+
+The integration also implements Home Assistant's standard **Download
+diagnostics** support with secret redaction, configured-entity raw states,
+planner outputs, Forecast.Solar cache status, and HVAC persistence counters.
+See [release notes](RELEASE_NOTES_0.1.38.md).
+
 ## v0.1.37 HVAC persistence fix
 
 The HVAC learner now preserves its stored baseline samples, completed recovery

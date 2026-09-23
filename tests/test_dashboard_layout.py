@@ -1,4 +1,4 @@
-"""Validate Energy Planning dashboard layout and reliability presentation."""
+"""Validate compact Energy Planning overview and diagnostics layout."""
 from pathlib import Path
 import json
 import shutil
@@ -12,7 +12,9 @@ class DashboardLayoutTests(unittest.TestCase):
         path = Path(__file__).resolve().parents[1] / "dashboards/energy-planning.yaml"
         self.raw = path.read_text()
         self.dashboard = yaml.safe_load(self.raw)
-        self.sections = self.dashboard["views"][0]["sections"]
+        self.overview = self.dashboard["views"][0]
+        self.diagnostics = self.dashboard["views"][1]
+        self.sections = self.overview["sections"]
 
     @staticmethod
     def _heading(section):
@@ -21,35 +23,65 @@ class DashboardLayoutTests(unittest.TestCase):
                 return card.get("heading")
         return None
 
-    def test_battery_bank_is_first_content_card_and_solar_outlook_follows(self):
-        headroom = next(
-            section for section in self.sections
-            if self._heading(section) == "Headroom Decision"
-        )
-        cards = headroom["cards"]
-        self.assertEqual(cards[0]["heading"], "Headroom Decision")
+    def test_overview_is_four_compact_operating_columns(self):
+        self.assertEqual(self.overview["title"], "Energy Planning")
+        headings = [self._heading(section) for section in self.sections]
         self.assertEqual(
-            cards[1].get("entity"),
+            headings,
+            [
+                "HVAC Overview",
+                "Headroom Decision",
+                "Battery Outlook — Next 4 Days",
+                "What To Do",
+            ],
+        )
+        self.assertTrue(self.overview.get("dense_section_placement"))
+        self.assertTrue(all(len(section.get("cards", [])) <= 3 for section in self.sections))
+
+    def test_top_operating_cards_are_thermostat_battery_and_outlook(self):
+        hvac = self.sections[0]["cards"]
+        headroom = self.sections[1]["cards"]
+        outlook = self.sections[2]["cards"]
+        self.assertEqual(hvac[1].get("entity"), "climate.thermostat")
+        self.assertEqual(
+            headroom[1].get("entity"),
             "sensor.ecoflow_smart_home_panel_2_backup_battery",
         )
-        solar_index = next(
-            i for i, card in enumerate(cards)
-            if card.get("type") == "heading"
-            and card.get("heading") == "Solar & Battery Outlook"
+        self.assertEqual(
+            outlook[1].get("entity"),
+            "binary_sensor.energy_planner_dynamic_load_forecast",
         )
-        reliability_index = next(
-            i for i, card in enumerate(cards)
-            if card.get("type") == "entities"
-            and card.get("title") == "Forecast reliability"
+        self.assertIn("Solar & Battery Outlook", headroom[2].get("content", ""))
+
+    def test_detailed_diagnostics_are_off_the_operating_view(self):
+        self.assertEqual(self.diagnostics["title"], "Diagnostics")
+        headings = [
+            self._heading(section) for section in self.diagnostics["sections"]
+        ]
+        self.assertEqual(
+            headings,
+            ["Planner Health", "HVAC Diagnostics", "Forecast Quality", "Tools"],
         )
-        self.assertEqual(solar_index, 2)
-        self.assertGreater(reliability_index, solar_index)
-        self.assertFalse(
-            any(
-                self._heading(section) == "Solar & Battery Outlook"
-                for section in self.sections
-            )
+        overview_raw = yaml.safe_dump(self.overview)
+        diagnostics_cards = [
+            card
+            for section in self.diagnostics["sections"]
+            for card in section.get("cards", [])
+        ]
+        diagnostics_text = "\n".join(
+            str(card.get("title", ""))
+            + "\n"
+            + str(card.get("name", ""))
+            + "\n"
+            + str(card.get("content", ""))
+            for card in diagnostics_cards
         )
+        self.assertNotIn("Forecast reliability", overview_raw)
+        self.assertNotIn("Energy History Export", overview_raw)
+        self.assertIn("Forecast reliability", diagnostics_text)
+        self.assertIn("Energy History Export", diagnostics_text)
+        self.assertIn("Battery model", diagnostics_text)
+        self.assertIn("Learning persistence", diagnostics_text)
 
     @unittest.skipUnless(shutil.which("node"), "Node required for Lovelace JS validation")
     def test_battery_outlook_hides_global_learning_status_from_each_day(self):
@@ -115,27 +147,15 @@ class DashboardLayoutTests(unittest.TestCase):
         '''
         subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
 
-    def test_learning_has_no_false_no_action_verdict(self):
-        self.assertIn("FORECAST LEARNING — NO RECOMMENDATION YET", self.raw)
-        learning_pos = self.raw.index("FORECAST LEARNING — NO RECOMMENDATION YET")
-        no_action_pos = self.raw.index("NO EV ACTION REQUIRED", learning_pos)
-        self.assertLess(learning_pos, no_action_pos)
-
-    def test_forecast_guard_is_concise(self):
-        headroom = next(
+    def test_learning_withholds_recommendation(self):
+        what = next(
             section for section in self.sections
-            if self._heading(section) == "Headroom Decision"
+            if self._heading(section) == "What To Do"
         )
-        guard = next(
-            card for card in headroom["cards"]
-            if card.get("type") == "markdown"
-            and "Forecast guard" in card.get("content", "")
-        )
-        content = guard["content"]
-        self.assertIn("Still needed:", content)
-        self.assertIn("Storm protection:", content)
-        self.assertNotIn("storm_warning_entity", content)
-        self.assertNotIn("storm_raw", content)
+        content = what["cards"][1]["content"]
+        self.assertIn("FORECAST LEARNING", content)
+        self.assertIn("No recommendation yet", content)
+        self.assertIn("NO EV ACTION REQUIRED", content)
 
 
 if __name__ == "__main__":

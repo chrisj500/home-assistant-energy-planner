@@ -118,8 +118,8 @@ class HVACDashboardTests(unittest.TestCase):
         if (!fallback.includes('House average') || !fallback.includes('72.7°F') || !fallback.includes('49.3% RH')) {
           throw Error('House physical-room average');
         }
-        if (!fallback.includes('12/36 clean five-minute samples') || !fallback.includes('1/3 days')) {
-          throw Error('Learning progress');
+        if (!fallback.includes('12/36 samples') || !fallback.includes('1/3 days') || !fallback.includes('33% ready')) {
+          throw Error('Compact learning progress');
         }
         if (!fallback.includes('10 W') || !fallback.includes('1.20 kWh')) {
           throw Error('Electricity');
@@ -138,11 +138,11 @@ class HVACDashboardTests(unittest.TestCase):
         if (!(contextPos > fallback.indexOf('THERMOSTAT') && contextPos < roomPos)) {
           throw Error('Outdoor context is not between thermostat and room grid');
         }
-        if (!fallback.includes('Recovery ETA 18 min') || !fallback.includes('1.8°F/h')) {
-          throw Error('Recovery estimate');
+        if (!fallback.includes('Recovery ETA 18 min')) {
+          throw Error('Compact recovery estimate');
         }
-        if (!fallback.includes('Passive thermal drift -0.9°F/h') || !fallback.includes('τ 18.5 h')) {
-          throw Error('Thermal drift estimate');
+        if (fallback.includes('Passive thermal drift')) {
+          throw Error('Detailed thermal diagnostics leaked onto compact overview');
         }
 
         for (const [action,label] of [
