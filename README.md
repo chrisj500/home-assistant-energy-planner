@@ -1,5 +1,20 @@
 # Home Assistant Energy Planner
 
+## v0.1.31 HVAC room layout refinement
+
+Dashboard v14 restores the circular thermostat face and arranges indoor climate
+by physical room: Main Bedroom (Left/Right HomePod average) and Guest Bedroom on
+the first row, Living Room and an equal-weight House Average on the second.
+Temperature and humidity are shown together, and the house average counts the
+Main Bedroom only once.
+
+The dashboard and HVAC learner now resolve both current and persisted HomePod
+entity-ID forms rather than assuming Home Assistant renamed existing entities.
+Climate entities that provide a mode but omit `hvac_action` now show the mode
+instead of being labeled unavailable. Global storm protection is no longer
+repeated beneath every Battery Outlook date. See
+[release notes](RELEASE_NOTES_0.1.31.md).
+
 ## v0.1.30 HVAC dashboard and observability
 
 Dashboard v13 fixes the HomePod room entity mappings, gives the HVAC learner an
