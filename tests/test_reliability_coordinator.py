@@ -20,7 +20,7 @@ from forecast_solar_shadow import IntervalPoint, interval_points_from_payload
 from headroom import correct_current_day_points
 from rolling_ev import DaylightWindow, simulate_rolling_days, choose_ev_charge_window
 from simulation import ControllerSettings
-from reliability import evidence, gate, number, observe, suppress_actions
+from reliability import MIN_EVIDENCE_SAMPLES, evidence, gate, number, observe, suppress_actions
 
 
 class Parent:
@@ -161,6 +161,17 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(result["rolling_dynamic_load_days_count"], 1)
         self.assertFalse(result["rolling_ev_auto_charge_eligible"])
         self.assertFalse(result["headroom_release"])
+
+    def test_learning_progress_reports_both_required_evidence_sets(self):
+        self.c._trust["records"] = [{"lead": 0, "error_soc": 1}] * 2
+        self.c.baseline = deepcopy(self.data)
+        result = asyncio.run(self.c._async_update_data())
+        self.assertFalse(result["forecast_learning_ready"])
+        self.assertEqual(result["forecast_learning_sunset_samples"], 2)
+        self.assertEqual(result["forecast_learning_sunset_required"], 3)
+        self.assertEqual(result["forecast_learning_overnight_samples"], 3)
+        self.assertEqual(result["forecast_learning_overnight_required"], 3)
+        self.assertIn("2/3 scored sunsets", result["forecast_learning_progress"])
 
     def test_missing_overnight_evidence_keeps_confidence_learning(self):
         self.c._trust["records"] = [{"lead": 0, "error_soc": 1}] * 10
