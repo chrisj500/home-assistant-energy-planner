@@ -77,6 +77,7 @@ def _percent(key: str, data_key: str, name: str):
 
 
 SENSORS = (
+    EnergyPlannerSensorDescription(key="hvac_daily_electricity", data_key="hvac_daily_electricity_kwh", name="HVAC Daily Electricity", native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, device_class=SensorDeviceClass.ENERGY, state_class=SensorStateClass.TOTAL_INCREASING),
     EnergyPlannerSensorDescription(key="hvac_status", data_key="hvac_status", name="HVAC Model Status"),
     EnergyPlannerSensorDescription(key="hvac_electrical_power", data_key="hvac_electrical_power_w", name="HVAC Electrical Power", native_unit_of_measurement=UnitOfPower.WATT, device_class=SensorDeviceClass.POWER, state_class=SensorStateClass.MEASUREMENT),
     EnergyPlannerSensorDescription(key="forecast_confidence", data_key="forecast_confidence", name="Forecast Confidence"),
@@ -731,6 +732,8 @@ class EnergyPlannerSensor(CoordinatorEntity[EnergyPlannerCoordinator], SensorEnt
 
     @property
     def extra_state_attributes(self):
+        if self.entity_description.key == "hvac_daily_electricity":
+            return (self.coordinator.data or {}).get("hvac_energy_coverage", {})
         if self.entity_description.key == "hvac_status":
             return (self.coordinator.data or {}).get("hvac_diagnostics", {})
         if self.entity_description.key not in {"forecast_confidence", "forecast_reliability_status"}:

@@ -11,6 +11,7 @@ import sys
 ROOT = Path(__file__).resolve().parents[1] / "custom_components" / "energy_planner"
 sys.path.insert(0, str(ROOT))
 from hvac import celsius, hourly_forecast, number, observe, room_summary
+from hvac_energy import update_energy
 from reliability import suppress_actions
 
 
@@ -33,6 +34,7 @@ class HVACCoordinatorTests(unittest.TestCase):
         self.c = cls.__new__(cls)
         self.c.cfg = {"hvac_learning_enabled": True}
         self.c._hvac_memory = None
+        self.c._hvac_energy = None
         self.c._weather_at = None
         self.c._weather_hours = []
         self.c._surplus_since = self.now
@@ -55,6 +57,7 @@ class HVACCoordinatorTests(unittest.TestCase):
         async def call(*args, **kwargs):
             return {"weather.forecast_home": {"forecast": [{"datetime": self.now.isoformat(), "temperature": 80, "humidity": 65}]}}
         self.c._hvac_store = SimpleNamespace(async_load=load, async_save=save)
+        self.c._hvac_energy_store = SimpleNamespace(async_load=load, async_save=save)
         self.c.hass = SimpleNamespace(states=self.states, services=SimpleNamespace(async_call=call),
             config=SimpleNamespace(units=SimpleNamespace(temperature_unit="°F")))
         self.c._fresh_power = lambda entity, now: 0 if entity == "sensor.hvac_power" else 10
@@ -78,4 +81,6 @@ class HVACCoordinatorTests(unittest.TestCase):
         self.c.cfg["hvac_learning_enabled"] = False
         result = asyncio.run(self.c._async_update_data())
         self.assertEqual(result["hvac_status"], "disabled")
+        self.assertEqual(result["hvac_electrical_power_w"], 10)
+        self.assertEqual(result["hvac_daily_electricity_kwh"], 0)
         self.assertTrue(result["rolling_ev_auto_charge_eligible"])

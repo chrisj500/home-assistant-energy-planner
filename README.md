@@ -193,3 +193,6 @@ Priority is deliberately conservative:
 7. Treat paid Forecast.Solar data as optional advisory evidence
 
 If required baseline planning inputs are unavailable, the baseline strategy reports `INSUFFICIENT_DATA`. Optional Forecast.Solar or rolling-EV failures alone do not make baseline planning insufficient.
+# HVAC overview (v0.1.29)
+
+The v12 example dashboard includes a thermostat dial, reported HVAC action, room temperatures, combined condenser/blower power, and measured-power-derived daily electricity with coverage. Update `dashboards/energy-planning.yaml` separately from the HACS integration; existing dashboards are not automatically replaced. See [installation and measurement details](RELEASE_NOTES_0.1.29.md).

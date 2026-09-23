@@ -5,6 +5,7 @@ from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from .hvac import celsius, hourly_forecast, number, observe, room_summary
+from .hvac_energy import update_energy
 from .reliability import suppress_actions
 from .v025_coordinator import EnergyPlannerV025Coordinator
 
@@ -31,6 +32,8 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
         super().__init__(hass, entry)
         self._hvac_store = Store(hass, 1, f"energy_planner.{entry.entry_id}.hvac")
         self._hvac_memory = None
+        self._hvac_energy_store = Store(hass, 1, f"energy_planner.{entry.entry_id}.hvac_energy")
+        self._hvac_energy = None
         self._weather_hours = []
         self._weather_at = None
 
@@ -75,10 +78,27 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
 
     async def _async_update_data(self):
         data = await super()._async_update_data()
+        now = dt_util.now()
+        try:
+            if self._hvac_energy is None:
+                self._hvac_energy = await self._hvac_energy_store.async_load() or {}
+                self._hvac_energy.pop("previous", None)
+            mapping = [self._entity("hvac_condenser"), self._entity("hvac_blower")]
+            if self._hvac_energy.get("mapping") != mapping:
+                self._hvac_energy = {}
+            powers = [self._fresh_power(entity, now) for entity in mapping]
+            power = sum(powers) if len(set(mapping)) == 2 and all(p is not None and p >= 0 for p in powers) else None
+            coverage = update_energy(self._hvac_energy, now, power)
+            self._hvac_energy["mapping"] = mapping
+            data.update(hvac_electrical_power_w=power, hvac_daily_electricity_kwh=self._hvac_energy["kwh"],
+                        hvac_energy_coverage=coverage)
+            await self._hvac_energy_store.async_save(self._hvac_energy)
+        except Exception:
+            _LOGGER.exception("HVAC electricity tracking unavailable")
+            data.update(hvac_electrical_power_w=None, hvac_daily_electricity_kwh=None)
         if not self.cfg.get("hvac_learning_enabled", False):
             data.update(hvac_status="disabled", hvac_diagnostics={"mode": "disabled"})
             return data
-        now = dt_util.now()
         try:
             if self._hvac_memory is None:
                 self._hvac_memory = await self._hvac_store.async_load() or {}
@@ -129,8 +149,7 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                 weather_available=bool(hours), entities={k: self._entity(k) for k in DEFAULT_ENTITIES})
             if not room_health:
                 diagnostics.update(status="unavailable", reason="Indoor room data missing or stale")
-            data.update(hvac_status=diagnostics["status"], hvac_diagnostics=diagnostics,
-                        hvac_electrical_power_w=diagnostics.get("electrical_power_w"))
+            data.update(hvac_status=diagnostics["status"], hvac_diagnostics=diagnostics)
             await self._hvac_store.async_save(self._hvac_memory)
             if diagnostics["status"] in ("suspected_fault", "unavailable"):
                 reason = diagnostics["reason"] + "—do not act on discretionary forecast advice."

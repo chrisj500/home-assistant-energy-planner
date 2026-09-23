@@ -1,6 +1,6 @@
-# Energy Planning dashboard v11
+# Energy Planning dashboard v12
 #
-# Action-first Lovelace dashboard for Energy Planner v0.1.27.
+# Action-first Lovelace dashboard for Energy Planner v0.1.29.
 # Requires custom:button-card for the Headroom Decision, Battery Bank,
 # and four-day Battery Outlook cards.
 #
@@ -19,6 +19,86 @@ views:
     max_columns: 4
 
     sections:
+
+      - type: grid
+        cards:
+          - type: heading
+            heading: HVAC Overview
+            icon: mdi:thermostat
+          - type: custom:button-card
+            entity: climate.thermostat
+            triggers_update: all
+            show_name: false
+            show_icon: false
+            tap_action:
+              action: more-info
+            styles:
+              card:
+                - padding: 22px
+                - border-radius: 28px
+              grid:
+                - grid-template-areas: '"content"'
+                - grid-template-columns: 1fr
+              custom_fields:
+                content:
+                  - white-space: normal
+                  - text-align: center
+                  - min-width: 0
+            custom_fields:
+              content: |
+                [[[
+                  const esc = x => String(x ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+                  const num = x => x !== null && x !== undefined && x !== '' && Number.isFinite(Number(x)) ? Number(x) : null;
+                  const t = states['climate.thermostat'];
+                  const a = t?.attributes || {};
+                  const valid = t && !['unknown','unavailable'].includes(t.state);
+                  const action = valid ? (a.hvac_action || 'unknown') : 'unavailable';
+                  const modes = {
+                    cooling: ['Cooling','mdi:snowflake','#64c7ff'],
+                    heating: ['Heating','mdi:fire','#ffac66'],
+                    fan: ['Fan only','mdi:fan','#7bddbf'],
+                    idle: ['Idle','mdi:pause-circle-outline','#c5cbd5'],
+                    off: ['Off','mdi:power','#c5cbd5'],
+                    drying: ['Drying','mdi:water-percent','#aab2ff'],
+                    defrosting: ['Defrosting','mdi:snowflake-melt','#aab2ff']
+                  };
+                  const [label, icon, color] = modes[action] || ['State unavailable','mdi:help-circle-outline','#c5cbd5'];
+                  const unit = a.temperature_unit || hass.config.unit_system.temperature;
+                  const current = valid ? num(a.current_temperature) : null;
+                  const target = num(a.temperature);
+                  const fmt = x => x === null ? '—' : x.toFixed(1);
+                  const setpoint = target !== null ? `${fmt(target)}${esc(unit)}` :
+                    (num(a.target_temp_low) !== null && num(a.target_temp_high) !== null ? `${fmt(num(a.target_temp_low))}–${fmt(num(a.target_temp_high))}${esc(unit)}` : '—');
+                  const rooms = [
+                    ['Living room','sensor.homepod_indoor_climate_living_room_temperature'],
+                    ['Guest bedroom','sensor.home_homepod_indoor_climate_guest_bedroom_temperature'],
+                    ['Main bedroom · left','sensor.home_homepod_indoor_climate_main_bedroom_left_temperature'],
+                    ['Main bedroom · right','sensor.home_homepod_indoor_climate_main_bedroom_right_temperature']
+                  ].map(([name,id]) => {
+                    const s = states[id];
+                    const age = s ? (Date.now() - Date.parse(s.attributes.last_received)) / 60000 : NaN;
+                    const fresh = s?.attributes.fresh === true && age >= 0 && age <= 15;
+                    const v = fresh ? num(s.state) : null;
+                    return `<div style="padding:12px 6px;background:var(--secondary-background-color);border-radius:14px"><div style="font-size:12px;line-height:1.4">${name}</div><div style="font-size:23px;font-weight:600;margin-top:5px">${fmt(v)}${v === null ? '' : esc(s.attributes.unit_of_measurement)}</div>${v === null ? '<div style="font-size:12px">Missing or stale</div>' : ''}</div>`;
+                  }).join('');
+                  const p = num(states['sensor.energy_planner_hvac_electrical_power']?.state);
+                  const e = states['sensor.energy_planner_hvac_daily_electricity'];
+                  const kwh = num(e?.state);
+                  const coverage = num(e?.attributes.coverage_percent);
+                  const energyLabel = kwh === null ? 'Unavailable' : `${kwh.toFixed(2)} kWh`;
+                  const powerLabel = p === null ? 'Unavailable' : p >= 1000 ? `${(p/1000).toFixed(2)} kW` : `${Math.round(p)} W`;
+                  return `<div style="color:var(--primary-text-color);font-family:inherit">
+                    <div style="display:flex;align-items:center;justify-content:center;gap:8px;color:${color};font-size:20px;font-weight:600"><ha-icon icon="${icon}" style="width:26px"></ha-icon>${label}</div>
+                    <div style="font-size:12px;margin-top:6px">Thermostat-reported state · Mode: ${esc(valid ? t.state : 'unknown')}</div>
+                    <div style="position:relative;width:min(100%,250px);aspect-ratio:1;margin:18px auto">
+                      <svg viewBox="0 0 240 240" style="width:100%;height:100%" aria-hidden="true"><circle cx="120" cy="120" r="105" fill="none" stroke="var(--divider-color)" stroke-width="12"/><circle cx="120" cy="120" r="105" fill="none" stroke="${color}" stroke-width="12" stroke-linecap="round" stroke-dasharray="495 660" transform="rotate(135 120 120)"/><circle cx="120" cy="120" r="89" fill="none" stroke="var(--divider-color)" stroke-width="1"/></svg>
+                      <div style="position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:center"><div style="font-size:12px;letter-spacing:1px">THERMOSTAT</div><div style="font-size:46px;font-weight:650;margin:6px 0">${fmt(current)}<span style="font-size:19px">${esc(unit)}</span></div><div style="font-size:15px">Target ${setpoint}</div><div style="font-size:13px;margin-top:8px">Humidity ${fmt(num(a.current_humidity))}%</div></div>
+                    </div>
+                    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px">${rooms}</div>
+                    <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:18px;border-top:1px solid var(--divider-color);padding-top:18px"><div><div style="font-size:13px">Electricity now</div><div style="font-size:24px;font-weight:600;margin-top:6px">${powerLabel}</div></div><div><div style="font-size:13px">Electricity today</div><div style="font-size:24px;font-weight:600;margin-top:6px">${energyLabel}</div></div></div>
+                    <div style="font-size:12px;line-height:1.5;margin-top:12px">Condenser + blower/controls · Gas excluded<br>${kwh === null ? 'Daily tracking unavailable' : `${e.attributes.partial ? 'Partial day' : 'Day coverage'} · ${coverage ?? 0}% measured coverage`}</div>
+                  </div>`;
+                ]]]
 
       ##########################################################################
       # HEADROOM DECISION
