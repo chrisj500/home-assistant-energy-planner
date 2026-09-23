@@ -52,7 +52,7 @@ class HVACDashboardTests(unittest.TestCase):
               learning_progress_pct:33.3,
               hourly_supported_hours:0,
               hourly_forecast_hours:24,
-              entities:{hvac_outdoor_temperature:'sensor.ecowitt_outdoor_temperature'},
+              entities:{hvac_outdoor_temperature:'sensor.ecowitt_outdoor_temperature',hvac_weather:'weather.forecast_home'},
               recovery:{
                 active:true,
                 status:'provisional',
@@ -72,6 +72,10 @@ class HVACDashboardTests(unittest.TestCase):
           'sensor.ecowitt_outdoor_temperature':{
             state:'80',
             attributes:{unit_of_measurement:'°F'}
+          },
+          'weather.forecast_home':{
+            state:'sunny',
+            attributes:{humidity:62}
           },
           'sensor.energy_planner_hvac_electrical_power':{
             state:'10',
@@ -120,8 +124,19 @@ class HVACDashboardTests(unittest.TestCase):
         if (!fallback.includes('10 W') || !fallback.includes('1.20 kWh')) {
           throw Error('Electricity');
         }
-        if (!fallback.includes('Outside 80.0°F') || !fallback.includes('Δ +7.0°F vs target')) {
+        if (!fallback.includes('Outside 80.0°F') || !fallback.includes('Target 73.0°F') || !fallback.includes('Δ +7.0°F')) {
           throw Error('Outdoor temperature/setpoint delta');
+        }
+        if (!fallback.includes('Outside RH 62.0%') || !fallback.includes('Inside RH 48.0%') || !fallback.includes('Δ +14.0 pts')) {
+          throw Error('Outdoor/inside humidity context');
+        }
+        if (!fallback.includes('Estimated cost today $0.30 @ $0.25/kWh')) {
+          throw Error('HVAC import cost');
+        }
+        const contextPos = fallback.indexOf('Outside 80.0°F');
+        const roomPos = fallback.indexOf('Main bedroom');
+        if (!(contextPos > fallback.indexOf('THERMOSTAT') && contextPos < roomPos)) {
+          throw Error('Outdoor context is not between thermostat and room grid');
         }
         if (!fallback.includes('Recovery ETA 18 min') || !fallback.includes('1.8°F/h')) {
           throw Error('Recovery estimate');
@@ -143,7 +158,8 @@ class HVACDashboardTests(unittest.TestCase):
           if (!html.includes(label) || html.includes('NaN')) throw Error(action);
         }
         '''
-        subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+        proc = subprocess.run(["node", "-e", script], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
 
         self.assertIn("sensor.home_homepod_indoor_climate_", raw)
         self.assertIn("sensor.homepod_indoor_climate_", raw)
