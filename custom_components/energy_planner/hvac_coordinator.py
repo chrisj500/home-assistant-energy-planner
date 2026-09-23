@@ -4,7 +4,7 @@ import logging
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .hvac import celsius, hourly_forecast, number, observe, room_summary
+from .hvac import celsius, effective_action, hourly_forecast, number, observe, room_summary
 from .hvac_energy import update_energy
 from .reliability import suppress_actions
 from .v025_coordinator import EnergyPlannerV025Coordinator
@@ -312,11 +312,18 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                 and all(v is not None for v in temperatures + humidities)
             )
             weather = self._fresh_state(self._entity("hvac_weather"), now)
+            reported_action = attrs.get("hvac_action")
+            action, action_source = effective_action(
+                thermostat.state if thermostat else None,
+                reported_action,
+                condenser_w,
+                blower_w,
+            )
             sample = {
                 "at": now.timestamp(),
                 "day": now.date().isoformat(),
                 "mode": thermostat.state if thermostat else None,
-                "action": attrs.get("hvac_action"),
+                "action": action,
                 "target_c": celsius(attrs.get("temperature"), temp_unit),
                 "indoor_c": celsius(attrs.get("current_temperature"), temp_unit),
                 "humidity": number(attrs.get("current_humidity")),
@@ -356,6 +363,10 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                 room_data_healthy=room_health,
                 room_entities=room_entities,
                 room_prefixes=list(prefixes),
+                thermostat_mode=thermostat.state if thermostat else None,
+                thermostat_action_reported=reported_action,
+                thermostat_action_effective=action,
+                thermostat_action_source=action_source,
                 hourly_shadow=shadow,
                 hourly_supported_hours=supported_hours,
                 hourly_forecast_hours=len(shadow),
