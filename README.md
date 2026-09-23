@@ -1,5 +1,16 @@
 # Home Assistant Energy Planner
 
+## v0.1.37 HVAC persistence fix
+
+The HVAC learner now preserves its stored baseline samples, completed recovery
+cycles, and passive thermal history across Home Assistant restarts even when
+HomePod entity IDs resolve between their legacy and current prefix forms during
+startup. Only in-progress continuity state is discarded across a reboot.
+
+A materially different configured HVAC source still starts a fresh model, and
+HVAC diagnostics now report persistence/restoration status. See
+[release notes](RELEASE_NOTES_0.1.37.md).
+
 ## v0.1.36 Battery Outlook resilience
 
 Battery Outlook now survives Home Assistant/integration restarts and transient
