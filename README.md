@@ -1,5 +1,22 @@
 # Home Assistant Energy Planner
 
+## v0.1.41 AC solar learning foundation
+
+Energy Planner now collects and evaluates AC production forecasts locally, without
+changing the operational forecast or controlling equipment. It uses the existing
+Enphase production mapping, optional Ecowitt observations, and existing paid
+Forecast.Solar interval/weather responses. It makes no additional API calls.
+
+**Solar Learning Status**, **Solar Learning Usable Days**, and **Solar Learning
+Scored Forecasts** expose collection progress. The status attributes show input
+health, frozen hourly predictions, and separate raw/live/learned scorecards.
+Download integration diagnostics to export the retained learning dataset.
+
+Settings are in the integration options and implementation is in this repository;
+no YAML helpers are required for learning. See [solar learning](docs/solar-learning.md)
+for inputs, quality rules, persistence, and evaluation limits.
+
+
 ## v0.1.40 solar forecast correction
 
 Solar policy now lives in `custom_components/energy_planner/solar_policy.py` and

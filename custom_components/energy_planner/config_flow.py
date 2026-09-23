@@ -275,5 +275,12 @@ class EnergyPlannerOptionsFlow(config_entries.OptionsFlow):
             current.get("hvac_room_prefixes", ",".join(ROOM_PREFIXES))
         )
         hvac_fields[vol.Optional("hvac_room_prefixes", default=room_prefix_default)] = str
+        from .solar_learning_coordinator import DEFAULT_SOLAR_SOURCES
+        hvac_fields[vol.Optional("solar_learning_enabled", default=current.get("solar_learning_enabled", True))] = bool
+        for key, entity in DEFAULT_SOLAR_SOURCES.items():
+            hvac_fields[vol.Optional(key, default=current.get(key, entity))] = SENSOR_SELECTOR
+        energy_key = "solar_learning_energy_entity"
+        energy_field = vol.Optional(energy_key, default=current[energy_key]) if current.get(energy_key) else vol.Optional(energy_key)
+        hvac_fields[energy_field] = SENSOR_SELECTOR
         schema = schema.extend(hvac_fields)
         return self.async_show_form(step_id="init", data_schema=schema)

@@ -77,6 +77,9 @@ def _percent(key: str, data_key: str, name: str):
 
 
 SENSORS = (
+    EnergyPlannerSensorDescription(key="solar_learning_status", data_key="solar_learning_status", name="Solar Learning Status"),
+    EnergyPlannerSensorDescription(key="solar_learning_usable_days", data_key="solar_learning_usable_days", name="Solar Learning Usable Days"),
+    EnergyPlannerSensorDescription(key="solar_learning_scored_forecasts", data_key="solar_learning_scored_forecasts", name="Solar Learning Scored Forecasts"),
     EnergyPlannerSensorDescription(key="hvac_daily_electricity", data_key="hvac_daily_electricity_kwh", name="HVAC Daily Electricity", native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, device_class=SensorDeviceClass.ENERGY, state_class=SensorStateClass.TOTAL_INCREASING),
     EnergyPlannerSensorDescription(key="hvac_status", data_key="hvac_status", name="HVAC Model Status"),
     EnergyPlannerSensorDescription(key="hvac_electrical_power", data_key="hvac_electrical_power_w", name="HVAC Electrical Power", native_unit_of_measurement=UnitOfPower.WATT, device_class=SensorDeviceClass.POWER, state_class=SensorStateClass.MEASUREMENT),
@@ -735,6 +738,8 @@ class EnergyPlannerSensor(CoordinatorEntity[EnergyPlannerCoordinator], SensorEnt
     @property
     def extra_state_attributes(self):
         data = self.coordinator.data or {}
+        if self.entity_description.key == "solar_learning_status":
+            return data.get("solar_learning_diagnostics", {})
         if self.entity_description.key == "hvac_daily_electricity":
             return {
                 **data.get("hvac_energy_coverage", {}),
