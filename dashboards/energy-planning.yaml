@@ -99,8 +99,9 @@ views:
                   const hourlySupported = num(m.hourly_supported_hours) ?? 0;
                   const hourlyTotal = num(m.hourly_forecast_hours) ?? 0;
                   const sourceData = states['sensor.energy_planner_hvac_electrical_power']?.attributes?.power_sources || {};
-                  const sourceIssues = Object.values(sourceData).filter(x => x && x.available === false).map(x => `${esc(x.entity_id)}: ${esc(x.raw_state)} (${esc(x.reason)})`);
-                  const sourceLabel = sourceIssues.length ? sourceIssues.join(' · ') : 'Condenser and blower/control sources available';
+                  const sourceItems = Object.values(sourceData);
+                  const sourceIssues = sourceItems.filter(x => x && x.available === false).map(x => `${esc(x.entity_id)}: ${esc(x.raw_state)} (${esc(x.reason)})`);
+                  const sourceLabel = !sourceItems.length ? 'Power source diagnostics unavailable' : sourceIssues.length ? sourceIssues.join(' · ') : 'Condenser and blower/control sources available';
                   const targetMain = target !== null ? target.toFixed(0) : '—';
                   return `<div style="color:var(--primary-text-color);font-family:inherit">
                     <div style="display:flex;align-items:center;justify-content:center;gap:8px;color:${color};font-size:20px;font-weight:600"><ha-icon icon="${icon}" style="width:26px"></ha-icon>${label}</div>
