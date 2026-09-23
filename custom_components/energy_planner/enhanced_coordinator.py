@@ -603,7 +603,6 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
             paid_raw_remaining = 0.0
 
         required = (
-            remaining_solar,
             expected_load,
             charge_limit,
             soc_values[0],
@@ -620,7 +619,7 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
             shadow.update(self._professional_outputs(now))
             return shadow
 
-        scale = max(float(remaining_solar), 0.0) / paid_raw_remaining
+        scale = 1.0  # Provider energy must not inherit the legacy local multiplier.
         weights = _parse_weights(cfg.get(CONF_SOC_WEIGHTS, DEFAULT_WEIGHTS))
         capacity = float(cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH))
         total_weight = sum(weights)

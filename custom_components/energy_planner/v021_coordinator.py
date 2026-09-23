@@ -12,13 +12,7 @@ from .v018_coordinator import EnergyPlannerV018Coordinator
 
 
 class EnergyPlannerV021Coordinator(EnergyPlannerV018Coordinator):
-    """v0.1.21 anchors today's rolling solar curve to live Enphase production.
-
-    The current-day Forecast.Solar interval curve is still energy-calibrated to the
-    configured remaining-solar total. During daylight, the instantaneous curve is
-    then anchored to live solar output and blended back toward the provider shape
-    while preserving the corrected remaining-energy total. Future days remain raw.
-    """
+    """Anchor near-term provider power to live output using project solar policy."""
 
     def _rolling_ev_outputs(self, baseline: dict) -> dict:
         payload = self._estimate_payload
