@@ -51,8 +51,27 @@ class HVACDashboardTests(unittest.TestCase):
               learning_days_required:3,
               learning_progress_pct:33.3,
               hourly_supported_hours:0,
-              hourly_forecast_hours:24
+              hourly_forecast_hours:24,
+              entities:{hvac_outdoor_temperature:'sensor.ecowitt_outdoor_temperature'},
+              recovery:{
+                active:true,
+                status:'provisional',
+                eta_minutes:18,
+                rate_c_per_hour:1,
+                completed_cycles:1
+              },
+              thermal:{
+                status:'provisional',
+                predicted_drift_c_per_hour:-0.5,
+                time_constant_hours:18.5,
+                samples:1,
+                samples_required:3
+              }
             }
+          },
+          'sensor.ecowitt_outdoor_temperature':{
+            state:'80',
+            attributes:{unit_of_measurement:'°F'}
           },
           'sensor.energy_planner_hvac_electrical_power':{
             state:'10',
@@ -100,6 +119,15 @@ class HVACDashboardTests(unittest.TestCase):
         }
         if (!fallback.includes('10 W') || !fallback.includes('1.20 kWh')) {
           throw Error('Electricity');
+        }
+        if (!fallback.includes('Outside 80.0°F') || !fallback.includes('Δ +7.0°F vs target')) {
+          throw Error('Outdoor temperature/setpoint delta');
+        }
+        if (!fallback.includes('Recovery ETA 18 min') || !fallback.includes('1.8°F/h')) {
+          throw Error('Recovery estimate');
+        }
+        if (!fallback.includes('Passive thermal drift -0.9°F/h') || !fallback.includes('τ 18.5 h')) {
+          throw Error('Thermal drift estimate');
         }
 
         for (const [action,label] of [

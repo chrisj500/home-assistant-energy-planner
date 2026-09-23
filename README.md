@@ -1,5 +1,19 @@
 # Home Assistant Energy Planner
 
+## v0.1.34 HVAC recovery and passive thermal learning
+
+Dashboard v16 adds current outdoor temperature and the signed difference from
+the thermostat setpoint. The HVAC learner now also estimates recovery time from
+real heating/cooling calls and learns passive indoor-temperature drift during
+long HVAC-idle windows.
+
+Recovery estimates are empirical and can be provisional from a live call after
+10 minutes or historical after enough completed calls. Passive thermal learning
+estimates a first-order decay coefficient/time constant and current °F/°C per
+hour drift. It is intentionally described as an effective thermal model rather
+than a BTU/hr heat-loss calculation. See
+[release notes](RELEASE_NOTES_0.1.34.md).
+
 ## v0.1.33 HVAC action inference
 
 The HVAC learner now supports climate entities that expose an HVAC mode but no
