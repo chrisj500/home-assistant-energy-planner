@@ -226,12 +226,23 @@ def update_recovery(memory, sample, continuous):
     elif active and rate is not None and rate > 0:
         eta = min(360.0, error / rate * 60)
 
+    recovery_source = source if active else "inactive"
+    recovery_status = (
+        "provisional"
+        if recovery_source == "live_call"
+        else "ready"
+        if recovery_source in ("history", "at_target")
+        else "learning"
+        if active
+        else "inactive"
+    )
     return {
         "active": active,
         "action": action if active else None,
+        "status": recovery_status,
         "eta_minutes": eta,
         "rate_c_per_hour": rate,
-        "source": source if active else "inactive",
+        "source": recovery_source,
         "call_minutes": call_minutes,
         "completed_cycles": len(
             [row for row in cycles if row["action"] in ("cooling", "heating")]
@@ -328,7 +339,13 @@ def update_thermal_model(memory, sample, continuous):
         else None
     )
     return {
-        "status": "ready" if coefficient is not None else "learning",
+        "status": (
+            "provisional"
+            if source == "live_window"
+            else "ready"
+            if source == "history"
+            else "learning"
+        ),
         "source": source,
         "samples": len(history),
         "samples_required": 3,
