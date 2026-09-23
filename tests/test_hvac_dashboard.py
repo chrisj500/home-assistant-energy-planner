@@ -158,7 +158,8 @@ class HVACDashboardTests(unittest.TestCase):
           if (!html.includes(label) || html.includes('NaN')) throw Error(action);
         }
         '''
-        subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+        proc = subprocess.run(["node", "-e", script], capture_output=True, text=True)
+        self.assertEqual(proc.returncode, 0, proc.stderr or proc.stdout)
 
         self.assertIn("sensor.home_homepod_indoor_climate_", raw)
         self.assertIn("sensor.homepod_indoor_climate_", raw)
