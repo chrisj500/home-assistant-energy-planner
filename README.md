@@ -1,5 +1,15 @@
 # Home Assistant Energy Planner
 
+## v0.1.28 HVAC-aware safety and learning
+
+Enable **Read-only HVAC learning and safety holds** in Energy Planner options,
+confirm the supplied entity mappings, and inspect **HVAC Model Status**. Its
+attributes expose room-weighted indoor conditions, circuit signatures, anomaly
+reasons and hourly shadow estimates. No thermostat control is enabled. The
+experimental HVAC forecast does not replace the battery load model until its
+accuracy and non-HVAC baseline have been validated. See the explicit scope and
+validation limits in [release notes](RELEASE_NOTES_0.1.28.md).
+
 ## v0.1.27 dashboard reserve-floor guard
 
 The Battery Outlook now independently clamps displayed sunset ranges to the

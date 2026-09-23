@@ -69,7 +69,15 @@
           "ev_fallback_charge_power_w": "EV fallback AC charging power (W)",
           "preferred_import_w": "Fallback preferred grid import if surplus controller is unavailable (W)",
           "charge_efficiency": "AC-to-battery charge efficiency (0-1)",
-          "discretionary_threshold_kwh": "Minimum physically predicted export before flexible-load recommendation (kWh)"
+          "discretionary_threshold_kwh": "Minimum physically predicted export before flexible-load recommendation (kWh)",
+          "hvac_learning_enabled": "Enable read-only HVAC learning and safety holds",
+          "hvac_thermostat": "HVAC thermostat",
+          "hvac_condenser": "Outdoor condenser power (must exclude blower)",
+          "hvac_blower": "Indoor blower / furnace controls power",
+          "hvac_outdoor_temperature": "Measured outdoor temperature",
+          "hvac_weather": "Hourly weather forecast",
+          "hvac_stale": "HomePod stale readings problem sensor",
+          "hvac_room_prefixes": "Room entity prefixes: living, guest, main left, main right (comma separated, omit _temperature/_humidity)"
         }
       }
     }

@@ -6,6 +6,8 @@ from homeassistant import config_entries
 from homeassistant.const import CONF_NAME
 from homeassistant.helpers import selector
 
+from .hvac_coordinator import DEFAULT_ENTITIES, ROOM_PREFIXES
+
 from .const import (
     CONF_ACTUAL_SOLAR_POWER,
     CONF_BACKUP_RESERVE,
@@ -265,4 +267,10 @@ class EnergyPlannerOptionsFlow(config_entries.OptionsFlow):
                 ): vol.All(vol.Coerce(float), vol.Range(min=0, max=25)),
             }
         )
+        hvac_fields = {vol.Optional("hvac_learning_enabled", default=current.get("hvac_learning_enabled", False)): bool}
+        for key, entity in DEFAULT_ENTITIES.items():
+            domain = "climate" if key == "hvac_thermostat" else "weather" if key == "hvac_weather" else "binary_sensor" if key == "hvac_stale" else "sensor"
+            hvac_fields[vol.Optional(key, default=current.get(key, entity))] = selector.EntitySelector(selector.EntitySelectorConfig(domain=domain))
+        hvac_fields[vol.Optional("hvac_room_prefixes", default=current.get("hvac_room_prefixes", ",".join(ROOM_PREFIXES)))] = str
+        schema = schema.extend(hvac_fields)
         return self.async_show_form(step_id="init", data_schema=schema)
