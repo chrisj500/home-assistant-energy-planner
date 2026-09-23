@@ -63,13 +63,25 @@ class DashboardLayoutTests(unittest.TestCase):
             ["Planner Health", "HVAC Diagnostics", "Forecast Quality", "Tools"],
         )
         overview_raw = yaml.safe_dump(self.overview)
-        diagnostics_raw = yaml.safe_dump(self.diagnostics)
+        diagnostics_cards = [
+            card
+            for section in self.diagnostics["sections"]
+            for card in section.get("cards", [])
+        ]
+        diagnostics_text = "\n".join(
+            str(card.get("title", ""))
+            + "\n"
+            + str(card.get("name", ""))
+            + "\n"
+            + str(card.get("content", ""))
+            for card in diagnostics_cards
+        )
         self.assertNotIn("Forecast reliability", overview_raw)
         self.assertNotIn("Energy History Export", overview_raw)
-        self.assertIn("Forecast reliability", diagnostics_raw)
-        self.assertIn("Energy History Export", diagnostics_raw)
-        self.assertIn("Battery model", diagnostics_raw)
-        self.assertIn("Learning persistence", diagnostics_raw)
+        self.assertIn("Forecast reliability", diagnostics_text)
+        self.assertIn("Energy History Export", diagnostics_text)
+        self.assertIn("Battery model", diagnostics_text)
+        self.assertIn("Learning persistence", diagnostics_text)
 
     @unittest.skipUnless(shutil.which("node"), "Node required for Lovelace JS validation")
     def test_battery_outlook_hides_global_learning_status_from_each_day(self):
