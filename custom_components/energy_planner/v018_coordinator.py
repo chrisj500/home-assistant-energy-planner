@@ -33,14 +33,41 @@ class EnergyPlannerV018Coordinator(EnergyPlannerV017Coordinator):
 
     def _rolling_ev_outputs(self, baseline: dict) -> dict:
         output = super()._rolling_ev_outputs(baseline)
+
+        def state_snapshot(entity_id):
+            state = self.hass.states.get(entity_id) if entity_id else None
+            return {
+                "entity_id": entity_id,
+                "state": None if state is None else state.state,
+                "available": (
+                    state is not None
+                    and state.state not in {"unknown", "unavailable", "none", ""}
+                ),
+            }
+
+        def unavailable(reason, **details):
+            output.update(
+                battery_outlook_status="unavailable",
+                battery_outlook_reason=reason,
+                battery_outlook_inputs=details,
+            )
+            return output
+
         payload = self._estimate_payload
         if not isinstance(payload, dict):
-            return output
+            return unavailable(
+                "Interval solar forecast unavailable",
+                interval_status=output.get("rolling_ev_status"),
+            )
 
         now = dt_util.now()
         points = interval_points_from_payload(payload, now, assume_utc=True)
         if len(points) < 2:
-            return output
+            return unavailable(
+                "Interval solar forecast has fewer than two future points",
+                interval_source=getattr(self, "_estimate_origin", "unknown"),
+                interval_error=getattr(self, "_estimate_error", None),
+            )
 
         sunrise, sunset = _solar_window(self.hass, now.date())
         correction = correct_current_day_points(
@@ -55,22 +82,37 @@ class EnergyPlannerV018Coordinator(EnergyPlannerV017Coordinator):
         try:
             planning_load_w = float(output.get("rolling_planning_base_load_w"))
         except (TypeError, ValueError):
-            return output
+            return unavailable(
+                "Planning base load unavailable",
+                rolling_status=output.get("rolling_ev_status"),
+                planning_source=output.get("rolling_planning_base_load_source"),
+            )
 
-        soc_values = (
-            _num(self.hass, self.cfg.get(CONF_SOC_1)),
-            _num(self.hass, self.cfg.get(CONF_SOC_2)),
-            _num(self.hass, self.cfg.get(CONF_SOC_3)),
+        soc_entities = (
+            self.cfg.get(CONF_SOC_1),
+            self.cfg.get(CONF_SOC_2),
+            self.cfg.get(CONF_SOC_3),
         )
+        soc_values = tuple(_num(self.hass, entity) for entity in soc_entities)
         if any(value is None for value in soc_values):
-            return output
+            return unavailable(
+                "One or more battery SOC inputs are unavailable",
+                battery_soc=[state_snapshot(entity) for entity in soc_entities],
+            )
         bank_socs = tuple(float(value) for value in soc_values if value is not None)
         if len(bank_socs) != 3:
-            return output
+            return unavailable(
+                "Battery SOC model requires exactly three banks",
+                battery_soc=[state_snapshot(entity) for entity in soc_entities],
+            )
 
-        charge_limit = _num(self.hass, self.cfg.get(CONF_CHARGE_LIMIT))
+        charge_limit_entity = self.cfg.get(CONF_CHARGE_LIMIT)
+        charge_limit = _num(self.hass, charge_limit_entity)
         if charge_limit is None:
-            return output
+            return unavailable(
+                "Battery charge limit is unavailable or non-numeric",
+                charge_limit=state_snapshot(charge_limit_entity),
+            )
 
         weights = _parse_weights(self.cfg.get(CONF_SOC_WEIGHTS, DEFAULT_WEIGHTS))
         capacity = float(self.cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH))
@@ -105,6 +147,11 @@ class EnergyPlannerV018Coordinator(EnergyPlannerV017Coordinator):
                 )
             )
 
+        if not daylight_windows:
+            return unavailable(
+                "No solar daylight windows are available for the forecast horizon"
+            )
+
         plans = simulate_rolling_days(
             points=points,
             reference=now,
@@ -127,6 +174,13 @@ class EnergyPlannerV018Coordinator(EnergyPlannerV017Coordinator):
             current_day_source=correction.source,
             current_day_scale_factor=correction.scale_factor,
         )
+        if not rows:
+            return unavailable(
+                "Battery simulation produced no modeled days",
+                interval_source=getattr(self, "_estimate_origin", "unknown"),
+                forecast_points=len(points),
+                daylight_windows=len(daylight_windows),
+            )
         risk_rows = [row for row in rows if row.get("dynamic_load_needed")]
         risk_dates = [str(row["date"]) for row in risk_rows]
         total_dynamic = sum(float(row["dynamic_load_needed_kwh"]) for row in risk_rows)
@@ -138,6 +192,16 @@ class EnergyPlannerV018Coordinator(EnergyPlannerV017Coordinator):
 
         output.update(
             {
+                "battery_outlook_status": "ready",
+                "battery_outlook_reason": "Battery simulation inputs are available",
+                "battery_outlook_inputs": {
+                    "interval_source": getattr(self, "_estimate_origin", "unknown"),
+                    "forecast_points": len(points),
+                    "planning_load_w": planning_load_w,
+                    "charge_limit_pct": float(charge_limit),
+                    "battery_soc_pct": list(bank_socs),
+                    "daylight_windows": len(daylight_windows),
+                },
                 "rolling_day_plans": rows,
                 "rolling_dynamic_load_risk_dates": risk_dates,
                 "rolling_dynamic_load_days_count": len(risk_rows),

@@ -82,6 +82,9 @@ class EnergyPlannerDynamicLoadForecast(
         data = self.coordinator.data or {}
         return {
             "status": data.get("rolling_dynamic_load_forecast_status"),
+            "battery_outlook_status": data.get("battery_outlook_status"),
+            "battery_outlook_reason": data.get("battery_outlook_reason"),
+            "battery_outlook_inputs": data.get("battery_outlook_inputs", {}),
             "days": data.get("rolling_day_plans", []),
             "risk_dates": data.get("rolling_dynamic_load_risk_dates", []),
             "risk_days_count": data.get("rolling_dynamic_load_days_count", 0),

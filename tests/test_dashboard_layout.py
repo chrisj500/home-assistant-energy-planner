@@ -81,6 +81,40 @@ class DashboardLayoutTests(unittest.TestCase):
         '''
         subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
 
+    @unittest.skipUnless(shutil.which("node"), "Node required for Lovelace JS validation")
+    def test_battery_outlook_shows_explicit_unavailable_reason(self):
+        section = next(
+            section for section in self.sections
+            if self._heading(section) == "Battery Outlook — Next 4 Days"
+        )
+        card = next(
+            card for card in section["cards"]
+            if card.get("entity") == "binary_sensor.energy_planner_dynamic_load_forecast"
+        )
+        code = card["custom_fields"]["content"].strip()[3:-3]
+        script = "const render = new Function('states','hass'," + json.dumps(code) + ");" + r'''
+        const states = {
+          'binary_sensor.energy_planner_dynamic_load_forecast':{
+            state:'off',
+            attributes:{
+              days:[],
+              battery_outlook_status:'unavailable',
+              battery_outlook_reason:'Interval solar forecast unavailable'
+            }
+          },
+          'sensor.energy_planner_effective_reserve_floor':{state:'20',attributes:{}},
+          'sun.sun':{state:'above_horizon',attributes:{}}
+        };
+        const html = render(states,{});
+        if (!html.includes('Battery outlook unavailable')) {
+          throw Error('Missing battery outlook unavailable heading');
+        }
+        if (!html.includes('Interval solar forecast unavailable')) {
+          throw Error('Missing battery outlook reason');
+        }
+        '''
+        subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+
     def test_learning_has_no_false_no_action_verdict(self):
         self.assertIn("FORECAST LEARNING — NO RECOMMENDATION YET", self.raw)
         learning_pos = self.raw.index("FORECAST LEARNING — NO RECOMMENDATION YET")

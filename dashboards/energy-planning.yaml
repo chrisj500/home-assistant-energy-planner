@@ -1,6 +1,6 @@
-# Energy Planning dashboard v17
+# Energy Planning dashboard v18
 #
-# Action-first Lovelace dashboard for Energy Planner v0.1.35.
+# Action-first Lovelace dashboard for Energy Planner v0.1.36.
 # Requires custom:button-card for the Headroom Decision, Battery Bank,
 # and four-day Battery Outlook cards.
 #
@@ -1194,6 +1194,46 @@ views:
                   );
 
                   const days = rows.slice(0,4);
+
+                  const outlookStatus = e?.attributes?.battery_outlook_status;
+                  const outlookReason = e?.attributes?.battery_outlook_reason;
+                  const esc = x => String(x ?? '').replace(
+                    /[&<>"']/g,
+                    ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[ch])
+                  );
+
+                  if (!days.length) {
+                    return `
+                      <div style="
+                        padding:18px 16px;
+                        text-align:center;
+                      ">
+                        <ha-icon
+                          icon="mdi:battery-alert-outline"
+                          style="
+                            width:28px;
+                            color:#ffd60a;
+                            margin-bottom:8px;
+                          ">
+                        </ha-icon>
+                        <div style="
+                          font-size:14px;
+                          font-weight:750;
+                          color:#fff;
+                        ">
+                          Battery outlook unavailable
+                        </div>
+                        <div style="
+                          margin-top:7px;
+                          font-size:12px;
+                          line-height:1.5;
+                          color:rgba(255,255,255,.58);
+                        ">
+                          ${esc(outlookReason || outlookStatus || 'Waiting for model inputs')}
+                        </div>
+                      </div>
+                    `;
+                  }
 
                   const now = new Date();
 

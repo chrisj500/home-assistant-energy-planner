@@ -104,14 +104,17 @@ class CoordinatorTests(unittest.TestCase):
         self.assertIsNone(candidate)
         self.assertEqual(amount, 0)
 
-    def test_unknown_and_stale_soc_cannot_authorize(self):
+    def test_unknown_soc_blocks_but_unchanged_numeric_soc_remains_valid(self):
         self.states["s1"].state = "nan"
         with self.assertRaises(ValueError):
             self.c._scenarios(self.data, self.now)
+
         self.states["s1"].state = "80"
         self.states["s1"].last_reported -= timedelta(hours=1)
-        with self.assertRaises(ValueError):
-            self.c._scenarios(self.data, self.now)
+        profiles, candidate, amount, *_ = self.c._scenarios(self.data, self.now)
+        self.assertIn("2026-09-18", profiles)
+        self.assertEqual(candidate, "2026-09-18")
+        self.assertGreater(amount, 0)
 
     def test_snapshot_is_fixed_and_settled_once(self):
         self.c._score_forecasts(self.data, self.now)
@@ -172,6 +175,34 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(result["forecast_learning_overnight_samples"], 3)
         self.assertEqual(result["forecast_learning_overnight_required"], 3)
         self.assertIn("2/3 scored sunsets", result["forecast_learning_progress"])
+
+    def test_battery_outlook_failure_preserves_stored_learning_progress(self):
+        self.c._trust["records"] = [{"lead": 0, "error_soc": 1}] * 2
+        self.c._calibration_data = {
+            "overnight_records": [{"drop_rate_kw": 1}] * 9
+        }
+        self.c.baseline = {
+            "battery_outlook_status": "unavailable",
+            "battery_outlook_reason": "Interval solar forecast unavailable",
+        }
+        with self.assertLogs("test.reliability", level="ERROR"):
+            result = asyncio.run(self.c._async_update_data())
+
+        self.assertEqual(result["forecast_reliability_status"], "unavailable")
+        self.assertEqual(result["forecast_learning_sunset_samples"], 2)
+        self.assertEqual(result["forecast_learning_overnight_samples"], 9)
+        self.assertEqual(
+            result["forecast_learning_progress"],
+            "2/3 scored sunsets · 9/3 overnight records",
+        )
+        self.assertIn(
+            "Battery outlook unavailable: Interval solar forecast unavailable",
+            result["forecast_reliability_reason"],
+        )
+        self.assertEqual(
+            result["forecast_reliability_error"]["battery_outlook_status"],
+            "unavailable",
+        )
 
     def test_missing_overnight_evidence_keeps_confidence_learning(self):
         self.c._trust["records"] = [{"lead": 0, "error_soc": 1}] * 10
