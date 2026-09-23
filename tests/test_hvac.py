@@ -4,7 +4,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "energy_planner"))
-from hvac import HVAC_READY_DAYS, HVAC_READY_SAMPLES, celsius, hourly_forecast, learning_progress, observe, room_summary
+from hvac import HVAC_READY_DAYS, HVAC_READY_SAMPLES, celsius, effective_action, hourly_forecast, learning_progress, observe, room_summary
 
 
 class HVACTests(unittest.TestCase):
@@ -17,6 +17,44 @@ class HVACTests(unittest.TestCase):
         self.assertAlmostEqual(celsius(72, "°F"), 22.222222, places=5)
         for value, unit in [("nan", "°C"), (71, "K"), (500, "°C")]:
             self.assertIsNone(celsius(value, unit))
+
+    def test_effective_action_prefers_thermostat(self):
+        self.assertEqual(
+            effective_action("cool", "idle", 2000, 200),
+            ("idle", "thermostat"),
+        )
+
+    def test_effective_action_infers_cool_mode_from_power(self):
+        self.assertEqual(
+            effective_action("cool", None, 0, 12),
+            ("idle", "inferred_power"),
+        )
+        self.assertEqual(
+            effective_action("cool", None, 0, 150),
+            ("fan", "inferred_power"),
+        )
+        self.assertEqual(
+            effective_action("cool", None, 2200, 150),
+            ("cooling", "inferred_power"),
+        )
+
+    def test_effective_action_infers_heat_and_off_conservatively(self):
+        self.assertEqual(
+            effective_action("heat", None, 0, 150),
+            ("heating", "inferred_power"),
+        )
+        self.assertEqual(
+            effective_action("heat", None, 0, 10),
+            ("idle", "inferred_power"),
+        )
+        self.assertEqual(
+            effective_action("off", None, None, None),
+            ("off", "inferred_mode"),
+        )
+        self.assertEqual(
+            effective_action("heat_cool", None, 0, 150),
+            (None, "unsupported_mode"),
+        )
 
     def test_duplicate_bedroom_devices_are_one_room(self):
         summary = room_summary([24, 20, 22, 22], [50, 60, 70, 70])
@@ -60,7 +98,9 @@ class HVACTests(unittest.TestCase):
     def test_stale_input_is_not_zero(self):
         sample = self.sample()
         sample["blower_w"] = None
-        self.assertEqual(observe({}, sample)["status"], "unavailable")
+        result = observe({}, sample)
+        self.assertEqual(result["status"], "unavailable")
+        self.assertIn("blower_w", result["input_issues"])
 
     def test_setpoint_change_resets_response_window(self):
         memory = {}
