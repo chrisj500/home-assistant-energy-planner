@@ -165,6 +165,160 @@ class HVACCoordinatorTests(unittest.TestCase):
         )
         self.assertTrue(result["hvac_diagnostics"]["room_data_healthy"])
 
+    def _persisted_hvac_rows(self, count=26):
+        base = self.now.timestamp() - 2 * 86400
+        rows = []
+        for i in range(count):
+            at = base + i * 300
+            rows.append(
+                {
+                    "at": at,
+                    "day": datetime.fromtimestamp(
+                        at, timezone.utc
+                    ).date().isoformat(),
+                    "mode": "cool",
+                    "action": "idle",
+                    "target_c": 22.222222,
+                    "indoor_c": 22.222222,
+                    "outdoor_c": 26.666667,
+                    "outdoor_humidity": 65,
+                    "humidity": 60,
+                    "condenser_w": 0,
+                    "blower_w": 10,
+                    "response_c_per_hour": 0,
+                }
+            )
+        return rows
+
+    def test_restart_alias_resolution_preserves_hvac_learning_history(self):
+        identity = self.c._model_identity(self.c._room_prefixes())
+        stored_identity = dict(identity)
+        stored_identity["room_prefixes"] = ",".join(
+            (
+                "sensor.homepod_indoor_climate_living_room",
+                "sensor.home_homepod_indoor_climate_guest_bedroom",
+                "sensor.home_homepod_indoor_climate_main_bedroom_left",
+                "sensor.home_homepod_indoor_climate_main_bedroom_right",
+            )
+        )
+        persisted = {
+            "entity_mapping": stored_identity,
+            "samples": self._persisted_hvac_rows(),
+            "recovery_cycles": [
+                {
+                    "ended_at": self.now.timestamp() - 3600,
+                    "action": "cooling",
+                    "rate_c_per_hour": 1.2,
+                    "outdoor_delta_c": 5,
+                    "duration_minutes": 30,
+                }
+            ],
+            "thermal_samples": [
+                {
+                    "ended_at": self.now.timestamp() - 3600,
+                    "coefficient_per_hour": 0.05,
+                    "observed_drift_c_per_hour": -0.25,
+                    "duration_minutes": 60,
+                    "mean_outdoor_delta_c": 5,
+                }
+            ],
+            "previous": {"at": self.now.timestamp() - 300},
+            "call": {"at": self.now.timestamp() - 1800, "temperature": 24},
+            "missing_since": self.now.timestamp() - 600,
+            "recovery_call": {
+                "at": self.now.timestamp() - 900,
+                "action": "cooling",
+                "indoor_c": 24,
+                "target_c": 22,
+                "outdoor_c": 28,
+            },
+            "thermal_window": {
+                "at": self.now.timestamp() - 3600,
+                "indoor_c": 22,
+                "last_at": self.now.timestamp() - 300,
+                "last_indoor_c": 21.8,
+                "outdoor_sum": 70,
+                "outdoor_count": 7,
+            },
+        }
+
+        async def load_hvac():
+            return persisted
+
+        self.c._hvac_store = SimpleNamespace(
+            async_load=load_hvac,
+            async_save=self.c._hvac_store.async_save,
+        )
+        result = asyncio.run(self.c._async_update_data())
+
+        self.assertEqual(len(self.saved["samples"]), 26)
+        self.assertEqual(len(self.saved["recovery_cycles"]), 1)
+        self.assertEqual(len(self.saved["thermal_samples"]), 1)
+        self.assertNotIn("recovery_call", self.saved)
+        self.assertEqual(
+            result["hvac_diagnostics"]["persistence"]["status"],
+            "restored",
+        )
+        self.assertEqual(
+            result["hvac_diagnostics"]["persistence"]["restored_samples"],
+            26,
+        )
+        self.assertEqual(
+            self.saved["entity_mapping"]["room_prefixes"],
+            ",".join(self.c._room_prefixes()),
+        )
+
+    def test_store_without_identity_adopts_mapping_without_erasing_history(self):
+        persisted = {
+            "samples": self._persisted_hvac_rows(12),
+            "recovery_cycles": [],
+            "thermal_samples": [],
+        }
+
+        async def load_hvac():
+            return persisted
+
+        self.c._hvac_store = SimpleNamespace(
+            async_load=load_hvac,
+            async_save=self.c._hvac_store.async_save,
+        )
+        result = asyncio.run(self.c._async_update_data())
+
+        self.assertEqual(len(self.saved["samples"]), 12)
+        self.assertEqual(
+            result["hvac_diagnostics"]["persistence"]["status"],
+            "restored_identity_adopted",
+        )
+
+    def test_material_hvac_mapping_change_resets_incompatible_history(self):
+        identity = self.c._model_identity(self.c._room_prefixes())
+        stored_identity = dict(identity)
+        stored_identity["hvac_condenser"] = "sensor.old_condenser_power"
+        persisted = {
+            "entity_mapping": stored_identity,
+            "samples": self._persisted_hvac_rows(),
+            "recovery_cycles": [],
+            "thermal_samples": [],
+        }
+
+        async def load_hvac():
+            return persisted
+
+        self.c._hvac_store = SimpleNamespace(
+            async_load=load_hvac,
+            async_save=self.c._hvac_store.async_save,
+        )
+        result = asyncio.run(self.c._async_update_data())
+
+        self.assertEqual(self.saved["samples"], [])
+        persistence = result["hvac_diagnostics"]["persistence"]
+        self.assertEqual(persistence["status"], "reset_mapping_changed")
+        self.assertEqual(persistence["restored_samples"], 0)
+        self.assertEqual(
+            persistence["reset_reason"]["stored"]["hvac_condenser"],
+            "sensor.old_condenser_power",
+        )
+
     def test_stale_room_blocks_existing_advice(self):
         self.states["binary_sensor.homepod_indoor_climate_stale_readings"].state = "on"
         result = asyncio.run(self.c._async_update_data())
