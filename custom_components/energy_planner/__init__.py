@@ -4,6 +4,7 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 
 from .const import PLATFORMS
+from .solar_policy import migrated_solar_options
 from .hvac_coordinator import EnergyPlannerHVACCoordinator
 
 
@@ -11,6 +12,11 @@ type EnergyPlannerConfigEntry = ConfigEntry[EnergyPlannerHVACCoordinator]
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: EnergyPlannerConfigEntry) -> bool:
+    # Replace the known legacy YAML correction with the provider's raw fallback.
+    # Interval forecasts and live correction are owned by Energy Planner.
+    options = migrated_solar_options(entry.data, entry.options)
+    if options is not None:
+        hass.config_entries.async_update_entry(entry, options=options)
     coordinator = EnergyPlannerHVACCoordinator(hass, entry)
     await coordinator.async_config_entry_first_refresh()
     entry.runtime_data = coordinator

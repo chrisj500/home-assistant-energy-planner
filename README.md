@@ -1,5 +1,19 @@
 # Home Assistant Energy Planner
 
+## v0.1.40 solar forecast correction
+
+Solar policy now lives in `custom_components/energy_planner/solar_policy.py` and
+`headroom.py`. Today's provider curve is no longer multiplied by a local
+remaining-energy estimate. Live power adjusts only the next 60 minutes, fading
+back to the provider curve without adding compensating energy later in the day.
+Tomorrow and subsequent days retain the provider forecast.
+
+The known legacy `sensor.solar_forecast_remaining_today` input automatically
+migrates to `sensor.energy_production_today_remaining` as the raw fallback on
+integration setup. Other explicitly configured inputs are preserved. No YAML
+solar correction is needed. See [solar configuration and migration](docs/solar-configuration.md).
+
+
 ## v0.1.39 HVAC input continuity and converging sunset ranges
 
 An unchanged numeric thermostat or outdoor reading remains valid until Home
@@ -216,7 +230,7 @@ This prevents an actively charging EV from collapsing the rolling planning load 
 
 A Forecast.Solar API key is optional. With a valid keyed account, Energy Planner continues to expose the v0.1.11 same-day scaled shadow comparison and, in v0.1.12, also evaluates the provider's paid interval curve directly across the available multi-day horizon for rolling advisory purposes.
 
-The same-day shadow remains scaled to the locally corrected remaining-energy total so it isolates the value of the richer interval **shape**. The rolling EV model is explicitly labeled `forecast_solar_paid_raw_rolling_v1` and uses the paid interval forecast as an advisory scenario rather than silently replacing the baseline planner.
+Before v0.1.40, the same-day shadow was scaled to the locally corrected remaining-energy total. This scaling has been removed. The rolling EV model is explicitly labeled `forecast_solar_paid_raw_rolling_v1` and uses the paid interval forecast as an advisory scenario rather than silently replacing the baseline planner.
 
 Enhanced Forecast.Solar failures never make baseline planning unavailable.
 
@@ -252,7 +266,7 @@ These values are advisory estimates. No charging action is executed by the integ
 
 ## Forecast.Solar same-day shadow evaluation
 
-The v0.1.11 comparison remains available. It uses the authenticated interval `watts` series to compare the richer production shape against the baseline live sunset projection while holding the corrected remaining-energy total constant.
+The v0.1.11 comparison remains available. It uses the authenticated interval `watts` series; as of v0.1.40 it no longer holds a locally corrected remaining-energy total constant.
 
 Diagnostics include account type, interval resolution, horizon, interval point count, paid raw remaining energy, shadow sunset SOC, battery charge, daylight grid import/export, and scaling factor. Professional weather data remains diagnostic-only.
 
