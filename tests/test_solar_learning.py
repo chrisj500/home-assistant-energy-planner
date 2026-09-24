@@ -5,12 +5,12 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "energy_planner"))
-from solar_learning import finalize, issue, observe, prediction, scorecard
+from solar_learning import finalize, issue, lead_bucket, observe, prediction, scorecard
 
 
 def candidate(start=864000, issued_at=None, **overrides):
     return {"start": start, "end": start + 3600, "issued_at": start - 3600 if issued_at is None else issued_at,
-            "day": str(start // 86400), "hour": 12, "lead": "1-3h", "sky_bin": "clear",
+            "day": str(start // 86400), "hour": 12, "lead": "0-3h", "sky_bin": "clear",
             "raw_kwh": 2.0, "live_kwh": 2.1, **overrides}
 
 
@@ -64,7 +64,7 @@ class SolarLearningTests(unittest.TestCase):
         finalize(memory, 7199)
         self.assertFalse(memory['scored'])
         finalize(memory, 7200)
-        metrics = scorecard(memory)['by_horizon']['1-3h']
+        metrics = scorecard(memory)['by_horizon']['0-3h']
         self.assertAlmostEqual(metrics['all']['raw']['mae_kwh'], .5)
         self.assertEqual(metrics['trained_only']['samples'], 0)
 
@@ -94,7 +94,29 @@ class SolarLearningTests(unittest.TestCase):
     def test_weather_and_horizon_groups_are_separate(self):
         memory = {'scored': self.training_rows()}
         self.assertFalse(prediction(memory, candidate(start=12*86400, sky_bin='cloudy'))[1])
-        self.assertFalse(prediction(memory, candidate(start=12*86400, lead='12-25h'))[1])
+        self.assertFalse(prediction(memory, candidate(start=12*86400, lead='12-24h'))[1])
+
+    def test_scorecard_counts_each_target_once_per_horizon(self):
+        memory = {"scored": []}
+        for issued, raw in ((0, 1.0), (3600, 2.0), (7200, 3.0)):
+            row = candidate(start=10800, issued_at=issued, raw_kwh=raw,
+                            live_kwh=raw, learned_kwh=raw, actual_kwh=4.0,
+                            accepted=True, trained=False)
+            memory["scored"].append(row)
+        score = scorecard(memory)
+        group = score["by_horizon"]["0-3h"]
+        self.assertEqual(group["issued_rows"], 3)
+        self.assertEqual(group["all"]["samples"], 1)
+        self.assertAlmostEqual(group["all"]["raw"]["mae_kwh"], 1)
+        self.assertAlmostEqual(group["all"]["raw"]["bias_kwh"], -1)
+        self.assertEqual(score["accepted_forecasts"], 1)
+
+    def test_lead_buckets_measure_to_target_start(self):
+        self.assertEqual(lead_bucket(0.5), "0-3h")
+        self.assertEqual(lead_bucket(2.99), "0-3h")
+        self.assertEqual(lead_bucket(3), "3-12h")
+        self.assertEqual(lead_bucket(11.99), "3-12h")
+        self.assertEqual(lead_bucket(12), "12-24h")
 
     def test_history_is_pruned_and_restart_gap_is_not_integrated(self):
         memory = {'scored': self.training_rows(), 'actual_hours': {'0': {}}}

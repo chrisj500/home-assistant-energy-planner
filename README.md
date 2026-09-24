@@ -356,3 +356,8 @@ If required baseline planning inputs are unavailable, the baseline strategy repo
 # HVAC overview (v0.1.29)
 
 The v12 example dashboard includes a thermostat dial, reported HVAC action, room temperatures, combined condenser/blower power, and measured-power-derived daily electricity with coverage. Update `dashboards/energy-planning.yaml` separately from the HACS integration; existing dashboards are not automatically replaced. See [installation and measurement details](RELEASE_NOTES_0.1.29.md).
+
+
+### v0.1.42 scoring refinement
+
+Solar scorecards now count the latest issued forecast once per target hour and lead horizon. Repeated snapshots of the same target are shown as issued rows, not independent outcomes. Lead time is measured to the start of the target hour. Enphase lifetime energy in MWh is supported as a reset cross-check.

@@ -36,13 +36,14 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
             return None
         value = number(state.state)
         reported = getattr(state, "last_reported", state.last_updated)
-        if value is None or not 0 <= (now - reported).total_seconds() <= 300:
+        max_age = 1800 if kind == "energy" else 300
+        if value is None or not 0 <= (now - reported).total_seconds() <= max_age:
             return None
         unit = state.attributes.get("unit_of_measurement")
         if kind == "power":
             return value * (1000 if unit == "kW" else 1) if unit in ("W", "kW") and value >= 0 else None
         if kind == "energy":
-            return value / (1000 if unit == "Wh" else 1) if unit in ("Wh", "kWh") and value >= 0 else None
+            return value * (1000 if unit == "MWh" else 1 / 1000 if unit == "Wh" else 1) if unit in ("Wh", "kWh", "MWh") and value >= 0 else None
         if kind == "temperature":
             return (value - 32) * 5 / 9 if unit == "°F" else value if unit == "°C" else None
         return value if unit in ("W/m²", "W/m2") and value >= 0 else None
@@ -66,6 +67,9 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
             self._solar_memory = loaded if isinstance(loaded, dict) else {}
             self._solar_memory.pop("previous", None)  # Never integrate across a restart.
         memory = self._solar_memory
+        if memory.get("reset_reason") and "reset_at" not in memory:
+            # v1 only persisted the reason; do not invent a reset timestamp.
+            memory["reset_at"] = None
         power_entity = cfg.get(CONF_ACTUAL_SOLAR_POWER)
         energy_entity = self._energy_entity()
         sources = {key: cfg.get(key, default) for key, default in DEFAULT_SOLAR_SOURCES.items()}
@@ -77,6 +81,7 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
         if source and memory.get("identity") not in (None, identity):
             memory.clear()
             memory["reset_reason"] = "production_or_forecast_source_changed"
+            memory["reset_at"] = now.isoformat()
         if source:
             memory["identity"] = identity
         stamp = now.timestamp()
@@ -125,7 +130,7 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
                 sky = sky if sky is not None and 0 <= sky <= 1 else None
                 candidates.append({"issued_at": stamp, "provider_received_at": success.timestamp(),
                     "start": start.timestamp(), "end": end.timestamp(), "day": start.date().isoformat(),
-                    "hour": start.hour, "lead": lead_bucket((end.timestamp() - stamp) / 3600),
+                    "hour": start.hour, "lead": lead_bucket((start.timestamp() - stamp) / 3600),
                     "raw_kwh": integrate_interval_energy_kwh(points, start, end),
                     "live_kwh": integrate_interval_energy_kwh(live, start, end),
                     "sky_bin": sky_bucket(sky), "forecast_sky": sky,
@@ -142,14 +147,16 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
             state = "forecast_unavailable"
         elif any(r["trained"] for r in newest):
             state = "shadow" if valid else state
-        diagnostic = {"forecast_applied": False, "model": "hour_lead_cloud_residual_v1", "model_version": 1,
+        diagnostic = {"forecast_applied": False, "model": "hour_lead_cloud_residual_v2", "model_version": 2,
             "status": state, "sources": {**sources, "power": power_entity, "energy": energy_entity},
             "current_observation": sample, "weather_forecast_available": weather_fresh,
             "forecast_fresh": forecast_fresh, "pending_forecasts": len(pending),
-            "scored_forecasts": len(memory.get("scored", [])), "metrics": stats,
-            "last_issue": memory.get("last_issue"), "reset_reason": memory.get("reset_reason"),
+            "pending_target_hours": len({(r["start"], r["lead"]) for r in newest}),
+            "scored_forecasts": stats["accepted_forecasts"],
+            "scored_issue_rows": stats["issued_forecast_rows"], "metrics": stats,
+            "last_issue": memory.get("last_issue"), "reset_reason": memory.get("reset_reason"), "reset_at": memory.get("reset_at"),
             "hourly_shadow": newest, "retention_days": 90,
-            "training_policy": "8 distinct target hours across 7 days per local-hour/lead/cloud group; bounded to +/-25%; never applied"}
+            "training_policy": "8 distinct target hours across 7 days per local-hour/lead/cloud group; score latest issue per target and horizon; bounded to +/-25%; never applied"}
         if issued or self._solar_saved_at is None or stamp - self._solar_saved_at >= 300:
             await self._solar_learning_store.async_save(memory)
             self._solar_saved_at = stamp

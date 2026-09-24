@@ -45,7 +45,7 @@ class SolarCoordinatorTests(unittest.TestCase):
         state('sensor.production', 2, 'kW')
         state('sensor.gw3000b_solar_radiation', 500, 'W/m²')
         state('sensor.gw3000b_outdoor_temperature', 77, '°F')
-        state('sensor.envoy_test_lifetime_energy_production', 5000, 'kWh')
+        state('sensor.envoy_test_lifetime_energy_production', 5, 'MWh')
         self.c.hass = SimpleNamespace(states=SimpleNamespace(get=self.states.get, async_all=lambda: list(self.states.values())))
         self.c._forecast_solar_source = lambda: (object(), None)
         self.c._estimate_source_signature = lambda source: {'site': 'test'}
@@ -67,6 +67,7 @@ class SolarCoordinatorTests(unittest.TestCase):
         self.assertFalse(data['rolling_ev_auto_charge_eligible'])
         d = data['solar_learning_diagnostics']
         self.assertEqual(d['current_observation']['power_w'], 2000)
+        self.assertEqual(d['current_observation']['energy_kwh'], 5000)
         self.assertEqual(d['current_observation']['temperature_c'], 25)
         self.assertFalse(d['forecast_applied'])
         self.assertFalse(d['weather_forecast_available'])
@@ -82,6 +83,13 @@ class SolarCoordinatorTests(unittest.TestCase):
         self.update()
         self.assertEqual(self.c._solar_memory['pending'], pending)
         self.assertEqual(self.c._solar_memory['actual_hours'], {})
+
+    def test_source_change_records_the_reset_time(self):
+        self.c._solar_memory = {"identity": "old-source", "pending": ["old"]}
+        self.update()
+        self.assertEqual(self.c._solar_memory["reset_reason"], "production_or_forecast_source_changed")
+        self.assertTrue(self.c._solar_memory["reset_at"].startswith("2026-09-23T12:00"))
+        self.assertNotIn("old", self.c._solar_memory["pending"])
 
     def test_stale_production_excluded_and_stale_forecast_not_issued(self):
         self.now += timedelta(hours=3)
@@ -102,6 +110,12 @@ class SolarCoordinatorTests(unittest.TestCase):
     def test_unknown_units_rejected(self):
         self.states['sensor.production'].attributes['unit_of_measurement'] = 'MW'
         self.assertFalse(self.update()['solar_learning_diagnostics']['current_observation']['valid'])
+
+    def test_lifetime_energy_can_be_slightly_older_than_live_power(self):
+        self.states['sensor.envoy_test_lifetime_energy_production'].last_reported = self.now - timedelta(minutes=20)
+        self.assertEqual(self.update()['solar_learning_diagnostics']['current_observation']['energy_kwh'], 5000)
+        self.states['sensor.envoy_test_lifetime_energy_production'].last_reported = self.now - timedelta(minutes=31)
+        self.assertIsNone(self.update()['solar_learning_diagnostics']['current_observation']['energy_kwh'])
 
     def test_future_weather_is_saved_as_issued(self):
         self.c._professional_attempts = {'weather': self.now}
