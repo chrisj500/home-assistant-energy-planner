@@ -7,7 +7,7 @@ from __future__ import annotations
 import math
 from statistics import median
 
-MODEL_VERSION = 1
+MODEL_VERSION = 2
 RETENTION_DAYS = 90
 MIN_DAYS = 7
 MIN_SAMPLES = 8
@@ -23,7 +23,7 @@ def number(value):
 
 
 def lead_bucket(hours):
-    return "1-3h" if hours <= 3 else "3-12h" if hours <= 12 else "12-25h"
+    return "0-3h" if hours < 3 else "3-12h" if hours < 12 else "12-24h"
 
 
 def sky_bucket(value):
@@ -96,6 +96,11 @@ def issue(memory, candidates):
 def finalize(memory, now):
     pending = []
     scored = memory.setdefault("scored", [])
+    # Normalize lead labels on persisted v1 outcomes after changing from
+    # target-end lead to target-start lead. Forecast observations stay intact.
+    for row in [*memory.get("pending", []), *scored]:
+        row["lead"] = lead_bucket((row["start"] - row["issued_at"]) / 3600)
+        row["model_version"] = MODEL_VERSION
     actual = memory.setdefault("actual_hours", {})
     for row in memory.get("pending", []):
         if row["end"] > now:
@@ -115,8 +120,17 @@ def finalize(memory, now):
 def scorecard(memory):
     rows = [r for r in memory.get("scored", []) if r.get("accepted") and r["raw_kwh"] >= 0.05]
     result = {}
-    for lead in ("1-3h", "3-12h", "12-25h"):
-        group = [r for r in rows if r["lead"] == lead]
+    for lead in ("0-3h", "3-12h", "12-24h"):
+        issued = [r for r in rows if r["lead"] == lead]
+        # Forecasts are refreshed hourly, so the same target hour may have
+        # several valid as-issued predictions. Score its latest prediction
+        # once per horizon bucket; never treat refreshes as independent samples.
+        latest_by_target = {}
+        for row in issued:
+            previous = latest_by_target.get(row["start"])
+            if previous is None or row["issued_at"] > previous["issued_at"]:
+                latest_by_target[row["start"]] = row
+        group = list(latest_by_target.values())
         trained = [r for r in group if r["trained"]]
         def scores(items):
             output = {"samples": len(items), "unique_target_hours": len({r["start"] for r in items})}
@@ -125,6 +139,9 @@ def scorecard(memory):
                 output[name] = {"mae_kwh": sum(map(abs, errors)) / len(errors) if errors else None,
                                 "bias_kwh": sum(errors) / len(errors) if errors else None}
             return output
-        result[lead] = {"all": scores(group), "trained_only": scores(trained)}
+        result[lead] = {"all": scores(group), "trained_only": scores(trained),
+                        "issued_rows": len(issued)}
     return {"by_horizon": result, "usable_days": len({r["day"] for r in rows}),
-            "accepted_forecasts": len(rows), "excluded_forecasts": sum(not r.get("accepted") for r in memory.get("scored", []))}
+            "accepted_forecasts": sum(v["all"]["samples"] for v in result.values()),
+            "issued_forecast_rows": len(rows),
+            "unique_target_hours": len({(r["start"], r["lead"]) for r in rows}), "excluded_forecasts": sum(not r.get("accepted") for r in memory.get("scored", []))}

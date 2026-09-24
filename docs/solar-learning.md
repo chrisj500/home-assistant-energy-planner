@@ -9,7 +9,7 @@ weather-to-solar model or a transformer. It cannot influence planner decisions.
 
 Every hour, freeze predictions for the next 24 complete UTC hours, along with the
 local date/hour, issuance time, provider retrieval time, and available weather.
-The furthest hour ends up to 25 hours after issuance. Save raw paid, v0.1.40 live
+The last target begins less than 24 hours after issuance and ends up to 25 hours later. Save raw paid, v0.1.40 live
 adjusted, and learned predictions separately. Only completed, valid observations
 available before issuance enter training. Repeated predictions of the same target
 hour count as one training observation within each group.

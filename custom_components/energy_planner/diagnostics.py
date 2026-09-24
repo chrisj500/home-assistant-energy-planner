@@ -118,6 +118,6 @@ async def async_get_config_entry_diagnostics(
         "internal_status": internal_status,
         "solar_learning_history": deepcopy({
             key: (getattr(coordinator, "_solar_memory", None) or {}).get(key)
-            for key in ("identity", "last_issue", "reset_reason", "actual_hours", "pending", "scored")
+            for key in ("identity", "last_issue", "reset_reason", "reset_at", "actual_hours", "pending", "scored")
         }),
     }
