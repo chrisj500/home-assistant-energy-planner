@@ -6,7 +6,7 @@ from typing import Any
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
-from .battery_flow import integrate_signed_power, normalize_power_w
+from .battery_flow import integrate_signed_power, is_power_unit, normalize_power_w
 from .const import (
     CONF_BATTERY_POWER_1,
     CONF_BATTERY_POWER_2,
@@ -87,12 +87,24 @@ class EnergyPlannerV022Coordinator(EnergyPlannerV021Coordinator):
 
         resolved: list[str] = []
         for power_entity, soc_entity in zip(configured, socs):
-            candidate = (
-                str(power_entity)
-                if power_entity
-                else self._derived_power_entity(soc_entity)
-            )
-            if not candidate or self.hass.states.get(candidate) is None:
+            candidates: list[str] = []
+            if power_entity:
+                candidates.append(str(power_entity))
+            derived = self._derived_power_entity(soc_entity)
+            if derived and derived not in candidates:
+                candidates.append(derived)
+
+            candidate = None
+            for entity_id in candidates:
+                state = self.hass.states.get(entity_id)
+                if state is None:
+                    continue
+                if not is_power_unit(state.attributes.get("unit_of_measurement")):
+                    continue
+                candidate = entity_id
+                break
+
+            if candidate is None:
                 return None
             resolved.append(candidate)
         return resolved[0], resolved[1], resolved[2]
