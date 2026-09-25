@@ -441,7 +441,7 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                         cf_mid.end_soc_pct, 2
                     ),
                     counterfactual_projected_export_kwh=round(
-                        cf_mid.predicted_export_kwh, 3
+                        cf_mid.export_kwh, 3
                     ),
                     counterfactual_projected_capacity_export_kwh=round(
                         cf_mid.capacity_export_kwh, 3
@@ -470,7 +470,7 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                     round(cf_mid.end_soc_pct, 2) if cf_mid is not None else None
                 ),
                 "counterfactual_export_kwh": (
-                    round(cf_mid.predicted_export_kwh, 3)
+                    round(cf_mid.export_kwh, 3)
                     if cf_mid is not None
                     else None
                 ),
