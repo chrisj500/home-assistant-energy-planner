@@ -151,6 +151,10 @@ def suppress_actions(data, status, reason):
     })
     for row in data.get("rolling_day_plans", []):
         row["nominal_dynamic_load_needed"] = row.get("dynamic_load_needed", False)
+        row["nominal_dynamic_load_needed_kwh"] = row.get(
+            "dynamic_load_needed_kwh",
+            0.0,
+        )
         row["dynamic_load_needed"] = False
         row["dynamic_load_needed_kwh"] = 0.0
         row["status"] = (row["confidence"] if status == "clear" and
