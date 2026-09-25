@@ -1024,15 +1024,14 @@ views:
                       Number.isFinite(Number(row.display_uncertainty_pct))
                         ? Number(row.display_uncertainty_pct)
                         : null;
-                    const confidence = String(
-                      row?.display_confidence ||
-                      row?.confidence ||
-                      'learning'
-                    ).replaceAll('_',' ');
+                    const confidence =
+                      row?.display_confidence
+                        ? String(row.display_confidence).replaceAll('_',' ')
+                        : '';
                     const confidenceText =
                       uncertainty === null
-                        ? (confidence === 'learning' ? 'learning' : confidence)
-                        : `±${uncertainty.toFixed(uncertainty >= 10 ? 0 : 1)}% · ${confidence}`;
+                        ? (confidence || 'forecast')
+                        : `±${uncertainty.toFixed(uncertainty >= 10 ? 0 : 1)}%${confidence ? ` · ${confidence}` : ''}`;
 
                     return `
                     <div style="
