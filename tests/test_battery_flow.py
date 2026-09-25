@@ -7,7 +7,7 @@ import unittest
 MODULE_DIR = Path(__file__).resolve().parents[1] / "custom_components" / "energy_planner"
 sys.path.insert(0, str(MODULE_DIR))
 
-from battery_flow import integrate_signed_power, normalize_power_w  # noqa: E402
+from battery_flow import integrate_signed_power, is_power_unit, normalize_power_w  # noqa: E402
 
 
 class BatteryFlowTests(unittest.TestCase):
@@ -16,6 +16,12 @@ class BatteryFlowTests(unittest.TestCase):
         self.assertEqual(normalize_power_w(1.5, "kW"), 1500)
         self.assertEqual(normalize_power_w(0.002, "MW"), 2000)
         self.assertEqual(normalize_power_w(750, None), 750)
+
+    def test_power_unit_recognition_rejects_soc_units(self) -> None:
+        self.assertTrue(is_power_unit("W"))
+        self.assertTrue(is_power_unit("kW"))
+        self.assertFalse(is_power_unit("%"))
+        self.assertFalse(is_power_unit(None))
 
     def test_constant_charge_integrates_to_kwh(self) -> None:
         result = integrate_signed_power(1000, 1000, 3600)
