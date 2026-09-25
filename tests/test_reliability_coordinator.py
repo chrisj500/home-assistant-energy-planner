@@ -179,6 +179,39 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(row["confidence"], "low")
         self.assertEqual(row["display_confidence"], "medium")
 
+    def test_export_risk_uses_high_solar_case_not_low_solar_case(self):
+        # Nominal production is moderate, but the export-defense envelope should
+        # still protect headroom if solar materially beats the point forecast.
+        for key in ("s1", "s2", "s3"):
+            self.states[key].state = "82"
+        self.c._estimate_payload["result"]["watts"] = {
+            (self.now + timedelta(hours=i)).isoformat(): 7000
+            for i in range(10)
+        }
+        self.data["rolling_day_plans"][0]["sunset_soc_pct"] = 95
+        profiles, candidate, amount, *_ = self.c._scenarios(self.data, self.now)
+        row = self.data["rolling_day_plans"][0]
+        self.assertEqual(row["forecast_objective"], "zero_export")
+        self.assertTrue(row["export_defense_risk"])
+        self.assertGreater(row["export_defense_sunset_soc_pct"], 90)
+        self.assertGreater(row["export_defense_headroom_kwh"], 0)
+        self.assertEqual(candidate, "2026-09-18")
+        self.assertGreater(amount, 0)
+        self.assertTrue(self.data["forecast_export_risk"])
+        self.assertEqual(
+            self.data["forecast_export_risk_date"],
+            "2026-09-18",
+        )
+
+    def test_export_risk_is_visible_before_action_gate_is_ready(self):
+        self.c.baseline = deepcopy(self.data)
+        result = asyncio.run(self.c._async_update_data())
+        self.assertEqual(result["forecast_reliability_status"], "learning")
+        self.assertTrue(result["forecast_export_risk"])
+        self.assertNotEqual(result["forecast_export_risk_date"], "none")
+        self.assertGreater(result["forecast_export_headroom_kwh"], 0)
+        self.assertFalse(result["rolling_ev_auto_charge_eligible"])
+
     def test_low_solar_does_not_justify_headroom(self):
         self.states["remaining"].state = "1"
         self.states["solar"].state = "200"
@@ -344,6 +377,35 @@ class CoordinatorTests(unittest.TestCase):
         suppress_actions(self.data, "ready", "confirmed")
         points, windows = self.ev_inputs()
         self.c._verified_ev(self.data, now, "2026-09-18", 6, points, windows, 1300, .9)
+
+    def test_future_export_risk_can_publish_a_planned_ev_window(self):
+        tomorrow = self.now.date() + timedelta(days=1)
+        sunrise = self.now.replace(hour=6) + timedelta(days=1)
+        sunset = self.now.replace(hour=18) + timedelta(days=1)
+        points = [
+            IntervalPoint(sunrise, 0),
+            IntervalPoint(sunrise + timedelta(hours=6), 15000),
+            IntervalPoint(sunset, 0),
+        ]
+        windows = [DaylightWindow(tomorrow, sunrise, sunset)]
+        suppress_actions(self.data, "ready", "confirmed")
+        self.data["rolling_ev_available_energy_kwh"] = 6
+        self.data["rolling_ev_charge_power_w"] = 6000
+        self.data["rolling_ev_soc_data_status"] = "fresh"
+        self.c._verified_ev(
+            self.data,
+            self.now,
+            tomorrow.isoformat(),
+            4.5,
+            points,
+            windows,
+            700,
+            0.9,
+        )
+        self.assertEqual(self.data["rolling_ev_status"], "planned")
+        self.assertFalse(self.data["rolling_ev_auto_charge_eligible"])
+        self.assertIsNotNone(self.data["rolling_ev_window_start"])
+        self.assertGreater(self.data["rolling_ev_recommended_energy_kwh"], 0)
 
     def test_ev_needs_ten_minutes_and_revokes_on_solar_loss(self):
         for minute in range(10):
