@@ -75,6 +75,27 @@ class SensorCatalogTests(unittest.TestCase):
             ("storm_safety_status", "Storm Safety Status"),
         )
 
+    def test_export_first_forecast_entities_are_registered(self) -> None:
+        source = SENSOR_PATH.read_text(encoding="utf-8")
+        for key in (
+            "forecast_export_risk_date",
+            "forecast_export_headroom_kwh",
+            "forecast_export_wall_energy_kwh",
+            "forecast_export_risk_reason",
+            "forecast_export_model",
+            "forecast_objective",
+        ):
+            self.assertIn(key, source)
+
+        binary_path = (
+            Path(__file__).resolve().parents[1]
+            / "custom_components"
+            / "energy_planner"
+            / "binary_sensor.py"
+        )
+        binary_source = binary_path.read_text(encoding="utf-8")
+        self.assertIn("EnergyPlannerForecastExportRisk", binary_source)
+
     def test_counterfactual_sensors_are_registered(self) -> None:
         source = SENSOR_PATH.read_text(encoding="utf-8")
         for key in (

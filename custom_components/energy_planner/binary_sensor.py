@@ -14,6 +14,7 @@ async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> Non
             EnergyPlannerHeadroomRisk(coordinator, entry),
             EnergyPlannerDynamicLoadForecast(coordinator, entry),
             EnergyPlannerAutoChargeEligible(coordinator, entry),
+            EnergyPlannerForecastExportRisk(coordinator, entry),
             EnergyPlannerCounterfactualHeadroomRisk(coordinator, entry),
             EnergyPlannerLiveSolarCaptureOpportunity(coordinator, entry),
             EnergyPlannerNextSunsetAvailable(coordinator, entry),
@@ -139,6 +140,43 @@ class EnergyPlannerAutoChargeEligible(
             "headroom_preserved_kwh": data.get("rolling_ev_headroom_preserved_kwh"),
             "surplus_next_3d_kwh": data.get("rolling_ev_surplus_next_3d_kwh"),
             "surplus_horizon_kwh": data.get("rolling_ev_surplus_horizon_kwh"),
+        }
+
+
+class EnergyPlannerForecastExportRisk(
+    CoordinatorEntity[EnergyPlannerV018Coordinator], BinarySensorEntity
+):
+    """Forecast risk that solar will exhaust stationary-battery headroom."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Forecast Export Risk"
+
+    def __init__(self, coordinator: EnergyPlannerV018Coordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_forecast_export_risk"
+        self._attr_device_info = {
+            "identifiers": {("energy_planner", entry.entry_id)},
+            "name": entry.title,
+            "manufacturer": "Community",
+            "model": "Energy Planner",
+        }
+
+    @property
+    def is_on(self) -> bool:
+        return bool((self.coordinator.data or {}).get("forecast_export_risk", False))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        data = self.coordinator.data or {}
+        return {
+            "risk_date": data.get("forecast_export_risk_date"),
+            "headroom_kwh": data.get("forecast_export_headroom_kwh"),
+            "flexible_load_kwh": data.get("forecast_export_wall_energy_kwh"),
+            "reason": data.get("forecast_export_risk_reason"),
+            "risk_days": data.get("forecast_export_risk_days"),
+            "model": data.get("forecast_export_model"),
+            "objective": data.get("forecast_objective"),
+            "reliability_status": data.get("forecast_reliability_status"),
         }
 
 

@@ -121,10 +121,10 @@ def gate(
     if confidence in {"learning", "low"}:
         return confidence, "Forecast evidence is insufficient or inaccurate—do not act."
     if not candidate:
-        return "clear", "No headroom action survives conservative assumptions and the safety margin."
+        return "clear", "Zero-export forecast does not currently require additional headroom."
     if not stable:
         return "pending", "Headroom risk is provisional; waiting for three refreshes over at least one hour."
-    return "ready", "Headroom need survives conservative assumptions, safety margin, and repeated refreshes."
+    return "ready", "Export-defense headroom need is confirmed across repeated forecast refreshes."
 
 
 def suppress_actions(data, status, reason):

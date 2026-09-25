@@ -180,24 +180,31 @@ class DashboardLayoutTests(unittest.TestCase):
         self.assertIn("EV solar today", headroom)
         self.assertIn("Avoided export", headroom)
 
+    def test_battery_outlook_uses_export_defense_risk_even_when_status_is_low(self):
+        outlook = self.sections[2]["cards"][1]["custom_fields"]["content"]
+        self.assertIn("export_defense_risk", outlook)
+        self.assertIn("export_defense_wall_energy_kwh", outlook)
+        self.assertNotIn("nominal_dynamic_load_needed", outlook)
+
     def test_future_risk_precedes_no_ev_action_message(self):
         what = next(
             section for section in self.sections
             if self._heading(section) == "What To Do"
         )
         content = what["cards"][1]["content"]
-        self.assertIn("FUTURE HEADROOM RISK", content)
-        self.assertIn("sensor.energy_planner_rolling_headroom_risk_date", content)
+        self.assertIn("EXPORT RISK", content)
+        self.assertIn("sensor.energy_planner_forecast_export_risk_date", content)
         self.assertIn("Lexus is already full", content)
+        self.assertIn("zero-export forecast", content)
         self.assertLess(
-            content.index("FUTURE HEADROOM RISK"),
+            content.index("EXPORT RISK"),
             content.index("NO EV ACTION REQUIRED"),
         )
 
-    def test_battery_outlook_displays_nominal_future_risk(self):
+    def test_battery_outlook_displays_export_defense_future_risk(self):
         outlook = self.sections[2]["cards"][1]["custom_fields"]["content"]
-        self.assertIn("nominal_dynamic_load_needed", outlook)
-        self.assertIn("nominal_dynamic_load_needed_kwh", outlook)
+        self.assertIn("export_defense_risk", outlook)
+        self.assertIn("export_defense_wall_energy_kwh", outlook)
         self.assertIn("'Risk'", outlook)
 
     def test_learning_withholds_recommendation(self):

@@ -1,6 +1,6 @@
-# Energy Planning dashboard v23
+# Energy Planning dashboard v24
 #
-# Compact operating dashboard for Energy Planner v0.1.46.
+# Compact operating dashboard for Energy Planner v0.1.47.
 # Requires custom:button-card.
 #
 # Design priorities:
@@ -892,37 +892,25 @@ views:
                     index
                   ) => {
 
+                    const exportRisk = Boolean(row?.export_defense_risk);
+                    if (exportRisk) {
+                      const amount = Number(row?.export_defense_wall_energy_kwh ?? 0);
+                      return {
+                        color: index === 0 ? '#ff453a' : '#ffd60a',
+                        text:
+                          amount > 0
+                            ? `${amount.toFixed(1)} kWh`
+                            : 'Risk'
+                      };
+                    }
+
                     if (!['clear', 'confirmed_headroom_risk'].includes(row?.status)) {
                       return {color:'transparent', text:''};
                     }
 
-                    const confirmed = Boolean(row?.dynamic_load_needed);
-                    const nominal = Boolean(row?.nominal_dynamic_load_needed);
-
-                    if (!confirmed && !nominal) {
-                      return {
-                        color:'#30d158',
-                        text:'Clear'
-                      };
-                    }
-
-                    const amount =
-                      Number(
-                        confirmed
-                          ? row.dynamic_load_needed_kwh
-                          : row.nominal_dynamic_load_needed_kwh
-                        ?? 0
-                      );
-
                     return {
-                      color:
-                        confirmed && index === 0
-                          ? '#ff453a'
-                          : '#ffd60a',
-                      text:
-                        amount > 0
-                          ? `${amount.toFixed(1)} kWh`
-                          : 'Risk'
+                      color:'#30d158',
+                      text:'Clear'
                     };
                   };
 
@@ -1336,14 +1324,14 @@ views:
                         <span style="
                           color:#ffd60a;
                         ">●</span>
-                        future useful load
+                        export risk
 
                         &nbsp;&nbsp;
 
                         <span style="
                           color:#ff453a;
                         ">●</span>
-                        useful load today
+                        export risk today
 
                       </div>
 
@@ -1385,7 +1373,10 @@ views:
               {% set live = 'binary_sensor.energy_planner_live_solar_capture_opportunity' %}
               {% set cf = 'binary_sensor.energy_planner_no_action_headroom_risk_today' %}
               {% set reliability = states('sensor.energy_planner_forecast_reliability_status') %}
-              {% set risk_date = states('sensor.energy_planner_rolling_headroom_risk_date') %}
+              {% set risk_date = states('sensor.energy_planner_forecast_export_risk_date') %}
+              {% set risk_headroom = states('sensor.energy_planner_forecast_export_defense_headroom') | float(0) %}
+              {% set risk_load = states('sensor.energy_planner_forecast_flexible_load_energy_needed') | float(0) %}
+              {% set risk_reason = states('sensor.energy_planner_forecast_export_risk_reason') %}
               {% set reason = state_attr(e,'reason') %}
               {% set live_reason = state_attr(live,'reason') %}
               {% set live_status = state_attr(live,'status') %}
@@ -1411,12 +1402,13 @@ views:
               ## 🟡 NO-ACTION HEADROOM RISK
               **{{ live_reason or 'Without a flexible load, the battery is on a saturation trajectory.' }}**
               {% elif risk_date not in ['none','unknown','unavailable',''] %}
-              ## 🟡 FUTURE HEADROOM RISK
+              ## 🟡 EXPORT RISK — {{ risk_date }}
               {% if available | float(0) <= 0 %}
-              **Battery saturation is forecast for {{ risk_date }}, but the Lexus is already full. Plan another flexible load or create EV capacity before the high-solar period.**
+              **The zero-export forecast needs about {{ risk_headroom | round(1) }} kWh of stationary-battery headroom (about {{ risk_load | round(1) }} kWh of flexible-load energy), but the Lexus is already full. Plan another flexible load or create EV capacity before the high-solar period.**
               {% else %}
-              **Battery saturation is forecast for {{ risk_date }}. Preserve headroom with a flexible load when a solar-rich window is verified.**
+              **The zero-export forecast needs about {{ risk_headroom | round(1) }} kWh of stationary-battery headroom (about {{ risk_load | round(1) }} kWh of flexible-load energy). Use the solar-rich window when verified.**
               {% endif %}
+              _Risk basis: {{ risk_reason | replace('_',' ') }}. Confidence gates action timing, not whether the export risk is displayed._
               {% elif reliability == 'learning' %}
               ## 🟡 FORECAST LEARNING
               **No forecast-dependent recommendation yet.** {{ reason or states('sensor.energy_planner_forecast_learning_progress') }}
@@ -1478,6 +1470,11 @@ views:
               - sensor.energy_planner_forecast_confidence
               - sensor.energy_planner_forecast_error_samples
               - sensor.energy_planner_forecast_reliability_reason
+              - binary_sensor.energy_planner_forecast_export_risk
+              - sensor.energy_planner_forecast_export_risk_date
+              - sensor.energy_planner_forecast_export_defense_headroom
+              - sensor.energy_planner_forecast_flexible_load_energy_needed
+              - sensor.energy_planner_forecast_export_risk_reason
               - binary_sensor.energy_planner_no_action_headroom_risk_today
               - binary_sensor.energy_planner_live_solar_capture_opportunity
               - sensor.energy_planner_no_action_counterfactual_soc
