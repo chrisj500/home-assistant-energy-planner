@@ -15,6 +15,11 @@ from .const import (
     OPT_EV_SOLAR_ADVISORY_ENABLED, DEFAULT_EV_SOLAR_ADVISORY_ENABLED,
 )
 from .coordinator import _controller_settings, _num, _solar_window
+from .counterfactual import (
+    advance_counterfactual_ledger,
+    counterfactual_bank_socs,
+    live_capture_metrics,
+)
 from .enhanced_coordinator import _parse_weights
 from .forecast_solar_shadow import IntervalPoint, interval_points_from_payload
 from .headroom import correct_current_day_points
@@ -34,6 +39,8 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         self._trust = None
         self._surplus_since = None
         self._last_live_at = None
+        self._live_capture_since = None
+        self._last_live_capture_at = None
 
     def _fresh_power(self, entity, now):
         state = self.hass.states.get(entity) if entity else None
@@ -47,6 +54,248 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         if value is None or unit not in {"W", "kW"}:
             return None
         return value * (1000 if unit == "kW" else 1)
+
+    def _live_solar_surplus_w(self, data, now):
+        solar = self._fresh_power(self.cfg.get(CONF_ACTUAL_SOLAR_POWER), now)
+        configured_base = self._fresh_power(self.cfg.get(CONF_BASE_LOAD_POWER), now)
+        planning_base = number(data.get("rolling_planning_base_load_w"))
+        loads = [
+            value
+            for value in (configured_base, planning_base)
+            if value is not None and value >= 0
+        ]
+        if solar is None or not loads:
+            return None
+        return max(solar - max(loads), 0.0)
+
+    def _update_counterfactual_ledger(self, data, now):
+        capacity = number(self.cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH))
+        stored = number(data.get("stored_energy"))
+        limit = _num(self.hass, self.cfg.get(CONF_CHARGE_LIMIT))
+        if capacity is None or capacity <= 0 or stored is None or limit is None:
+            data.update(
+                counterfactual_status="unavailable",
+                counterfactual_reason="Battery energy or charge-limit input unavailable",
+            )
+            return
+
+        efficiency = float(
+            self.cfg.get(OPT_CHARGE_EFFICIENCY, DEFAULT_CHARGE_EFFICIENCY)
+        )
+        ev_power = number(data.get("rolling_ev_current_power_w")) or 0.0
+        solar_surplus = self._live_solar_surplus_w(data, now)
+        ledger = advance_counterfactual_ledger(
+            self._trust.get("counterfactual_ledger"),
+            now=now,
+            actual_stored_kwh=stored,
+            capacity_kwh=capacity,
+            charge_limit_pct=limit,
+            charge_efficiency=efficiency,
+            ev_power_w=ev_power,
+            solar_surplus_w=solar_surplus,
+        )
+        self._trust["counterfactual_ledger"] = ledger
+
+        ceiling = capacity * min(max(float(limit), 0.0), 100.0) / 100.0
+        cf_stored = number(ledger.get("counterfactual_stored_kwh")) or stored
+        preserved = max(cf_stored - stored, 0.0)
+        wall = number(ledger.get("ev_wall_kwh")) or 0.0
+        solar_ev = number(ledger.get("ev_solar_kwh")) or 0.0
+        data.update(
+            counterfactual_status="tracking",
+            counterfactual_reason="Observed battery movement plus measured solar diverted to EV",
+            counterfactual_stored_kwh=cf_stored,
+            counterfactual_soc_pct=100.0 * cf_stored / capacity,
+            counterfactual_headroom_kwh=max(ceiling - cf_stored, 0.0),
+            counterfactual_preserved_headroom_kwh=preserved,
+            counterfactual_avoided_export_kwh=number(
+                ledger.get("avoided_export_kwh")
+            )
+            or 0.0,
+            ev_wall_energy_today_kwh=wall,
+            ev_solar_energy_today_kwh=solar_ev,
+            ev_solar_fraction_today_pct=(
+                100.0 * solar_ev / wall if wall > 0 else None
+            ),
+            ev_solar_stored_equivalent_today_kwh=number(
+                ledger.get("ev_solar_stored_equiv_kwh")
+            )
+            or 0.0,
+            live_solar_surplus_w=solar_surplus,
+        )
+
+    def _live_capture_ev(self, data, now):
+        data.update(
+            live_solar_capture_opportunity=False,
+            live_solar_capture_status="clear",
+            live_solar_capture_reason="No measured no-action saturation risk.",
+            live_solar_capture_recommended_energy_kwh=0.0,
+        )
+        if data.get("storm") is not False:
+            self._live_capture_since = None
+            self._last_live_capture_at = now
+            data.update(
+                live_solar_capture_status="blocked",
+                live_solar_capture_reason="Storm safety is active or unavailable.",
+            )
+            return
+
+        headroom = number(data.get("counterfactual_headroom_kwh"))
+        surplus = self._live_solar_surplus_w(data, now)
+        _sunrise, sunset = _solar_window(self.hass, now.date())
+        if headroom is None or surplus is None or sunset is None or now >= sunset:
+            self._live_capture_since = None
+            self._last_live_capture_at = now
+            return
+
+        remaining_h = max((sunset - now).total_seconds() / 3600.0, 0.0)
+        efficiency = float(
+            self.cfg.get(OPT_CHARGE_EFFICIENCY, DEFAULT_CHARGE_EFFICIENCY)
+        )
+        metrics = live_capture_metrics(
+            counterfactual_headroom_kwh=headroom,
+            solar_surplus_w=surplus,
+            remaining_daylight_hours=remaining_h,
+            charge_efficiency=efficiency,
+        )
+        fill_hours = number(metrics.get("fill_hours"))
+        forecast_export = max(
+            number(data.get("counterfactual_projected_export_kwh")) or 0.0,
+            0.0,
+        )
+        forecast_soc = number(data.get("counterfactual_projected_sunset_soc_pct"))
+        charge_limit = _num(self.hass, self.cfg.get(CONF_CHARGE_LIMIT))
+        forecast_risk = forecast_export >= 0.25 or (
+            forecast_soc is not None
+            and charge_limit is not None
+            and forecast_soc >= float(charge_limit) - 0.5
+        )
+        runway_risk = bool(metrics.get("risk"))
+        risk = forecast_risk or runway_risk or headroom <= 0.25
+        data.update(
+            counterfactual_risk_today=risk,
+            counterfactual_risk_source=(
+                "forecast_and_live_runway"
+                if forecast_risk and runway_risk
+                else "forecast"
+                if forecast_risk
+                else "live_runway"
+                if runway_risk
+                else "none"
+            ),
+            counterfactual_live_fill_hours=(
+                fill_hours if fill_hours is not None and fill_hours < 1_000_000 else None
+            ),
+            counterfactual_remaining_daylight_hours=remaining_h,
+            counterfactual_live_implied_export_kwh=max(
+                number(metrics.get("implied_excess_ac_kwh")) or 0.0,
+                0.0,
+            ),
+            live_solar_surplus_w=surplus,
+        )
+        if not risk:
+            self._live_capture_since = None
+            self._last_live_capture_at = now
+            return
+
+        available = number(data.get("rolling_ev_available_energy_kwh"))
+        learned_power = number(data.get("rolling_ev_charge_power_w"))
+        current_power = number(data.get("rolling_ev_current_power_w")) or 0.0
+        charge_power = current_power if current_power >= 500 else learned_power
+        home = self.hass.states.get(self.cfg.get(CONF_EV_HOME, ""))
+        soc_status = data.get("rolling_ev_soc_data_status")
+        soc_ok = soc_status == "fresh" or (
+            current_power >= 500 and soc_status == "charging_soc_stale"
+        )
+        if (
+            home is None
+            or home.state != "home"
+            or not soc_ok
+            or available is None
+            or available <= 0.0
+            or charge_power is None
+            or charge_power < 500.0
+        ):
+            self._live_capture_since = None
+            self._last_live_capture_at = now
+            data.update(
+                live_solar_capture_status="blocked",
+                live_solar_capture_reason=(
+                    "No-action saturation risk is present, but EV home/SOC/capacity "
+                    "telemetry is not ready."
+                ),
+            )
+            return
+
+        live_ok = surplus >= charge_power + 500.0
+        gap = (
+            self._last_live_capture_at is not None
+            and (now - self._last_live_capture_at).total_seconds() > 120
+        )
+        if not live_ok or gap:
+            self._live_capture_since = None
+        self._last_live_capture_at = now
+        if live_ok:
+            self._live_capture_since = self._live_capture_since or now
+
+        implied_export = max(
+            number(metrics.get("implied_excess_ac_kwh")) or 0.0,
+            forecast_export,
+        )
+        recommended = min(max(available, 0.0), max(implied_export, 0.0))
+        verified = (
+            self._live_capture_since is not None
+            and (now - self._live_capture_since).total_seconds() >= 600
+        )
+        if not verified:
+            data.update(
+                live_solar_capture_status="pending" if live_ok else "waiting_for_surplus",
+                live_solar_capture_reason=(
+                    "No-action battery saturation risk detected; verifying ten "
+                    "minutes of measured solar surplus sufficient for the EV."
+                    if live_ok
+                    else "No-action battery saturation risk detected; wait for "
+                    "measured solar surplus to cover EV power plus 500 W."
+                ),
+                live_solar_capture_recommended_energy_kwh=recommended,
+            )
+            return
+
+        reason = (
+            "Charge EV now from measured solar: the no-action battery trajectory "
+            "would exhaust headroom before sunset."
+        )
+        data.update(
+            live_solar_capture_opportunity=True,
+            live_solar_capture_status="capture_now",
+            live_solar_capture_reason=reason,
+            live_solar_capture_recommended_energy_kwh=recommended,
+            today_strategy="capture_solar",
+            today_strategy_reason=reason,
+            ev_plan=reason,
+        )
+
+        # Preserve the user's legacy advisory toggle for the automation-facing
+        # eligibility surface. The new live-capture sensor remains informational
+        # even when that older toggle is disabled.
+        enabled = self.cfg.get(
+            OPT_EV_SOLAR_ADVISORY_ENABLED,
+            DEFAULT_EV_SOLAR_ADVISORY_ENABLED,
+        )
+        if enabled:
+            data.update(
+                rolling_ev_status="green",
+                rolling_ev_status_reason=reason,
+                rolling_ev_auto_charge_eligible=True,
+                rolling_ev_auto_charge_reason=reason,
+                rolling_ev_recommended_energy_kwh=recommended,
+                rolling_ev_window_start=now.isoformat(),
+                rolling_ev_window_end=sunset.isoformat(),
+                rolling_ev_window_solar_kwh=recommended,
+                rolling_ev_window_grid_kwh=0.0,
+                rolling_ev_window_solar_fraction_pct=100.0,
+                rolling_ev_headroom_preserved_kwh=recommended * efficiency,
+            )
 
     def _scenarios(self, data, now):
         rows = data.get("rolling_day_plans") or []
@@ -120,6 +369,23 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                                     overnight_drop_kw=max([median_drop * 1.30, *drops]), **common)
         high = simulate_rolling_days(points=upper_points, average_load_kw=load / 1000 * .70,
                                      overnight_drop_kw=min([median_drop * .70, *drops]), **common)
+
+        counterfactual = []
+        counterfactual_stored = number(data.get("counterfactual_stored_kwh"))
+        if counterfactual_stored is not None:
+            counterfactual_socs = counterfactual_bank_socs(
+                actual_socs_pct=socs,
+                capacities_kwh=capacities,
+                target_stored_kwh=counterfactual_stored,
+                charge_limit_pct=limit,
+            )
+            counterfactual = simulate_rolling_days(
+                points=points,
+                average_load_kw=load / 1000,
+                overnight_drop_kw=median_drop,
+                **{**common, "initial_bank_socs_pct": counterfactual_socs},
+            )
+
         if len(nominal) != len(rows) or len(low) != len(rows) or len(high) != len(rows):
             raise ValueError("Incomplete scenario horizon")
         candidate = None
@@ -127,7 +393,7 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         reserve_floor = min(max(float(reserve), 0.0), 100.0)
         window_by_date = {window.day: window for window in windows}
         current_soc = sum(soc * cap for soc, cap in zip(socs, capacities)) / capacity
-        for row, mid, lo, hi in zip(rows, nominal, low, high):
+        for index, (row, mid, lo, hi) in enumerate(zip(rows, nominal, low, high)):
             profile = profiles[row["date"]]
             width = profile["width_soc"]
             window = window_by_date[lo.day]
@@ -162,6 +428,21 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             margin = max(2.0, capacity * .05, capacity * width / 100)
             robust = max(0.0, min(lo.headroom_shortfall_kwh,
                                   lo.capacity_export_kwh * efficiency) - margin)
+            cf_mid = counterfactual[index] if index < len(counterfactual) else None
+            if is_today and cf_mid is not None:
+                data.update(
+                    counterfactual_projected_sunset_soc_pct=round(
+                        cf_mid.end_soc_pct, 2
+                    ),
+                    counterfactual_projected_export_kwh=round(
+                        cf_mid.predicted_export_kwh, 3
+                    ),
+                    counterfactual_projected_capacity_export_kwh=round(
+                        cf_mid.capacity_export_kwh, 3
+                    ),
+                    counterfactual_projection_model="no_discretionary_load_live_anchored",
+                )
+
             row.update({
                 # This planner assumes grid-connected operation. EcoFlow reserve is
                 # therefore a hard policy floor for displayed SOC scenarios.
@@ -179,6 +460,14 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 "conservative_headroom_kwh": round(robust, 2),
                 "range_kind": "scenario_envelope_not_probability_interval",
                 "range_assumption": "grid_connected_reserve_enforced",
+                "counterfactual_sunset_soc_pct": (
+                    round(cf_mid.end_soc_pct, 2) if cf_mid is not None else None
+                ),
+                "counterfactual_export_kwh": (
+                    round(cf_mid.predicted_export_kwh, 3)
+                    if cf_mid is not None
+                    else None
+                ),
             })
             lead = (lo.day - now.date()).days
             if candidate is None and robust > 0 and lead <= 2:
@@ -216,11 +505,18 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         now = dt_util.now()
         if self._trust is None:
             self._trust = await self._trust_store.async_load() or {}
-            for key, default in (("records", []), ("pending", {}), ("revisions", []), ("decisions", [])):
+            for key, default in (
+                ("records", []),
+                ("pending", {}),
+                ("revisions", []),
+                ("decisions", []),
+                ("counterfactual_ledger", None),
+            ):
                 self._trust.setdefault(key, default)
             # Require new confirmations after restart; keep scored forecasts.
             self._trust["revisions"] = []
         previous_trust = deepcopy(self._trust)
+        self._update_counterfactual_ledger(data, now)
         status, reason = "unavailable", "Forecast inputs unavailable—do not act."
 
         # Learning evidence is persistent and independent of whether today's
@@ -347,13 +643,26 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             suppress_actions(data, status, reason)
             self._surplus_since = None
         data.update(forecast_reliability_status=status, forecast_reliability_reason=reason)
+        try:
+            self._live_capture_ev(data, now)
+        except Exception as err:
+            _LOGGER.exception("Live solar-capture evaluation failed")
+            data.update(
+                live_solar_capture_opportunity=False,
+                live_solar_capture_status="unavailable",
+                live_solar_capture_reason=f"Live capture evaluation unavailable: {type(err).__name__}",
+            )
+            self._live_capture_since = None
+
         decision = {"status": status, "reason": reason,
                     "ev_reason": data.get("rolling_ev_auto_charge_reason"),
                     "confidence": data.get("forecast_confidence"),
                     "planning_load_w": data.get("rolling_planning_base_load_w"),
                     "planning_load_source": data.get("rolling_planning_base_load_source"),
                     "storm": data.get("storm"),
-                    "revision": data.get("forecast_revision_at")}
+                    "revision": data.get("forecast_revision_at"),
+                    "counterfactual_risk": data.get("counterfactual_risk_today"),
+                    "live_capture": data.get("live_solar_capture_opportunity")}
         if not self._trust["decisions"] or any(self._trust["decisions"][-1].get(k) != v for k, v in decision.items()):
             self._trust["decisions"].append({**decision, "at": now.isoformat(),
                                              "days": data.get("rolling_day_plans", [])})
