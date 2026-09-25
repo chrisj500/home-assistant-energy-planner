@@ -23,6 +23,7 @@ from counterfactual import (
     counterfactual_bank_socs,
     live_capture_metrics,
 )
+from export_defense import assess_export_defense
 from rolling_ev import DaylightWindow, simulate_rolling_days, choose_ev_charge_window
 from simulation import ControllerSettings
 from reliability import MIN_EVIDENCE_SAMPLES, evidence, gate, number, observe, suppress_actions, sunset_envelope
