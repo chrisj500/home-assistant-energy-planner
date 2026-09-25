@@ -1032,14 +1032,10 @@ views:
                       row?.display_confidence
                         ? String(row.display_confidence).replaceAll('_',' ')
                         : '';
-                    const isFinal =
-                      row?.display_forecast_source === 'observed_sunset';
                     const confidenceText =
-                      isFinal
-                        ? 'final'
-                        : uncertainty === null
-                          ? (confidence || 'forecast')
-                          : `±${uncertainty.toFixed(uncertainty >= 10 ? 0 : 1)}%${confidence ? ` · ${confidence}` : ''}`;
+                      uncertainty === null
+                        ? (confidence || 'forecast')
+                        : `±${uncertainty.toFixed(uncertainty >= 10 ? 0 : 1)}%${confidence ? ` · ${confidence}` : ''}`;
 
                     return `
                     <div style="
