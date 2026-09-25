@@ -5,7 +5,6 @@
 - Same-day displayed uncertainty now contracts with the fraction of daylight still unobserved.
 - Historical sunset MAE remains the full-horizon baseline for future days.
 - Today's live-anchored display confidence is no longer downgraded solely because the multi-day provider forecast is unstable.
-- After sunset, the completed day is labeled final and its displayed uncertainty is zero.
 
 ## Dashboard
 
