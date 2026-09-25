@@ -237,6 +237,80 @@ SENSORS = (
         suggested_display_precision=1,
     ),
 
+    # No-action counterfactual and measured solar-capture ledger.
+    EnergyPlannerSensorDescription(
+        key="counterfactual_status",
+        data_key="counterfactual_status",
+        name="No-Action Counterfactual Status",
+    ),
+    _soc(
+        "counterfactual_soc",
+        "counterfactual_soc_pct",
+        "No-Action Counterfactual SOC",
+    ),
+    _energy(
+        "counterfactual_stored_energy",
+        "counterfactual_stored_kwh",
+        "No-Action Counterfactual Stored Energy",
+        storage=True,
+    ),
+    _energy(
+        "counterfactual_headroom",
+        "counterfactual_headroom_kwh",
+        "No-Action Counterfactual Headroom",
+        storage=True,
+    ),
+    _soc(
+        "counterfactual_projected_sunset_soc",
+        "counterfactual_projected_sunset_soc_pct",
+        "No-Action Projected Sunset SOC",
+    ),
+    _energy(
+        "counterfactual_projected_export",
+        "counterfactual_projected_export_kwh",
+        "No-Action Projected Export",
+    ),
+    _energy(
+        "counterfactual_preserved_headroom",
+        "counterfactual_preserved_headroom_kwh",
+        "EV Preserved Battery Headroom Today",
+        storage=True,
+    ),
+    _energy(
+        "counterfactual_avoided_export",
+        "counterfactual_avoided_export_kwh",
+        "Avoided Solar Export Today",
+    ),
+    _energy(
+        "ev_wall_energy_today",
+        "ev_wall_energy_today_kwh",
+        "EV Wall Energy Today",
+    ),
+    _energy(
+        "ev_solar_energy_today",
+        "ev_solar_energy_today_kwh",
+        "EV Solar Energy Today",
+    ),
+    _percent(
+        "ev_solar_fraction_today",
+        "ev_solar_fraction_today_pct",
+        "EV Solar Fraction Today",
+    ),
+    EnergyPlannerSensorDescription(
+        key="live_solar_surplus",
+        data_key="live_solar_surplus_w",
+        name="Live Solar Surplus",
+        native_unit_of_measurement=UnitOfPower.WATT,
+        device_class=SensorDeviceClass.POWER,
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+    ),
+    _energy(
+        "live_solar_capture_recommended_energy",
+        "live_solar_capture_recommended_energy_kwh",
+        "Live Solar Capture Recommended EV Energy",
+    ),
+
     # Rolling paid-forecast EV/headroom advisory. This remains advisory-only.
     EnergyPlannerSensorDescription(
         key="rolling_ev_status",
