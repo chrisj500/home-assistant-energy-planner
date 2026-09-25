@@ -513,6 +513,9 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 "export_defense_headroom_kwh": round(
                     export_assessment.headroom_kwh, 3
                 ),
+                "export_defense_wall_energy_kwh": round(
+                    export_assessment.headroom_kwh / max(efficiency, 0.01), 3
+                ),
                 "export_defense_risk": export_assessment.risk,
                 "export_defense_risk_reason": export_assessment.reason,
                 "export_defense_risk_adjusted_ceiling_pct": round(
