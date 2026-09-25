@@ -53,6 +53,19 @@ class DashboardLayoutTests(unittest.TestCase):
         )
         self.assertIn("Solar & Battery Outlook", headroom[2].get("content", ""))
 
+    def test_battery_card_prefers_planner_weighted_soc(self):
+        headroom = self.sections[1]["cards"]
+        content = headroom[1]["custom_fields"]["content"]
+        planner = content.index("sensor.energy_planner_whole_bank_soc")
+        fallback = content.index("sensor.ecoflow_smart_home_panel_2_backup_battery")
+        self.assertLess(planner, fallback)
+
+    def test_battery_outlook_places_uncertainty_below_fill_icon(self):
+        outlook = self.sections[2]["cards"][1]["custom_fields"]["content"]
+        battery_call = outlook.index("${battery(", outlook.index("const sunsetCell"))
+        confidence_block = outlook.index("${esc(confidenceText)}", battery_call)
+        self.assertGreater(confidence_block, battery_call)
+
     def test_detailed_diagnostics_are_off_the_operating_view(self):
         self.assertEqual(self.diagnostics["title"], "Diagnostics")
         headings = [
