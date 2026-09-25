@@ -1,6 +1,6 @@
-# Energy Planning dashboard v20
+# Energy Planning dashboard v21
 #
-# Compact operating dashboard for Energy Planner v0.1.43.
+# Compact operating dashboard for Energy Planner v0.1.44.
 # Requires custom:button-card.
 #
 # Design priorities:
@@ -250,6 +250,7 @@ views:
 
             triggers_update:
               - sensor.ecoflow_smart_home_panel_2_backup_battery
+              - sensor.energy_planner_whole_bank_soc
               - sensor.ecoflow_smart_home_panel_2_ac1_battery
               - sensor.ecoflow_smart_home_panel_2_ac1_power
               - sensor.ecoflow_smart_home_panel_2_ac2_battery
@@ -276,6 +277,9 @@ views:
                   };
 
                   const soc =
+                    num(
+                      'sensor.energy_planner_whole_bank_soc'
+                    ) ??
                     num(
                       'sensor.ecoflow_smart_home_panel_2_backup_battery'
                     );
@@ -1028,10 +1032,14 @@ views:
                       row?.display_confidence
                         ? String(row.display_confidence).replaceAll('_',' ')
                         : '';
+                    const isFinal =
+                      row?.display_forecast_source === 'observed_sunset';
                     const confidenceText =
-                      uncertainty === null
-                        ? (confidence || 'forecast')
-                        : `±${uncertainty.toFixed(uncertainty >= 10 ? 0 : 1)}%${confidence ? ` · ${confidence}` : ''}`;
+                      isFinal
+                        ? 'final'
+                        : uncertainty === null
+                          ? (confidence || 'forecast')
+                          : `±${uncertainty.toFixed(uncertainty >= 10 ? 0 : 1)}%${confidence ? ` · ${confidence}` : ''}`;
 
                     return `
                     <div style="
@@ -1043,22 +1051,11 @@ views:
                         font-size:16px;
                         font-weight:700;
                         color:#fff;
-                        margin-bottom:2px;
+                        margin-bottom:7px;
                       ">
                         ${Number.isFinite(displayValue)
                           ? `${clamp(displayValue).toFixed(0)}%`
                           : 'Unverified'}
-                      </div>
-
-                      <div style="
-                        min-height:14px;
-                        font-size:9px;
-                        line-height:1.2;
-                        color:rgba(255,255,255,.52);
-                        margin-bottom:6px;
-                        white-space:nowrap;
-                      ">
-                        ${esc(confidenceText)}
                       </div>
 
                       ${battery(
@@ -1066,6 +1063,17 @@ views:
                           ? displayValue
                           : value
                       )}
+
+                      <div style="
+                        min-height:14px;
+                        font-size:9px;
+                        line-height:1.2;
+                        color:rgba(255,255,255,.52);
+                        margin-top:4px;
+                        white-space:nowrap;
+                      ">
+                        ${esc(confidenceText)}
+                      </div>
 
                     </div>
                     `;
