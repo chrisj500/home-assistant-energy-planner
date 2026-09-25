@@ -132,14 +132,42 @@ class CoordinatorTests(unittest.TestCase):
 
         self.assertGreater(live_anchored, provider_like)
 
-    def test_display_uncertainty_uses_scored_mae(self):
+    def test_display_uncertainty_contracts_with_remaining_daylight(self):
         self.c._trust["records"] = [
             {"lead": 0, "error_soc": error}
             for error in (5, -6, 7)
         ]
         self.c._scenarios(self.data, self.now)
         row = self.data["rolling_day_plans"][0]
-        self.assertEqual(row["display_uncertainty_pct"], 6.0)
+        # 09:00 is 75% of the 06:00-18:00 daylight window remaining.
+        self.assertEqual(row["display_uncertainty_pct"], 4.5)
+        self.assertEqual(row["display_confidence"], "medium")
+
+        afternoon = self.now.replace(hour=15)
+        later = deepcopy(self.data)
+        self.c._scenarios(later, afternoon)
+        later_row = later["rolling_day_plans"][0]
+        self.assertEqual(later_row["range_remaining_daylight_fraction"], 0.25)
+        self.assertEqual(later_row["display_uncertainty_pct"], 1.5)
+
+    def test_global_instability_does_not_downgrade_live_today_display(self):
+        self.c._trust["records"] = [
+            {"lead": 0, "error_soc": error}
+            for error in (5, -6, 7)
+        ]
+        self.c._trust["revisions"] = [{
+            "at": (self.now - timedelta(minutes=10)).isoformat(),
+            "revision": "older-provider-refresh",
+            "targets": {
+                "2026-09-18": {"soc": 20.0, "solar": 10.0},
+            },
+            "candidate": "2026-09-18",
+        }]
+        self.c.baseline = deepcopy(self.data)
+        result = asyncio.run(self.c._async_update_data())
+        row = result["rolling_day_plans"][0]
+        self.assertEqual(result["forecast_reliability_status"], "unstable")
+        self.assertEqual(row["confidence"], "low")
         self.assertEqual(row["display_confidence"], "medium")
 
     def test_low_solar_does_not_justify_headroom(self):

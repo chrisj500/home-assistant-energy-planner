@@ -9,6 +9,11 @@ class EnergyIncrement:
     discharged_kwh: float
 
 
+def is_power_unit(unit: str | None) -> bool:
+    """Return whether a Home Assistant unit represents electrical power."""
+    return str(unit or "").strip().lower() in {"w", "kw", "mw"}
+
+
 def normalize_power_w(value: float, unit: str | None) -> float:
     """Normalize common Home Assistant power units to watts."""
     power = float(value)
