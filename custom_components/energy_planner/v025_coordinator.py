@@ -131,16 +131,6 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             profile = profiles[row["date"]]
             width = profile["width_soc"]
             window = window_by_date[lo.day]
-            display_uncertainty = (
-                round(profile["mae_soc"], 1)
-                if profile["mae_soc"] is not None
-                else None
-            )
-            display_source = (
-                "live_anchored_interval_simulation"
-                if lo.day == now.date() and window.sunrise <= now < window.sunset
-                else "interval_simulation"
-            )
             lower_soc, upper_soc, remaining_fraction = sunset_envelope(
                 now=now, sunrise=window.sunrise, sunset=window.sunset,
                 target_date=lo.day, current_soc=current_soc,
@@ -148,6 +138,29 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 high_soc=hi.end_soc_pct, historical_width=width,
                 reserve_floor=reserve_floor,
             )
+
+            is_today = lo.day == now.date()
+            historical_mae = profile["mae_soc"]
+            if historical_mae is None:
+                display_uncertainty = None
+            elif is_today:
+                # Historical MAE describes a full-day sunset forecast. As today's
+                # daylight becomes observed, only the unobserved share remains
+                # uncertain. This converges to zero at sunset.
+                display_uncertainty = round(
+                    max(float(historical_mae) * remaining_fraction, 0.0),
+                    1,
+                )
+            else:
+                display_uncertainty = round(float(historical_mae), 1)
+
+            if is_today and now >= window.sunset:
+                display_source = "observed_sunset"
+                display_uncertainty = 0.0
+            elif is_today and window.sunrise <= now < window.sunset:
+                display_source = "live_anchored_interval_simulation"
+            else:
+                display_source = "interval_simulation"
             margin = max(2.0, capacity * .05, capacity * width / 100)
             robust = max(0.0, min(lo.headroom_shortfall_kwh,
                                   lo.capacity_export_kwh * efficiency) - margin)
@@ -268,10 +281,18 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                     "overnight calibration records. Do not act yet."
                 )
             if unstable:
+                today_key = now.date().isoformat()
                 for row in data["rolling_day_plans"]:
                     row["historical_confidence"] = row["confidence"]
                     row["confidence"] = "low"
-                    row["display_confidence"] = "low"
+                    # Global provider instability must still block actions, but it
+                    # should not downgrade today's live-anchored display estimate.
+                    if (
+                        row.get("date") != today_key
+                        or row.get("display_forecast_source")
+                        not in {"live_anchored_interval_simulation", "observed_sunset"}
+                    ):
+                        row["display_confidence"] = "low"
             data.update(
                 forecast_confidence="low" if unstable else profile["confidence"],
                 forecast_error_samples=profile["samples"],
