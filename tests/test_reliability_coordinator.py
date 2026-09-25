@@ -80,6 +80,10 @@ class CoordinatorTests(unittest.TestCase):
         self.assertLessEqual(row["sunset_soc_low_pct"], 100)
         self.assertGreaterEqual(row["sunset_soc_high_pct"], 100)
         self.assertEqual(profiles["2026-09-18"]["confidence"], "learning")
+        self.assertIn("display_sunset_soc_pct", row)
+        self.assertIsNone(row["display_uncertainty_pct"])
+        self.assertEqual(row["display_confidence"], "learning")
+        self.assertEqual(row["display_forecast_source"], "live_anchored_interval_simulation")
         self.assertGreaterEqual(row["safety_margin_kwh"], 4.9152)
         self.assertEqual(candidate, "2026-09-18")
         self.assertGreater(amount, 0)
@@ -105,6 +109,38 @@ class CoordinatorTests(unittest.TestCase):
         row = self.data["rolling_day_plans"][0]
         self.assertGreaterEqual(row["sunset_soc_low_pct"], 24.25)
         self.assertEqual(row["range_remaining_daylight_fraction"], 0.25)
+
+    def test_display_best_guess_responds_to_live_solar(self):
+        for key in ("s1", "s2", "s3"):
+            self.states[key].state = "20"
+        self.c._estimate_payload["result"]["watts"] = {
+            (self.now + timedelta(hours=i)).isoformat(): 3000
+            for i in range(10)
+        }
+        baseline = deepcopy(self.data)
+        baseline["rolling_day_plans"][0]["sunset_soc_pct"] = 40
+
+        self.states["solar"].state = "3000"
+        self.c._scenarios(baseline, self.now)
+        provider_like = baseline["rolling_day_plans"][0]["display_sunset_soc_pct"]
+
+        stronger = deepcopy(self.data)
+        stronger["rolling_day_plans"][0]["sunset_soc_pct"] = 40
+        self.states["solar"].state = "10000"
+        self.c._scenarios(stronger, self.now)
+        live_anchored = stronger["rolling_day_plans"][0]["display_sunset_soc_pct"]
+
+        self.assertGreater(live_anchored, provider_like)
+
+    def test_display_uncertainty_uses_scored_mae(self):
+        self.c._trust["records"] = [
+            {"lead": 0, "error_soc": error}
+            for error in (5, -6, 7)
+        ]
+        self.c._scenarios(self.data, self.now)
+        row = self.data["rolling_day_plans"][0]
+        self.assertEqual(row["display_uncertainty_pct"], 6.0)
+        self.assertEqual(row["display_confidence"], "medium")
 
     def test_low_solar_does_not_justify_headroom(self):
         self.states["remaining"].state = "1"
