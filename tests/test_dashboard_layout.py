@@ -201,10 +201,10 @@ class DashboardLayoutTests(unittest.TestCase):
             content.index("NO EV ACTION REQUIRED"),
         )
 
-    def test_battery_outlook_displays_nominal_future_risk(self):
+    def test_battery_outlook_displays_export_defense_future_risk(self):
         outlook = self.sections[2]["cards"][1]["custom_fields"]["content"]
-        self.assertIn("nominal_dynamic_load_needed", outlook)
-        self.assertIn("nominal_dynamic_load_needed_kwh", outlook)
+        self.assertIn("export_defense_risk", outlook)
+        self.assertIn("export_defense_wall_energy_kwh", outlook)
         self.assertIn("'Risk'", outlook)
 
     def test_learning_withholds_recommendation(self):
