@@ -21,6 +21,7 @@ from .counterfactual import (
     live_capture_metrics,
 )
 from .enhanced_coordinator import _parse_weights
+from .export_defense import assess_export_defense
 from .forecast_solar_shadow import IntervalPoint, interval_points_from_payload
 from .headroom import correct_current_day_points
 from .reliability import MIN_EVIDENCE_SAMPLES, evidence, gate, number, observe, suppress_actions, sunset_envelope
@@ -358,7 +359,13 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             )
             if not learning_ready:
                 profile["confidence"] = "learning"
-        # Stress assumptions are explicit engineering bounds, not learned HVAC.
+        # The point forecast and risk forecast have different jobs.
+        #
+        # nominal: best estimate shown to the user.
+        # energy_security: low-solar/high-load bound used only for the lower SOC
+        #   envelope and reserve visibility.
+        # export_defense: high-solar/low-load bound used for the zero-export
+        #   objective. It must never be replaced by the energy-security case.
         lower_points = [IntervalPoint(p.at, p.watts * .70) for p in points]
         upper_points = [IntervalPoint(p.at, p.watts * 1.30) for p in points]
         common = dict(reference=now, daylight_windows=windows, initial_bank_socs_pct=socs,
@@ -371,10 +378,18 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             overnight_drop_kw=median_drop,
             **common,
         )
-        low = simulate_rolling_days(points=lower_points, average_load_kw=load / 1000 * 1.30,
-                                    overnight_drop_kw=max([median_drop * 1.30, *drops]), **common)
-        high = simulate_rolling_days(points=upper_points, average_load_kw=load / 1000 * .70,
-                                     overnight_drop_kw=min([median_drop * .70, *drops]), **common)
+        energy_security = simulate_rolling_days(
+            points=lower_points,
+            average_load_kw=load / 1000 * 1.30,
+            overnight_drop_kw=max([median_drop * 1.30, *drops]),
+            **common,
+        )
+        export_defense = simulate_rolling_days(
+            points=upper_points,
+            average_load_kw=load / 1000 * .70,
+            overnight_drop_kw=min([median_drop * .70, *drops]),
+            **common,
+        )
 
         counterfactual = []
         counterfactual_stored = number(data.get("counterfactual_stored_kwh"))
@@ -392,14 +407,31 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 **{**common, "initial_bank_socs_pct": counterfactual_socs},
             )
 
-        if len(nominal) != len(rows) or len(low) != len(rows) or len(high) != len(rows):
+        if (
+            len(nominal) != len(rows)
+            or len(energy_security) != len(rows)
+            or len(export_defense) != len(rows)
+        ):
             raise ValueError("Incomplete scenario horizon")
         candidate = None
         amount = 0.0
+        export_risk_days = []
+        data.update(
+            forecast_export_risk=False,
+            forecast_export_risk_date="none",
+            forecast_export_headroom_kwh=0.0,
+            forecast_export_wall_energy_kwh=0.0,
+            forecast_export_risk_reason="clear",
+            forecast_export_risk_days=[],
+            forecast_export_model="export_defense_v1",
+            forecast_objective="zero_export",
+        )
         reserve_floor = min(max(float(reserve), 0.0), 100.0)
         window_by_date = {window.day: window for window in windows}
         current_soc = sum(soc * cap for soc, cap in zip(socs, capacities)) / capacity
-        for index, (row, mid, lo, hi) in enumerate(zip(rows, nominal, low, high)):
+        for index, (row, mid, lo, hi) in enumerate(
+            zip(rows, nominal, energy_security, export_defense)
+        ):
             profile = profiles[row["date"]]
             width = profile["width_soc"]
             window = window_by_date[lo.day]
@@ -431,9 +463,15 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 if is_today and window.sunrise <= now < window.sunset
                 else "interval_simulation"
             )
-            margin = max(2.0, capacity * .05, capacity * width / 100)
-            robust = max(0.0, min(lo.headroom_shortfall_kwh,
-                                  lo.capacity_export_kwh * efficiency) - margin)
+            effective_width = width * remaining_fraction if is_today else width
+            export_assessment = assess_export_defense(
+                nominal=mid,
+                defense=hi,
+                capacity_kwh=capacity,
+                charge_limit_pct=limit,
+                forecast_width_soc=effective_width,
+                charge_efficiency=efficiency,
+            )
             cf_mid = counterfactual[index] if index < len(counterfactual) else None
             if is_today and cf_mid is not None:
                 data.update(
@@ -462,10 +500,35 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 "display_forecast_source": display_source,
                 "display_confidence": profile["confidence"],
                 "confidence": profile["confidence"], "error_samples": profile["samples"],
-                "historical_mae_soc": profile["mae_soc"], "safety_margin_kwh": round(margin, 2),
-                "conservative_headroom_kwh": round(robust, 2),
+                "historical_mae_soc": profile["mae_soc"],
+                "energy_security_sunset_soc_pct": round(lo.end_soc_pct, 2),
+                "export_defense_sunset_soc_pct": round(hi.end_soc_pct, 2),
+                "export_defense_export_kwh": round(hi.capacity_export_kwh, 3),
+                "export_defense_direct_headroom_kwh": round(
+                    export_assessment.direct_headroom_kwh, 3
+                ),
+                "export_defense_uncertainty_headroom_kwh": round(
+                    export_assessment.uncertainty_headroom_kwh, 3
+                ),
+                "export_defense_headroom_kwh": round(
+                    export_assessment.headroom_kwh, 3
+                ),
+                "export_defense_risk": export_assessment.risk,
+                "export_defense_risk_reason": export_assessment.reason,
+                "export_defense_risk_adjusted_ceiling_pct": round(
+                    export_assessment.risk_adjusted_ceiling_pct, 1
+                ),
+                # Compatibility aliases. These are no longer derived by
+                # subtracting a low-solar "safety margin".
+                "safety_margin_kwh": round(
+                    export_assessment.uncertainty_headroom_kwh, 2
+                ),
+                "conservative_headroom_kwh": round(
+                    export_assessment.headroom_kwh, 2
+                ),
+                "forecast_objective": "zero_export",
                 "range_kind": "scenario_envelope_not_probability_interval",
-                "range_assumption": "grid_connected_reserve_enforced",
+                "range_assumption": "energy_security_low_export_defense_high",
                 "counterfactual_sunset_soc_pct": (
                     round(cf_mid.end_soc_pct, 2) if cf_mid is not None else None
                 ),
@@ -476,9 +539,32 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 ),
             })
             lead = (lo.day - now.date()).days
-            if candidate is None and robust > 0 and lead <= 2:
-                candidate, amount = row["date"], robust
-        return profiles, candidate, amount, lower_points, windows, load * 1.30, efficiency
+            if export_assessment.risk:
+                export_risk_days.append(row["date"])
+            if candidate is None and export_assessment.risk and lead <= 2:
+                candidate = row["date"]
+                amount = export_assessment.headroom_kwh
+                data.update(
+                    forecast_export_risk=True,
+                    forecast_export_risk_date=candidate,
+                    forecast_export_headroom_kwh=round(amount, 3),
+                    forecast_export_wall_energy_kwh=round(
+                        amount / max(efficiency, 0.01), 3
+                    ),
+                    forecast_export_risk_reason=export_assessment.reason,
+                )
+        data["forecast_export_risk_days"] = export_risk_days
+        # EV-window forecasting uses the same low-load assumption as export
+        # defense. Live measured surplus still gates an immediate recommendation.
+        return (
+            profiles,
+            candidate,
+            amount,
+            upper_points,
+            windows,
+            load * 0.70,
+            efficiency,
+        )
 
     def _score_forecasts(self, data, now):
         """One fixed snapshot per issue-day/target-day; settle only near sunset."""
@@ -626,7 +712,7 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                             authoritative_headroom_status="risk_today" if candidate == now.date().isoformat() else "risk_future",
                             authoritative_headroom_risk_date=candidate,
                             authoritative_headroom_shortfall_kwh=amount,
-                            authoritative_headroom_action="Conservative headroom risk confirmed. EV charging still requires a verified solar window.")
+                            authoritative_headroom_action="Export-defense headroom risk confirmed. EV charging still requires a verified solar window.")
                 self._verified_ev(data, now, candidate, amount, points, windows, load, efficiency)
             else:
                 self._surplus_since = None
@@ -687,18 +773,44 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             data["rolling_ev_auto_charge_reason"] = "EV advice requires enabled advisory, fresh SOC, known home status, and charge power."
             self._surplus_since = None
             return
-        # Validate a window starting NOW, avoiding a moving best-window target.
+        # Forecast the best solar-rich window on the risk day. For today's
+        # window, live measured surplus still gates the immediate recommendation.
         energy = min(available, amount / efficiency)
-        latest = min(next(w.sunset for w in windows if w.day.isoformat() == candidate),
-                     now + timedelta(hours=energy / (power / 1000)))
+        risk_window = next(w for w in windows if w.day.isoformat() == candidate)
+        earliest = max(now, risk_window.sunrise)
+        latest = risk_window.sunset
         window = choose_ev_charge_window(points=points, daylight_windows=windows,
-            earliest=now, latest=latest, base_load_kw=load / 1000, charge_power_w=power,
-            energy_kwh=energy, charge_efficiency=efficiency,
-            step_minutes=15)
+            earliest=earliest, latest=latest, base_load_kw=load / 1000,
+            charge_power_w=power, energy_kwh=energy,
+            charge_efficiency=efficiency, step_minutes=15)
         if window is None or window.solar_energy_kwh / max(window.requested_energy_kwh, .001) < .90:
-            data["rolling_ev_auto_charge_reason"] = "No conservative charging window is at least 90% solar supplied."
+            data["rolling_ev_auto_charge_reason"] = "No export-defense charging window is at least 90% solar supplied."
             self._surplus_since = None
             return
+        data.update(
+            rolling_ev_recommended_energy_kwh=window.requested_energy_kwh,
+            rolling_ev_window_start=window.start.isoformat(),
+            rolling_ev_window_end=window.end.isoformat(),
+            rolling_ev_window_solar_kwh=window.solar_energy_kwh,
+            rolling_ev_window_grid_kwh=window.grid_energy_kwh,
+            rolling_ev_window_solar_fraction_pct=(
+                100 * window.solar_energy_kwh / window.requested_energy_kwh
+            ),
+            rolling_ev_headroom_preserved_kwh=window.preserved_stationary_headroom_kwh,
+        )
+        if window.start > now:
+            data.update(
+                rolling_ev_status="planned",
+                rolling_ev_status_reason=(
+                    "Export-defense headroom risk has a forecast solar-rich EV window."
+                ),
+                rolling_ev_auto_charge_reason=(
+                    "Planned solar window; wait for the window and live surplus verification."
+                ),
+            )
+            self._surplus_since = None
+            return
+
         solar = self._fresh_power(self.cfg.get(CONF_ACTUAL_SOLAR_POWER), now)
         base = self._fresh_power(self.cfg.get(CONF_BASE_LOAD_POWER), now)
         live_ok = solar is not None and base is not None and solar - max(base, load) >= power + 500
@@ -710,9 +822,9 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             self._surplus_since = self._surplus_since or now
         verified = self._surplus_since is not None and (now - self._surplus_since).total_seconds() >= 600
         if not verified:
-            data["rolling_ev_auto_charge_reason"] = "Wait: charging needs an active conservative window and ten minutes of measured surplus covering EV power plus 500 W."
+            data["rolling_ev_auto_charge_reason"] = "Wait: charging needs an active export-defense window and ten minutes of measured surplus covering EV power plus 500 W."
             return
-        reason = "Charge within the verified window: conservative headroom need and sustained measured solar surplus confirmed."
+        reason = "Charge within the verified window: export-defense headroom need and sustained measured solar surplus confirmed."
         data.update(rolling_ev_status="green", rolling_ev_status_reason=reason,
                     rolling_ev_auto_charge_eligible=True, rolling_ev_auto_charge_reason=reason,
                     rolling_ev_recommended_energy_kwh=window.requested_energy_kwh,
