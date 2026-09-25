@@ -1,6 +1,6 @@
-# Energy Planning dashboard v21
+# Energy Planning dashboard v22
 #
-# Compact operating dashboard for Energy Planner v0.1.44.
+# Compact operating dashboard for Energy Planner v0.1.45.
 # Requires custom:button-card.
 #
 # Design priorities:
@@ -714,6 +714,12 @@ views:
               {% set sunset = 'binary_sensor.energy_planner_next_sunset_forecast_available' %}
               {% set ev = 'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
               {% set reliability = states('sensor.energy_planner_forecast_reliability_status') %}
+              {% set cf_soc = states('sensor.energy_planner_no_action_counterfactual_soc') %}
+              {% set cf_sunset = states('sensor.energy_planner_no_action_projected_sunset_soc') %}
+              {% set cf_export = states('sensor.energy_planner_no_action_projected_export') %}
+              {% set ev_solar_today = states('sensor.energy_planner_ev_solar_energy_today') %}
+              {% set preserved = states('sensor.energy_planner_ev_preserved_battery_headroom_today') %}
+              {% set avoided = states('sensor.energy_planner_avoided_solar_export_today') %}
               {% set learning = states('sensor.energy_planner_forecast_learning_progress') %}
               {% set storm = states('sensor.energy_planner_storm_safety_status') %}
               {% set soc = state_attr(sunset,'soc_pct') %}
@@ -731,6 +737,13 @@ views:
 
               **Solar after load:** {{ s3 | round(1) if s3 is number else '—' }} kWh / 3d ·
               {{ sh | round(1) if sh is number else '—' }} kWh horizon
+
+              **No-action battery:** {{ cf_soc }}% now → {{ cf_sunset }}% sunset ·
+              {{ cf_export }} kWh projected export
+
+              **EV solar today:** {{ ev_solar_today }} kWh ·
+              **Headroom preserved:** {{ preserved }} kWh ·
+              **Avoided export:** {{ avoided }} kWh
 
               **Risk day:** {{ risk }} ·
               **Forecast:** {{ reliability }} ·
@@ -1364,21 +1377,39 @@ views:
           - type: markdown
             content: >-
               {% set e = 'binary_sensor.energy_planner_ev_auto_charge_eligible' %}
+              {% set live = 'binary_sensor.energy_planner_live_solar_capture_opportunity' %}
+              {% set cf = 'binary_sensor.energy_planner_no_action_headroom_risk_today' %}
               {% set reliability = states('sensor.energy_planner_forecast_reliability_status') %}
               {% set reason = state_attr(e,'reason') %}
+              {% set live_reason = state_attr(live,'reason') %}
+              {% set live_status = state_attr(live,'status') %}
               {% set useful = states('sensor.energy_planner_recommended_ev_charge_energy') | float(0) %}
+              {% set live_useful = states('sensor.energy_planner_live_solar_capture_recommended_ev_energy') | float(0) %}
               {% set soc = states('sensor.energy_planner_ev_soc') %}
               {% set available = states('sensor.energy_planner_ev_available_energy_to_target') %}
               {% set start = state_attr(e,'preferred_window_start') %}
               {% set end = state_attr(e,'preferred_window_end') %}
               {% set solar = state_attr(e,'preferred_window_solar_fraction_pct') %}
+              {% set surplus = state_attr(live,'live_solar_surplus_w') | float(0) %}
+              {% set cf_soc = state_attr(cf,'current_soc_pct') %}
+              {% set cf_sunset = state_attr(cf,'projected_sunset_soc_pct') %}
+              {% set cf_headroom = state_attr(cf,'headroom_kwh') %}
+              {% set ev_solar_today = state_attr(live,'ev_solar_kwh_today') %}
+              {% set preserved = state_attr(live,'preserved_headroom_kwh') %}
+              {% set avoided = state_attr(live,'avoided_export_kwh') %}
 
-              {% if reliability == 'learning' %}
+              {% if is_state(live,'on') %}
+              ## 🟢 CAPTURE SOLAR NOW
+              **{{ live_reason or 'Charge the Lexus from measured solar surplus.' }}**
+              {% elif is_state(cf,'on') and live_status in ['pending','waiting_for_surplus','blocked'] %}
+              ## 🟡 NO-ACTION HEADROOM RISK
+              **{{ live_reason or 'Without a flexible load, the battery is on a saturation trajectory.' }}**
+              {% elif reliability == 'learning' %}
               ## 🟡 FORECAST LEARNING
-              **No recommendation yet.** {{ reason or states('sensor.energy_planner_forecast_learning_progress') }}
+              **No forecast-dependent recommendation yet.** {{ reason or states('sensor.energy_planner_forecast_learning_progress') }}
               {% elif reliability not in ['ready','clear'] %}
               ## 🟡 FORECAST HOLD
-              **Do not act.** {{ states('sensor.energy_planner_forecast_reliability_reason') }}
+              **Forecast-dependent actions are on hold.** {{ states('sensor.energy_planner_forecast_reliability_reason') }}
               {% elif is_state(e,'on') %}
               ## 🟢 EV CHARGING USEFUL
               **{{ reason or 'Verified solar/headroom conditions support EV charging.' }}**
@@ -1391,9 +1422,19 @@ views:
               {% endif %}
 
               **Lexus:** {{ soc }}% · **Available:** {{ available }} kWh ·
-              **Recommended:** {{ useful | round(1) }} kWh
+              **Recommended:** {{ (live_useful if is_state(cf,'on') else useful) | round(1) }} kWh
 
-              {% if start and end %}
+              **No-action battery:** {{ cf_soc | round(1) if cf_soc is number else '—' }}% now ·
+              {{ cf_sunset | round(1) if cf_sunset is number else '—' }}% sunset ·
+              {{ cf_headroom | round(1) if cf_headroom is number else '—' }} kWh headroom
+
+              **Captured today:** {{ ev_solar_today | round(1) if ev_solar_today is number else '—' }} kWh solar to EV ·
+              {{ preserved | round(1) if preserved is number else '—' }} kWh headroom preserved ·
+              {{ avoided | round(1) if avoided is number else '—' }} kWh export avoided
+
+              {% if is_state(live,'on') %}
+              **Live surplus:** {{ (surplus / 1000) | round(1) }} kW · measured-solar decision, independent of forecast stability
+              {% elif start and end %}
               **Window:** {{ as_local(as_datetime(start)).strftime('%-I:%M %p') }}–{{ as_local(as_datetime(end)).strftime('%-I:%M %p') }}
               · {{ solar | round(0) if solar is number else '—' }}% solar
               {% else %}
@@ -1424,6 +1465,13 @@ views:
               - sensor.energy_planner_forecast_confidence
               - sensor.energy_planner_forecast_error_samples
               - sensor.energy_planner_forecast_reliability_reason
+              - binary_sensor.energy_planner_no_action_headroom_risk_today
+              - binary_sensor.energy_planner_live_solar_capture_opportunity
+              - sensor.energy_planner_no_action_counterfactual_soc
+              - sensor.energy_planner_no_action_projected_sunset_soc
+              - sensor.energy_planner_ev_solar_energy_today
+              - sensor.energy_planner_ev_preserved_battery_headroom_today
+              - sensor.energy_planner_avoided_solar_export_today
 
           - type: markdown
             content: >-
