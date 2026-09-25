@@ -8,6 +8,22 @@ from reliability import evidence, observe, gate, suppress_actions, number, sunse
 
 
 class ReliabilityTests(unittest.TestCase):
+    def test_suppression_preserves_nominal_risk_amount(self):
+        data = {
+            "rolling_day_plans": [{
+                "date": "2026-09-26",
+                "confidence": "medium",
+                "dynamic_load_needed": True,
+                "dynamic_load_needed_kwh": 4.25,
+            }]
+        }
+        suppress_actions(data, "clear", "No robust action")
+        row = data["rolling_day_plans"][0]
+        self.assertTrue(row["nominal_dynamic_load_needed"])
+        self.assertEqual(row["nominal_dynamic_load_needed_kwh"], 4.25)
+        self.assertFalse(row["dynamic_load_needed"])
+        self.assertEqual(row["dynamic_load_needed_kwh"], 0.0)
+
     def setUp(self):
         self.now = datetime(2026, 9, 18, 9, tzinfo=timezone.utc)
         self.day = "2026-09-19"
