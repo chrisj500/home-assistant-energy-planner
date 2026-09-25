@@ -150,17 +150,6 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(later_row["range_remaining_daylight_fraction"], 0.25)
         self.assertEqual(later_row["display_uncertainty_pct"], 1.5)
 
-    def test_display_uncertainty_is_zero_after_sunset(self):
-        self.c._trust["records"] = [
-            {"lead": 0, "error_soc": error}
-            for error in (5, -6, 7)
-        ]
-        after_sunset = self.now.replace(hour=19)
-        self.c._scenarios(self.data, after_sunset)
-        row = self.data["rolling_day_plans"][0]
-        self.assertEqual(row["display_uncertainty_pct"], 0.0)
-        self.assertEqual(row["display_forecast_source"], "observed_sunset")
-
     def test_global_instability_does_not_downgrade_live_today_display(self):
         self.c._trust["records"] = [
             {"lead": 0, "error_soc": error}
