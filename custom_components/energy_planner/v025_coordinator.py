@@ -780,8 +780,17 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         # window, live measured surplus still gates the immediate recommendation.
         energy = min(available, amount / efficiency)
         risk_window = next(w for w in windows if w.day.isoformat() == candidate)
-        earliest = max(now, risk_window.sunrise)
-        latest = risk_window.sunset
+        if candidate == now.date().isoformat():
+            # For a current-day actionable window, keep the target anchored to
+            # NOW so live verification cannot chase a moving later optimum.
+            earliest = now
+            latest = min(
+                risk_window.sunset,
+                now + timedelta(hours=energy / (power / 1000)),
+            )
+        else:
+            earliest = max(now, risk_window.sunrise)
+            latest = risk_window.sunset
         window = choose_ev_charge_window(points=points, daylight_windows=windows,
             earliest=earliest, latest=latest, base_load_kw=load / 1000,
             charge_power_w=power, energy_kwh=energy,
