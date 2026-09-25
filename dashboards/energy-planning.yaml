@@ -1,6 +1,6 @@
-# Energy Planning dashboard v19
+# Energy Planning dashboard v20
 #
-# Compact operating dashboard for Energy Planner v0.1.38.
+# Compact operating dashboard for Energy Planner v0.1.43.
 # Requires custom:button-card.
 #
 # Design priorities:
@@ -1014,7 +1014,26 @@ views:
 
                   const sunsetCell = (
                     value, row
-                  ) => `
+                  ) => {
+                    const displayValue =
+                      row?.display_sunset_soc_pct != null
+                        ? Number(row.display_sunset_soc_pct)
+                        : Number(value);
+                    const uncertainty =
+                      row?.display_uncertainty_pct != null &&
+                      Number.isFinite(Number(row.display_uncertainty_pct))
+                        ? Number(row.display_uncertainty_pct)
+                        : null;
+                    const confidence =
+                      row?.display_confidence
+                        ? String(row.display_confidence).replaceAll('_',' ')
+                        : '';
+                    const confidenceText =
+                      uncertainty === null
+                        ? (confidence || 'forecast')
+                        : `±${uncertainty.toFixed(uncertainty >= 10 ? 0 : 1)}%${confidence ? ` · ${confidence}` : ''}`;
+
+                    return `
                     <div style="
                       min-width:0;
                       text-align:center;
@@ -1024,17 +1043,33 @@ views:
                         font-size:16px;
                         font-weight:700;
                         color:#fff;
-                        margin-bottom:7px;
+                        margin-bottom:2px;
                       ">
-                        ${row?.sunset_soc_low_pct != null && row?.sunset_soc_high_pct != null
-                          ? `${Math.max(reserveFloor, clamp(row.sunset_soc_low_pct)).toFixed(0)}–${Math.max(reserveFloor, clamp(row.sunset_soc_high_pct)).toFixed(0)}%`
+                        ${Number.isFinite(displayValue)
+                          ? `${clamp(displayValue).toFixed(0)}%`
                           : 'Unverified'}
                       </div>
 
-                      ${battery(value)}
+                      <div style="
+                        min-height:14px;
+                        font-size:9px;
+                        line-height:1.2;
+                        color:rgba(255,255,255,.52);
+                        margin-bottom:6px;
+                        white-space:nowrap;
+                      ">
+                        ${esc(confidenceText)}
+                      </div>
+
+                      ${battery(
+                        Number.isFinite(displayValue)
+                          ? displayValue
+                          : value
+                      )}
 
                     </div>
-                  `;
+                    `;
+                  };
 
                   const emptyCell = `
                     <div style="
