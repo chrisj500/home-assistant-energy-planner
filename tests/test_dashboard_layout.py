@@ -192,12 +192,12 @@ class DashboardLayoutTests(unittest.TestCase):
             if self._heading(section) == "What To Do"
         )
         content = what["cards"][1]["content"]
-        self.assertIn("FUTURE HEADROOM RISK", content)
+        self.assertIn("EXPORT RISK", content)
         self.assertIn("sensor.energy_planner_forecast_export_risk_date", content)
         self.assertIn("Lexus is already full", content)
         self.assertIn("zero-export forecast", content)
         self.assertLess(
-            content.index("FUTURE HEADROOM RISK"),
+            content.index("EXPORT RISK"),
             content.index("NO EV ACTION REQUIRED"),
         )
 
