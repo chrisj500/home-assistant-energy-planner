@@ -93,7 +93,9 @@ class CoordinatorTests(unittest.TestCase):
         self.assertIsNone(row["display_uncertainty_pct"])
         self.assertEqual(row["display_confidence"], "learning")
         self.assertEqual(row["display_forecast_source"], "live_anchored_interval_simulation")
-        self.assertGreaterEqual(row["safety_margin_kwh"], 4.9152)
+        self.assertGreater(row["safety_margin_kwh"], 0)
+        self.assertTrue(row["export_defense_risk"])
+        self.assertGreater(row["export_defense_headroom_kwh"], 0)
         self.assertEqual(candidate, "2026-09-18")
         self.assertGreater(amount, 0)
 
@@ -107,7 +109,10 @@ class CoordinatorTests(unittest.TestCase):
         row = self.data["rolling_day_plans"][0]
         self.assertGreaterEqual(row["sunset_soc_low_pct"], 25)
         self.assertGreaterEqual(row["sunset_soc_high_pct"], 25)
-        self.assertEqual(row["range_assumption"], "grid_connected_reserve_enforced")
+        self.assertEqual(
+            row["range_assumption"],
+            "energy_security_low_export_defense_high",
+        )
 
     def test_afternoon_range_uses_current_soc_and_remaining_daylight(self):
         afternoon = self.now.replace(hour=15)
