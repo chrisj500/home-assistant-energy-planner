@@ -160,6 +160,26 @@ class DashboardLayoutTests(unittest.TestCase):
         '''
         subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
 
+    def test_live_capture_preempts_forecast_hold_in_what_to_do(self):
+        what = next(
+            section for section in self.sections
+            if self._heading(section) == "What To Do"
+        )
+        content = what["cards"][1]["content"]
+        self.assertIn("CAPTURE SOLAR NOW", content)
+        self.assertIn("binary_sensor.energy_planner_live_solar_capture_opportunity", content)
+        self.assertIn("NO-ACTION HEADROOM RISK", content)
+        self.assertLess(
+            content.index("CAPTURE SOLAR NOW"),
+            content.index("FORECAST HOLD"),
+        )
+
+    def test_headroom_summary_includes_counterfactual_ledger(self):
+        headroom = self.sections[1]["cards"][2]["content"]
+        self.assertIn("No-action battery", headroom)
+        self.assertIn("EV solar today", headroom)
+        self.assertIn("Avoided export", headroom)
+
     def test_learning_withholds_recommendation(self):
         what = next(
             section for section in self.sections
@@ -167,7 +187,7 @@ class DashboardLayoutTests(unittest.TestCase):
         )
         content = what["cards"][1]["content"]
         self.assertIn("FORECAST LEARNING", content)
-        self.assertIn("No recommendation yet", content)
+        self.assertIn("No forecast-dependent recommendation yet", content)
         self.assertIn("NO EV ACTION REQUIRED", content)
 
 

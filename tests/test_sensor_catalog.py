@@ -75,6 +75,30 @@ class SensorCatalogTests(unittest.TestCase):
             ("storm_safety_status", "Storm Safety Status"),
         )
 
+    def test_counterfactual_sensors_are_registered(self) -> None:
+        source = SENSOR_PATH.read_text(encoding="utf-8")
+        for key in (
+            "counterfactual_soc_pct",
+            "counterfactual_headroom_kwh",
+            "counterfactual_projected_sunset_soc_pct",
+            "counterfactual_projected_export_kwh",
+            "ev_solar_energy_today_kwh",
+            "counterfactual_preserved_headroom_kwh",
+            "counterfactual_avoided_export_kwh",
+            "live_solar_capture_recommended_energy_kwh",
+        ):
+            self.assertIn(key, source)
+
+        binary_path = (
+            Path(__file__).resolve().parents[1]
+            / "custom_components"
+            / "energy_planner"
+            / "binary_sensor.py"
+        )
+        binary_source = binary_path.read_text(encoding="utf-8")
+        self.assertIn("EnergyPlannerCounterfactualHeadroomRisk", binary_source)
+        self.assertIn("EnergyPlannerLiveSolarCaptureOpportunity", binary_source)
+
     def test_existing_entries_can_configure_battery_power_entities(self) -> None:
         config_flow_path = (
             Path(__file__).resolve().parents[1]

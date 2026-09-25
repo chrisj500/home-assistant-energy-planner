@@ -18,6 +18,11 @@ sys.path.insert(0, str(ROOT))
 import const
 from forecast_solar_shadow import IntervalPoint, interval_points_from_payload
 from headroom import correct_current_day_points
+from counterfactual import (
+    advance_counterfactual_ledger,
+    counterfactual_bank_socs,
+    live_capture_metrics,
+)
 from rolling_ev import DaylightWindow, simulate_rolling_days, choose_ev_charge_window
 from simulation import ControllerSettings
 from reliability import MIN_EVIDENCE_SAMPLES, evidence, gate, number, observe, suppress_actions, sunset_envelope
@@ -61,6 +66,8 @@ class CoordinatorTests(unittest.TestCase):
         self.c._calibration_data = {"overnight_records": [{"drop_rate_kw": 1}] * 3}
         self.c._surplus_since = None
         self.c._last_live_at = None
+        self.c._live_capture_since = None
+        self.c._last_live_capture_at = None
         self.c._estimate_last_success = self.now
         async def save(data):
             self.saved = deepcopy(data)
@@ -70,8 +77,10 @@ class CoordinatorTests(unittest.TestCase):
         self.data = {"rolling_day_plans": [{"date": "2026-09-18", "sunset_soc_pct": 100,
                                            "solar_kwh": 80, "dynamic_load_needed": True}],
                      "rolling_planning_base_load_w": 1000, "effective_reserve_floor": 10,
-                     "calibration_overnight_median_kw": 1, "weighted_soc": 80, "storm": False,
-                     "rolling_ev_charge_power_w": 6000, "rolling_ev_available_energy_kwh": 6,
+                     "calibration_overnight_median_kw": 1, "weighted_soc": 80,
+                     "stored_energy": 39.3216, "storm": False,
+                     "rolling_ev_charge_power_w": 6000, "rolling_ev_current_power_w": 0,
+                     "rolling_ev_available_energy_kwh": 6,
                      "rolling_ev_soc_data_status": "fresh"}
 
     def test_real_scenarios_bound_point_and_apply_margin(self):
@@ -238,6 +247,46 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(result["rolling_dynamic_load_days_count"], 1)
         self.assertFalse(result["rolling_ev_auto_charge_eligible"])
         self.assertFalse(result["headroom_release"])
+
+    def test_live_capture_can_override_forecast_learning_for_no_regret_ev_use(self):
+        baseline = deepcopy(self.data)
+        result = None
+        for minute in range(11):
+            self.now = datetime(2026, 9, 18, 9, tzinfo=timezone.utc) + timedelta(minutes=minute)
+            self.c._estimate_last_success = self.now
+            for state in self.states.values():
+                state.last_reported = self.now
+                state.last_updated = self.now
+            self.c.baseline = deepcopy(baseline)
+            result = asyncio.run(self.c._async_update_data())
+        self.assertEqual(result["forecast_reliability_status"], "learning")
+        self.assertTrue(result["counterfactual_risk_today"])
+        self.assertTrue(result["live_solar_capture_opportunity"])
+        self.assertEqual(result["live_solar_capture_status"], "capture_now")
+        self.assertGreater(result["live_solar_capture_recommended_energy_kwh"], 0)
+        self.assertEqual(result["today_strategy"], "capture_solar")
+
+    def test_live_capture_does_not_require_legacy_advisory_toggle(self):
+        self.c.cfg[const.OPT_EV_SOLAR_ADVISORY_ENABLED] = False
+        baseline = deepcopy(self.data)
+        result = None
+        for minute in range(11):
+            self.now = datetime(2026, 9, 18, 9, tzinfo=timezone.utc) + timedelta(minutes=minute)
+            self.c._estimate_last_success = self.now
+            for state in self.states.values():
+                state.last_reported = self.now
+                state.last_updated = self.now
+            self.c.baseline = deepcopy(baseline)
+            result = asyncio.run(self.c._async_update_data())
+        self.assertTrue(result["live_solar_capture_opportunity"])
+        self.assertFalse(result["rolling_ev_auto_charge_eligible"])
+
+    def test_storm_blocks_live_capture_even_with_solar_surplus(self):
+        self.data["storm"] = True
+        self.c._update_counterfactual_ledger(self.data, self.now)
+        self.c._live_capture_ev(self.data, self.now)
+        self.assertFalse(self.data["live_solar_capture_opportunity"])
+        self.assertEqual(self.data["live_solar_capture_status"], "blocked")
 
     def test_learning_progress_reports_both_required_evidence_sets(self):
         self.c._trust["records"] = [{"lead": 0, "error_soc": 1}] * 2
