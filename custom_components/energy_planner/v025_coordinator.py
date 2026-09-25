@@ -110,21 +110,37 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                       bank_capacities_kwh=capacities, charge_limit_pct=limit,
                       reserve_pct=reserve, charge_efficiency=efficiency,
                       controller=controller, step_minutes=5)
+        nominal = simulate_rolling_days(
+            points=points,
+            average_load_kw=load / 1000,
+            overnight_drop_kw=median_drop,
+            **common,
+        )
         low = simulate_rolling_days(points=lower_points, average_load_kw=load / 1000 * 1.30,
                                     overnight_drop_kw=max([median_drop * 1.30, *drops]), **common)
         high = simulate_rolling_days(points=upper_points, average_load_kw=load / 1000 * .70,
                                      overnight_drop_kw=min([median_drop * .70, *drops]), **common)
-        if len(low) != len(rows) or len(high) != len(rows):
+        if len(nominal) != len(rows) or len(low) != len(rows) or len(high) != len(rows):
             raise ValueError("Incomplete scenario horizon")
         candidate = None
         amount = 0.0
         reserve_floor = min(max(float(reserve), 0.0), 100.0)
         window_by_date = {window.day: window for window in windows}
         current_soc = sum(soc * cap for soc, cap in zip(socs, capacities)) / capacity
-        for row, lo, hi in zip(rows, low, high):
+        for row, mid, lo, hi in zip(rows, nominal, low, high):
             profile = profiles[row["date"]]
             width = profile["width_soc"]
             window = window_by_date[lo.day]
+            display_uncertainty = (
+                round(profile["mae_soc"], 1)
+                if profile["mae_soc"] is not None
+                else None
+            )
+            display_source = (
+                "live_anchored_interval_simulation"
+                if lo.day == now.date() and window.sunrise <= now < window.sunset
+                else "interval_simulation"
+            )
             lower_soc, upper_soc, remaining_fraction = sunset_envelope(
                 now=now, sunrise=window.sunrise, sunset=window.sunset,
                 target_date=lo.day, current_soc=current_soc,
@@ -141,6 +157,12 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 "sunset_soc_low_pct": lower_soc,
                 "sunset_soc_high_pct": upper_soc,
                 "range_remaining_daylight_fraction": remaining_fraction,
+                # Human-facing point estimate. Unlike the safety envelope above,
+                # this follows the live-anchored interval curve for the current day.
+                "display_sunset_soc_pct": round(mid.end_soc_pct, 2),
+                "display_uncertainty_pct": display_uncertainty,
+                "display_forecast_source": display_source,
+                "display_confidence": profile["confidence"],
                 "confidence": profile["confidence"], "error_samples": profile["samples"],
                 "historical_mae_soc": profile["mae_soc"], "safety_margin_kwh": round(margin, 2),
                 "conservative_headroom_kwh": round(robust, 2),
@@ -249,6 +271,7 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 for row in data["rolling_day_plans"]:
                     row["historical_confidence"] = row["confidence"]
                     row["confidence"] = "low"
+                    row["display_confidence"] = "low"
             data.update(
                 forecast_confidence="low" if unstable else profile["confidence"],
                 forecast_error_samples=profile["samples"],
