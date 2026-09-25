@@ -14,6 +14,8 @@ async def async_setup_entry(hass, entry: ConfigEntry, async_add_entities) -> Non
             EnergyPlannerHeadroomRisk(coordinator, entry),
             EnergyPlannerDynamicLoadForecast(coordinator, entry),
             EnergyPlannerAutoChargeEligible(coordinator, entry),
+            EnergyPlannerCounterfactualHeadroomRisk(coordinator, entry),
+            EnergyPlannerLiveSolarCaptureOpportunity(coordinator, entry),
             EnergyPlannerNextSunsetAvailable(coordinator, entry),
         ]
     )
@@ -137,6 +139,110 @@ class EnergyPlannerAutoChargeEligible(
             "headroom_preserved_kwh": data.get("rolling_ev_headroom_preserved_kwh"),
             "surplus_next_3d_kwh": data.get("rolling_ev_surplus_next_3d_kwh"),
             "surplus_horizon_kwh": data.get("rolling_ev_surplus_horizon_kwh"),
+        }
+
+
+class EnergyPlannerCounterfactualHeadroomRisk(
+    CoordinatorEntity[EnergyPlannerV018Coordinator], BinarySensorEntity
+):
+    """Risk that would exist today without discretionary solar diversion."""
+
+    _attr_has_entity_name = True
+    _attr_name = "No-Action Headroom Risk Today"
+
+    def __init__(self, coordinator: EnergyPlannerV018Coordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_counterfactual_headroom_risk_today"
+        self._attr_device_info = {
+            "identifiers": {("energy_planner", entry.entry_id)},
+            "name": entry.title,
+            "manufacturer": "Community",
+            "model": "Energy Planner",
+        }
+
+    @property
+    def is_on(self) -> bool:
+        return bool((self.coordinator.data or {}).get("counterfactual_risk_today", False))
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        data = self.coordinator.data or {}
+        return {
+            "source": data.get("counterfactual_risk_source"),
+            "current_soc_pct": data.get("counterfactual_soc_pct"),
+            "projected_sunset_soc_pct": data.get(
+                "counterfactual_projected_sunset_soc_pct"
+            ),
+            "headroom_kwh": data.get("counterfactual_headroom_kwh"),
+            "projected_export_kwh": data.get("counterfactual_projected_export_kwh"),
+            "live_implied_export_kwh": data.get(
+                "counterfactual_live_implied_export_kwh"
+            ),
+            "fill_hours": data.get("counterfactual_live_fill_hours"),
+            "remaining_daylight_hours": data.get(
+                "counterfactual_remaining_daylight_hours"
+            ),
+            "ev_solar_kwh_today": data.get("ev_solar_energy_today_kwh"),
+            "preserved_headroom_kwh": data.get(
+                "counterfactual_preserved_headroom_kwh"
+            ),
+            "avoided_export_kwh": data.get("counterfactual_avoided_export_kwh"),
+        }
+
+
+class EnergyPlannerLiveSolarCaptureOpportunity(
+    CoordinatorEntity[EnergyPlannerV018Coordinator], BinarySensorEntity
+):
+    """Live no-regret EV charging opportunity independent of forecast stability."""
+
+    _attr_has_entity_name = True
+    _attr_name = "Live Solar Capture Opportunity"
+
+    def __init__(self, coordinator: EnergyPlannerV018Coordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{entry.entry_id}_live_solar_capture_opportunity"
+        self._attr_device_info = {
+            "identifiers": {("energy_planner", entry.entry_id)},
+            "name": entry.title,
+            "manufacturer": "Community",
+            "model": "Energy Planner",
+        }
+
+    @property
+    def is_on(self) -> bool:
+        return bool(
+            (self.coordinator.data or {}).get(
+                "live_solar_capture_opportunity",
+                False,
+            )
+        )
+
+    @property
+    def extra_state_attributes(self) -> dict[str, object]:
+        data = self.coordinator.data or {}
+        return {
+            "status": data.get("live_solar_capture_status"),
+            "reason": data.get("live_solar_capture_reason"),
+            "recommended_energy_kwh": data.get(
+                "live_solar_capture_recommended_energy_kwh"
+            ),
+            "live_solar_surplus_w": data.get("live_solar_surplus_w"),
+            "counterfactual_soc_pct": data.get("counterfactual_soc_pct"),
+            "counterfactual_headroom_kwh": data.get(
+                "counterfactual_headroom_kwh"
+            ),
+            "counterfactual_projected_sunset_soc_pct": data.get(
+                "counterfactual_projected_sunset_soc_pct"
+            ),
+            "counterfactual_projected_export_kwh": data.get(
+                "counterfactual_projected_export_kwh"
+            ),
+            "ev_wall_kwh_today": data.get("ev_wall_energy_today_kwh"),
+            "ev_solar_kwh_today": data.get("ev_solar_energy_today_kwh"),
+            "preserved_headroom_kwh": data.get(
+                "counterfactual_preserved_headroom_kwh"
+            ),
+            "avoided_export_kwh": data.get("counterfactual_avoided_export_kwh"),
         }
 
 
