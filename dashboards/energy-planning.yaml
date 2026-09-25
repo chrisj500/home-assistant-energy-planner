@@ -1408,7 +1408,7 @@ views:
               {% else %}
               **The zero-export forecast needs about {{ risk_headroom | round(1) }} kWh of stationary-battery headroom (about {{ risk_load | round(1) }} kWh of flexible-load energy). Use the solar-rich window when verified.**
               {% endif %}
-              _Risk basis: {{ risk_reason | replace('_',' ') }}. Forecast reliability controls action timing, not whether the export risk is displayed._
+              _Risk basis: {{ risk_reason | replace('_',' ') }}. Confidence gates action timing, not whether the export risk is displayed._
               {% elif reliability == 'learning' %}
               ## 🟡 FORECAST LEARNING
               **No forecast-dependent recommendation yet.** {{ reason or states('sensor.energy_planner_forecast_learning_progress') }}
