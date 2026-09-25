@@ -237,6 +237,40 @@ SENSORS = (
         suggested_display_precision=1,
     ),
 
+    # Export-first forecast risk. This is independent of whether an
+    # action is currently authorized by the reliability gate.
+    EnergyPlannerSensorDescription(
+        key="forecast_export_risk_date",
+        data_key="forecast_export_risk_date",
+        name="Forecast Export Risk Date",
+    ),
+    _energy(
+        "forecast_export_headroom",
+        "forecast_export_headroom_kwh",
+        "Forecast Export-Defense Headroom",
+        storage=True,
+    ),
+    _energy(
+        "forecast_export_wall_energy",
+        "forecast_export_wall_energy_kwh",
+        "Forecast Flexible-Load Energy Needed",
+    ),
+    EnergyPlannerSensorDescription(
+        key="forecast_export_risk_reason",
+        data_key="forecast_export_risk_reason",
+        name="Forecast Export Risk Reason",
+    ),
+    EnergyPlannerSensorDescription(
+        key="forecast_export_model",
+        data_key="forecast_export_model",
+        name="Forecast Export Risk Model",
+    ),
+    EnergyPlannerSensorDescription(
+        key="forecast_objective",
+        data_key="forecast_objective",
+        name="Forecast Objective",
+    ),
+
     # No-action counterfactual and measured solar-capture ledger.
     EnergyPlannerSensorDescription(
         key="counterfactual_status",
