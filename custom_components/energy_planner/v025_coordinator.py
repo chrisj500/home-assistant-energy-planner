@@ -163,13 +163,7 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             number(data.get("counterfactual_projected_export_kwh")) or 0.0,
             0.0,
         )
-        forecast_soc = number(data.get("counterfactual_projected_sunset_soc_pct"))
-        charge_limit = _num(self.hass, self.cfg.get(CONF_CHARGE_LIMIT))
-        forecast_risk = forecast_export >= 0.25 or (
-            forecast_soc is not None
-            and charge_limit is not None
-            and forecast_soc >= float(charge_limit) - 0.5
-        )
+        forecast_risk = forecast_export >= 0.25
         runway_risk = bool(metrics.get("risk"))
         risk = forecast_risk or runway_risk or headroom <= 0.25
         data.update(
@@ -207,23 +201,35 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         soc_ok = soc_status == "fresh" or (
             current_power >= 500 and soc_status == "charging_soc_stale"
         )
-        if (
-            home is None
-            or home.state != "home"
-            or not soc_ok
-            or available is None
-            or available <= 0.0
-            or charge_power is None
-            or charge_power < 500.0
-        ):
+        if home is None or home.state != "home":
+            blocked_reason = (
+                "No-action saturation risk is present, but the Lexus is not "
+                "confirmed home."
+            )
+        elif available is not None and available <= 0.0:
+            blocked_reason = (
+                "No-action saturation risk remains, but the Lexus is full; use "
+                "another flexible load if measured solar surplus continues."
+            )
+        elif not soc_ok or available is None:
+            blocked_reason = (
+                "No-action saturation risk is present, but Lexus SOC/capacity "
+                "telemetry is not ready."
+            )
+        elif charge_power is None or charge_power < 500.0:
+            blocked_reason = (
+                "No-action saturation risk is present, but learned EV charge power "
+                "is unavailable."
+            )
+        else:
+            blocked_reason = None
+
+        if blocked_reason is not None:
             self._live_capture_since = None
             self._last_live_capture_at = now
             data.update(
                 live_solar_capture_status="blocked",
-                live_solar_capture_reason=(
-                    "No-action saturation risk is present, but EV home/SOC/capacity "
-                    "telemetry is not ready."
-                ),
+                live_solar_capture_reason=blocked_reason,
             )
             return
 
