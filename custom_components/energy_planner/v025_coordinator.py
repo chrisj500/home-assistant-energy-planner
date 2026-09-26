@@ -811,24 +811,38 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 int(self._trust.get("topology_discarded_pending", 0))
                 + discarded_pending
             )
-            data.update(
-                forecast_learning_rebased_reason="battery_topology_changed",
-                forecast_learning_rebased_at=now.isoformat(),
-                forecast_learning_preserved_samples=preserved_samples,
-                forecast_learning_discarded_pending=discarded_pending,
-            )
+            self._trust["battery_topology_rebase"] = {
+                "reason": "battery_topology_changed",
+                "at": now.isoformat(),
+                "preserved_samples": preserved_samples,
+                "discarded_pending": discarded_pending,
+                "from": previous_signature,
+                "to": topology_signature,
+            }
         self._trust["battery_topology_signature"] = topology_signature
         migration_info = self._trust.get("reliability_record_migration") or {}
+        rebase_info = self._trust.get("battery_topology_rebase") or {}
         data.update(
             forecast_reliability_record_schema=self._trust.get(
                 "reliability_record_schema",
                 RELIABILITY_RECORD_SCHEMA_VERSION,
             ),
+            forecast_reliability_record_count=len(
+                self._trust.get("records", [])
+            ),
             forecast_reliability_migrated_records=migration_info.get(
-                "records", len(self._trust.get("records", []))
+                "migrated_records", 0
             ),
             forecast_reliability_inferred_capacity_records=migration_info.get(
                 "capacity_inferred_records", 0
+            ),
+            forecast_learning_rebased_reason=rebase_info.get("reason"),
+            forecast_learning_rebased_at=rebase_info.get("at"),
+            forecast_learning_preserved_samples=rebase_info.get(
+                "preserved_samples"
+            ),
+            forecast_learning_discarded_pending=rebase_info.get(
+                "discarded_pending"
             ),
         )
 
