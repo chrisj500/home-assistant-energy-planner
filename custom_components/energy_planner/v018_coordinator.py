@@ -88,23 +88,24 @@ class EnergyPlannerV018Coordinator(EnergyPlannerV017Coordinator):
                 planning_source=output.get("rolling_planning_base_load_source"),
             )
 
-        soc_entities = (
-            self.cfg.get(CONF_SOC_1),
-            self.cfg.get(CONF_SOC_2),
-            self.cfg.get(CONF_SOC_3),
-        )
-        soc_values = tuple(_num(self.hass, entity) for entity in soc_entities)
-        if any(value is None for value in soc_values):
+        topology_socs = baseline.get("battery_bank_socs_pct")
+        topology_capacities = baseline.get("battery_bank_capacities_kwh")
+        topology_capacity = baseline.get("battery_capacity_kwh")
+        if (
+            not isinstance(topology_socs, (list, tuple))
+            or len(topology_socs) != 3
+            or not isinstance(topology_capacities, (list, tuple))
+            or len(topology_capacities) != 3
+            or not isinstance(topology_capacity, (int, float))
+        ):
             return unavailable(
-                "One or more battery SOC inputs are unavailable",
-                battery_soc=[state_snapshot(entity) for entity in soc_entities],
+                "Battery topology is unavailable",
+                topology_source=baseline.get("battery_topology_source"),
+                topology_reason=baseline.get("battery_topology_reason"),
             )
-        bank_socs = tuple(float(value) for value in soc_values if value is not None)
-        if len(bank_socs) != 3:
-            return unavailable(
-                "Battery SOC model requires exactly three banks",
-                battery_soc=[state_snapshot(entity) for entity in soc_entities],
-            )
+        bank_socs = tuple(float(value) for value in topology_socs)
+        bank_capacities = tuple(float(value) for value in topology_capacities)
+        capacity = float(topology_capacity)
 
         charge_limit_entity = self.cfg.get(CONF_CHARGE_LIMIT)
         charge_limit = _num(self.hass, charge_limit_entity)
@@ -114,10 +115,6 @@ class EnergyPlannerV018Coordinator(EnergyPlannerV017Coordinator):
                 charge_limit=state_snapshot(charge_limit_entity),
             )
 
-        weights = _parse_weights(self.cfg.get(CONF_SOC_WEIGHTS, DEFAULT_WEIGHTS))
-        capacity = float(self.cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH))
-        total_weight = sum(weights)
-        bank_capacities = tuple(capacity * weight / total_weight for weight in weights)
         reserve = baseline.get("effective_reserve_floor")
         reserve_pct = float(reserve) if isinstance(reserve, (int, float)) else 10.0
         overnight_drop = baseline.get("calibration_overnight_median_kw")
@@ -200,6 +197,10 @@ class EnergyPlannerV018Coordinator(EnergyPlannerV017Coordinator):
                     "planning_load_w": planning_load_w,
                     "charge_limit_pct": float(charge_limit),
                     "battery_soc_pct": list(bank_socs),
+                    "battery_capacity_kwh": capacity,
+                    "battery_bank_capacities_kwh": list(bank_capacities),
+                    "battery_topology_source": baseline.get("battery_topology_source"),
+                    "battery_pack_counts": baseline.get("battery_pack_counts"),
                     "daylight_windows": len(daylight_windows),
                 },
                 "rolling_day_plans": rows,
