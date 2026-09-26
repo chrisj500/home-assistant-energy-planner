@@ -80,6 +80,9 @@ class CoordinatorTests(unittest.TestCase):
                      "rolling_planning_base_load_w": 1000, "effective_reserve_floor": 10,
                      "calibration_overnight_median_kw": 1, "weighted_soc": 80,
                      "stored_energy": 39.3216, "storm": False,
+                     "battery_capacity_kwh": 49.152,
+                     "battery_bank_capacities_kwh": [18.432, 12.288, 18.432],
+                     "battery_bank_socs_pct": [80.0, 80.0, 80.0],
                      "rolling_ev_charge_power_w": 6000, "rolling_ev_current_power_w": 0,
                      "rolling_ev_available_energy_kwh": 6,
                      "rolling_ev_soc_data_status": "fresh"}
@@ -106,6 +109,7 @@ class CoordinatorTests(unittest.TestCase):
         self.states["s1"].state = "25"
         self.states["s2"].state = "25"
         self.states["s3"].state = "25"
+        self.data["battery_bank_socs_pct"] = [25.0, 25.0, 25.0]
         self.c._scenarios(self.data, self.now)
         row = self.data["rolling_day_plans"][0]
         self.assertGreaterEqual(row["sunset_soc_low_pct"], 25)
@@ -119,6 +123,7 @@ class CoordinatorTests(unittest.TestCase):
         afternoon = self.now.replace(hour=15)
         for key in ("s1", "s2", "s3"):
             self.states[key].state = "24.25"
+        self.data["battery_bank_socs_pct"] = [24.25, 24.25, 24.25]
         self.data["rolling_day_plans"][0]["sunset_soc_pct"] = 32.05
         self.c._scenarios(self.data, afternoon)
         row = self.data["rolling_day_plans"][0]
@@ -128,6 +133,7 @@ class CoordinatorTests(unittest.TestCase):
     def test_display_best_guess_responds_to_live_solar(self):
         for key in ("s1", "s2", "s3"):
             self.states[key].state = "20"
+        self.data["battery_bank_socs_pct"] = [20.0, 20.0, 20.0]
         self.c._estimate_payload["result"]["watts"] = {
             (self.now + timedelta(hours=i)).isoformat(): 3000
             for i in range(10)
@@ -246,6 +252,7 @@ class CoordinatorTests(unittest.TestCase):
         # still protect headroom if solar materially beats the point forecast.
         for key in ("s1", "s2", "s3"):
             self.states[key].state = "82"
+        self.data["battery_bank_socs_pct"] = [82.0, 82.0, 82.0]
         self.c._estimate_payload["result"]["watts"] = {
             (self.now + timedelta(hours=i)).isoformat(): 7000
             for i in range(10)
@@ -282,12 +289,12 @@ class CoordinatorTests(unittest.TestCase):
         self.assertIsNone(candidate)
         self.assertEqual(amount, 0)
 
-    def test_unknown_soc_blocks_but_unchanged_numeric_soc_remains_valid(self):
-        self.states["s1"].state = "nan"
+    def test_missing_resolved_topology_blocks_but_numeric_snapshot_remains_valid(self):
+        self.data["battery_bank_socs_pct"] = None
         with self.assertRaises(ValueError):
             self.c._scenarios(self.data, self.now)
 
-        self.states["s1"].state = "80"
+        self.data["battery_bank_socs_pct"] = [80.0, 80.0, 80.0]
         self.states["s1"].last_reported -= timedelta(hours=1)
         profiles, candidate, amount, *_ = self.c._scenarios(self.data, self.now)
         self.assertIn("2026-09-18", profiles)
