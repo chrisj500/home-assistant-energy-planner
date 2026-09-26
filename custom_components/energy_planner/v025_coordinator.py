@@ -70,7 +70,7 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         return max(solar - max(loads), 0.0)
 
     def _update_counterfactual_ledger(self, data, now):
-        capacity = number(self.cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH))
+        capacity = number(data.get("battery_capacity_kwh"))
         stored = number(data.get("stored_energy"))
         limit = _num(self.hass, self.cfg.get(CONF_CHARGE_LIMIT))
         if capacity is None or capacity <= 0 or stored is None or limit is None:
@@ -309,10 +309,20 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         if not rows or not self._estimate_payload:
             raise ValueError("No rolling forecast")
         cfg = self.cfg
-        capacity = float(cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH))
-        weights = _parse_weights(cfg.get(CONF_SOC_WEIGHTS, DEFAULT_WEIGHTS))
-        capacities = tuple(capacity * w / sum(weights) for w in weights)
-        socs = tuple(_num(self.hass, cfg.get(key)) for key in (CONF_SOC_1, CONF_SOC_2, CONF_SOC_3))
+        topology_capacity = data.get("battery_capacity_kwh")
+        topology_capacities = data.get("battery_bank_capacities_kwh")
+        topology_socs = data.get("battery_bank_socs_pct")
+        if (
+            not isinstance(topology_capacity, (int, float))
+            or not isinstance(topology_capacities, (list, tuple))
+            or len(topology_capacities) != 3
+            or not isinstance(topology_socs, (list, tuple))
+            or len(topology_socs) != 3
+        ):
+            raise ValueError("Missing resolved battery topology")
+        capacity = float(topology_capacity)
+        capacities = tuple(float(value) for value in topology_capacities)
+        socs = tuple(float(value) for value in topology_socs)
         limit = _num(self.hass, cfg.get(CONF_CHARGE_LIMIT))
         load = number(data.get("rolling_planning_base_load_w"))
         reserve = number(data.get("effective_reserve_floor"))
