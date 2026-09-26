@@ -523,12 +523,23 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             and today_sunrise <= now < today_sunset
         )
 
+        previous_topology = self._battery_topology
         topology = resolve_battery_topology(
             self.hass,
             cfg,
-            previous=self._battery_topology,
+            previous=previous_topology,
         )
+        topology_changed = False
         if topology.auto_detected:
+            if previous_topology is not None and previous_topology.auto_detected:
+                topology_changed = (
+                    previous_topology.pack_counts != topology.pack_counts
+                    or abs(previous_topology.capacity_kwh - topology.capacity_kwh) > 0.01
+                )
+            elif abs(
+                topology.capacity_kwh - topology.configured_capacity_kwh
+            ) > 0.01:
+                topology_changed = True
             self._battery_topology = topology
 
         bank_socs = topology.bank_socs_pct
@@ -542,6 +553,13 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if stored is not None and charge_limit is not None
             else None
         )
+
+        if topology_changed:
+            calibration_data = await self._ensure_calibration_data()
+            calibration_data.pop("daylight_pending", None)
+            calibration_data.pop("overnight_pending", None)
+            calibration_data["battery_topology_reset_at"] = now.isoformat()
+            await self._save_calibration_data()
 
         await self._finalize_calibration_history(
             now=now,
@@ -1099,6 +1117,7 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             ),
             "battery_pack_count_total": topology.total_pack_count,
             "battery_discovered_dpu_count": topology.discovered_dpu_count,
+            "battery_topology_changed": topology_changed,
             "upcoming_solar": upcoming,
             "reserve": reserve,
             "effective_reserve_floor": effective_reserve,
