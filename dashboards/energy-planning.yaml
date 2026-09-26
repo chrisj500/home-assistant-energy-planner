@@ -1492,6 +1492,9 @@ views:
               - sensor.energy_planner_forecast_confidence
               - sensor.energy_planner_forecast_error_samples
               - sensor.energy_planner_forecast_reliability_reason
+              - sensor.energy_planner_effective_battery_capacity
+              - sensor.energy_planner_battery_pack_count
+              - sensor.energy_planner_battery_topology_source
               - binary_sensor.energy_planner_forecast_export_risk
               - sensor.energy_planner_forecast_export_risk_date
               - sensor.energy_planner_forecast_export_defense_headroom
