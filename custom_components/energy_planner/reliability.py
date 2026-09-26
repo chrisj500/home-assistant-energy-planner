@@ -32,6 +32,7 @@ def migrate_records(records, *, fallback_capacity_kwh=None):
     """
     migrated = []
     changed = False
+    migrated_count = 0
     inferred = 0
     for original in records or []:
         row = dict(original)
@@ -72,10 +73,13 @@ def migrate_records(records, *, fallback_capacity_kwh=None):
         if row.get("record_schema") != RELIABILITY_RECORD_SCHEMA_VERSION:
             row["record_schema"] = RELIABILITY_RECORD_SCHEMA_VERSION
             changed = True
+        if row != original:
+            migrated_count += 1
         migrated.append(row)
     return migrated, {
         "changed": changed,
         "records": len(migrated),
+        "migrated_records": migrated_count,
         "capacity_inferred_records": inferred,
     }
 
