@@ -24,7 +24,17 @@ from .enhanced_coordinator import _parse_weights
 from .export_defense import assess_export_defense
 from .forecast_solar_shadow import IntervalPoint, interval_points_from_payload
 from .headroom import correct_current_day_points
-from .reliability import MIN_EVIDENCE_SAMPLES, evidence, gate, number, observe, suppress_actions, sunset_envelope
+from .reliability import (
+    MIN_EVIDENCE_SAMPLES,
+    RELIABILITY_RECORD_SCHEMA_VERSION,
+    evidence,
+    gate,
+    migrate_records,
+    number,
+    observe,
+    suppress_actions,
+    sunset_envelope,
+)
 from .rolling_ev import DaylightWindow, simulate_rolling_days, choose_ev_charge_window
 from .v022_coordinator import EnergyPlannerV022Coordinator
 
@@ -347,8 +357,14 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         records = self._trust["records"]
         if any(number(row.get(k)) is None for row in rows for k in ("sunset_soc_pct", "solar_kwh")):
             raise ValueError("Invalid rolling forecast")
-        profiles = {row["date"]: evidence(records, (dt_util.parse_date(row["date"]) - now.date()).days)
-                    for row in rows}
+        profiles = {
+            row["date"]: evidence(
+                records,
+                (dt_util.parse_date(row["date"]) - now.date()).days,
+                capacity_kwh=capacity,
+            )
+            for row in rows
+        }
         efficiency = float(cfg.get(OPT_CHARGE_EFFICIENCY, DEFAULT_CHARGE_EFFICIENCY))
         controller = _controller_settings(self.hass, 250.0)
         median_drop = number(data.get("calibration_overnight_median_kw")) or 0.0
@@ -623,29 +639,92 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         )
 
     def _score_forecasts(self, data, now):
-        """One fixed snapshot per issue-day/target-day; settle only near sunset."""
+        """Score fixed sunset snapshots in physical energy, preserving topology context."""
         today = now.date().isoformat()
         _, sunset = _solar_window(self.hass, now.date())
-        actual = number(data.get("weighted_soc"))
+        actual_soc = number(data.get("weighted_soc"))
+        actual_stored = number(data.get("stored_energy"))
+        current_capacity = number(data.get("battery_capacity_kwh"))
+        topology_signature = {
+            "capacity_kwh": round(current_capacity or 0.0, 3),
+            "pack_counts": data.get("battery_pack_counts"),
+        }
+
         pending = self._trust["pending"]
         for key, sample in list(pending.items()):
             if sample["date"] < today:
                 del pending[key]  # Missed sunset: never substitute next morning SOC.
             elif sample["date"] == today and sunset and now >= sunset:
-                if actual is not None and (now - sunset).total_seconds() <= 300:
-                    sample = {**sample, "actual_soc": actual,
-                              "error_soc": actual - sample["predicted_soc"]}
-                    self._trust["records"].append(sample)
+                if (
+                    actual_soc is not None
+                    and actual_stored is not None
+                    and current_capacity is not None
+                    and (now - sunset).total_seconds() <= 300
+                ):
+                    issued_signature = sample.get("topology_signature")
+                    issued_capacity = number(sample.get("capacity_kwh"))
+                    topology_matches = (
+                        issued_signature == topology_signature
+                        if issued_signature is not None
+                        else (
+                            issued_capacity is None
+                            or abs(issued_capacity - current_capacity) <= 0.01
+                        )
+                    )
+                    if topology_matches:
+                        predicted_soc = number(sample.get("predicted_soc"))
+                        predicted_stored = number(
+                            sample.get("predicted_stored_kwh")
+                        )
+                        if (
+                            predicted_stored is None
+                            and predicted_soc is not None
+                            and issued_capacity is not None
+                        ):
+                            predicted_stored = (
+                                predicted_soc / 100.0 * issued_capacity
+                            )
+                        if predicted_soc is not None and predicted_stored is not None:
+                            record = {
+                                **sample,
+                                "actual_soc": actual_soc,
+                                "actual_stored_kwh": actual_stored,
+                                "settled_capacity_kwh": current_capacity,
+                                "settled_topology_signature": topology_signature,
+                                "error_soc": actual_soc - predicted_soc,
+                                "error_kwh": actual_stored - predicted_stored,
+                                "record_schema": RELIABILITY_RECORD_SCHEMA_VERSION,
+                            }
+                            self._trust["records"].append(record)
+                    else:
+                        self._trust["topology_discarded_pending"] = (
+                            int(self._trust.get("topology_discarded_pending", 0))
+                            + 1
+                        )
                 del pending[key]
+
         for row in data.get("rolling_day_plans", []):
             target = dt_util.parse_date(row["date"])
             _, target_sunset = _solar_window(self.hass, target)
             if target_sunset is None or (target_sunset - now).total_seconds() < 6 * 3600:
                 continue  # Do not inflate same-day accuracy with last-minute predictions.
+            predicted_soc = number(row.get("sunset_soc_pct"))
+            if predicted_soc is None or current_capacity is None:
+                continue
             key = f"{today}/{row['date']}"
-            pending.setdefault(key, {"date": row["date"], "issued_at": now.isoformat(),
-                                     "lead": (target - now.date()).days,
-                                     "predicted_soc": row["sunset_soc_pct"]})
+            pending.setdefault(
+                key,
+                {
+                    "date": row["date"],
+                    "issued_at": now.isoformat(),
+                    "lead": (target - now.date()).days,
+                    "predicted_soc": predicted_soc,
+                    "predicted_stored_kwh": predicted_soc / 100.0 * current_capacity,
+                    "capacity_kwh": current_capacity,
+                    "topology_signature": topology_signature,
+                    "record_schema": RELIABILITY_RECORD_SCHEMA_VERSION,
+                },
+            )
         self._trust["records"] = self._trust["records"][-210:]
 
     async def _async_update_data(self):
@@ -661,7 +740,26 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 ("counterfactual_ledger", None),
             ):
                 self._trust.setdefault(key, default)
-            # Require new confirmations after restart; keep scored forecasts.
+
+            legacy_capacity = number(
+                self.cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH)
+            )
+            migrated_records, migration = migrate_records(
+                self._trust["records"],
+                fallback_capacity_kwh=legacy_capacity,
+            )
+            self._trust["records"] = migrated_records
+            self._trust["reliability_record_schema"] = (
+                RELIABILITY_RECORD_SCHEMA_VERSION
+            )
+            self._trust["reliability_record_migration"] = {
+                **migration,
+                "at": now.isoformat(),
+                "fallback_capacity_kwh": legacy_capacity,
+            }
+
+            # Require new confirmation refreshes after restart, but preserve all
+            # completed reliability evidence.
             self._trust["revisions"] = []
         previous_trust = deepcopy(self._trust)
         topology_signature = {
@@ -670,7 +768,6 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 3,
             ),
             "pack_counts": data.get("battery_pack_counts"),
-            "source": data.get("battery_topology_source"),
         }
         previous_signature = self._trust.get("battery_topology_signature")
         first_dynamic_change = (
@@ -690,16 +787,25 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             and previous_signature != topology_signature
         )
         if first_dynamic_change or signature_changed:
-            # Sunset SOC errors are capacity dependent. Do not carry evidence
-            # learned against a different physical bank into the new topology.
-            self._trust["records"] = []
+            # Completed forecast evidence is stored in physical kWh and remains
+            # valid across capacity changes. Only transient state that spans the
+            # hardware change is invalidated.
+            preserved_samples = len(self._trust.get("records", []))
+            discarded_pending = len(self._trust.get("pending", {}))
             self._trust["pending"] = {}
             self._trust["revisions"] = []
             self._trust["decisions"] = []
-            self._trust["battery_topology_reset_at"] = now.isoformat()
+            self._trust["counterfactual_ledger"] = None
+            self._trust["battery_topology_rebased_at"] = now.isoformat()
+            self._trust["topology_discarded_pending"] = (
+                int(self._trust.get("topology_discarded_pending", 0))
+                + discarded_pending
+            )
             data.update(
-                forecast_learning_reset_reason="battery_topology_changed",
-                forecast_learning_reset_at=now.isoformat(),
+                forecast_learning_rebased_reason="battery_topology_changed",
+                forecast_learning_rebased_at=now.isoformat(),
+                forecast_learning_preserved_samples=preserved_samples,
+                forecast_learning_discarded_pending=discarded_pending,
             )
         self._trust["battery_topology_signature"] = topology_signature
 
@@ -778,6 +884,13 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 forecast_confidence="low" if unstable else profile["confidence"],
                 forecast_error_samples=profile["samples"],
                 forecast_historical_mae_soc=profile["mae_soc"],
+                forecast_historical_mae_kwh=profile.get("mae_kwh"),
+                forecast_historical_signed_bias_kwh=profile.get(
+                    "signed_bias_kwh"
+                ),
+                forecast_export_underprediction_bias_kwh=profile.get(
+                    "export_underprediction_bias_kwh"
+                ),
                 forecast_confirmation_count=count,
                 forecast_revision_at=revision.isoformat() if revision else None,
                 forecast_learning_ready=profile["learning_ready"],
