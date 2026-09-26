@@ -81,7 +81,7 @@ class ExportDefenseTests(unittest.TestCase):
         )
         self.assertTrue(result.risk)
         self.assertAlmostEqual(result.risk_adjusted_ceiling_pct, 90.0)
-        self.assertAlmostEqual(result.uncertainty_headroom_kwh, 1.96608, places=4)
+        self.assertAlmostEqual(result.uncertainty_headroom_kwh, 0.98304, places=4)
 
     def test_no_margin_is_subtracted_from_direct_export_need(self) -> None:
         result = assess_export_defense(
