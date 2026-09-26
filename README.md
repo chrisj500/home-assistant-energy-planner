@@ -1,5 +1,17 @@
 # Home Assistant Energy Planner
 
+## v0.1.50 topology-invariant forecast learning
+
+Completed sunset reliability evidence is now stored in physical kWh with battery
+topology metadata. Adding/removing DPU battery packs no longer clears completed
+forecast learning; historical energy errors are re-expressed against the current
+effective capacity. Only pending samples and other transient state that span the
+hardware change are invalidated.
+
+If upgrading from v0.1.48 or earlier with an existing reliability history, skip
+v0.1.49 and upgrade directly to v0.1.50 so the old evidence can be migrated and
+preserved. See [release notes](RELEASE_NOTES_0.1.50.md).
+
 ## v0.1.49 automatic battery topology
 
 Energy Planner now queries the installed EcoFlow IoT coordinator for each Delta Pro
