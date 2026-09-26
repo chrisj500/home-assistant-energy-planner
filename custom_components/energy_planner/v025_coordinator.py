@@ -537,6 +537,7 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 "display_confidence": profile["confidence"],
                 "confidence": profile["confidence"], "error_samples": profile["samples"],
                 "historical_mae_soc": profile["mae_soc"],
+                "nominal_start_soc_pct": round(mid.start_soc_pct, 2),
                 "historical_signed_bias_soc": profile.get("signed_bias_soc"),
                 "export_underprediction_bias_soc": profile.get(
                     "export_underprediction_bias_soc"
