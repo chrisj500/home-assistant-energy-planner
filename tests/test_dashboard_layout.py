@@ -60,6 +60,24 @@ class DashboardLayoutTests(unittest.TestCase):
         fallback = content.index("sensor.ecoflow_smart_home_panel_2_backup_battery")
         self.assertLess(planner, fallback)
 
+    def test_battery_card_shows_effective_capacity_and_pack_count(self):
+        headroom = self.sections[1]["cards"]
+        card = headroom[1]
+        content = card["custom_fields"]["content"]
+        triggers = card["triggers_update"]
+        self.assertIn("sensor.energy_planner_effective_battery_capacity", triggers)
+        self.assertIn("sensor.energy_planner_battery_pack_count", triggers)
+        self.assertIn("sensor.energy_planner_effective_battery_capacity", content)
+        self.assertIn("sensor.energy_planner_battery_pack_count", content)
+        self.assertIn("kWh", content)
+        self.assertIn("packs", content)
+
+    def test_diagnostics_exposes_battery_topology(self):
+        raw = yaml.safe_dump(self.diagnostics)
+        self.assertIn("sensor.energy_planner_effective_battery_capacity", raw)
+        self.assertIn("sensor.energy_planner_battery_pack_count", raw)
+        self.assertIn("sensor.energy_planner_battery_topology_source", raw)
+
     def test_battery_outlook_places_uncertainty_below_fill_icon(self):
         outlook = self.sections[2]["cards"][1]["custom_fields"]["content"]
         battery_call = outlook.index("${battery(", outlook.index("const sunsetCell"))
