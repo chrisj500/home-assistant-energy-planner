@@ -926,6 +926,32 @@ class EnergyPlannerSensor(CoordinatorEntity[EnergyPlannerCoordinator], SensorEnt
             "historical_mae_soc_percentage_points": data.get(
                 "forecast_historical_mae_soc"
             ),
+            "historical_mae_kwh": data.get("forecast_historical_mae_kwh"),
+            "historical_signed_bias_kwh": data.get(
+                "forecast_historical_signed_bias_kwh"
+            ),
+            "export_underprediction_bias_kwh": data.get(
+                "forecast_export_underprediction_bias_kwh"
+            ),
+            "reliability_record_schema": data.get(
+                "forecast_reliability_record_schema"
+            ),
+            "migrated_reliability_records": data.get(
+                "forecast_reliability_migrated_records"
+            ),
+            "inferred_capacity_records": data.get(
+                "forecast_reliability_inferred_capacity_records"
+            ),
+            "topology_rebased_at": data.get("forecast_learning_rebased_at"),
+            "topology_rebase_reason": data.get(
+                "forecast_learning_rebased_reason"
+            ),
+            "topology_rebase_preserved_samples": data.get(
+                "forecast_learning_preserved_samples"
+            ),
+            "topology_rebase_discarded_pending": data.get(
+                "forecast_learning_discarded_pending"
+            ),
             "error_samples": data.get("forecast_error_samples", 0),
             "confirmed_refreshes": data.get("forecast_confirmation_count", 0),
             "provider_refreshed_at": data.get("forecast_revision_at"),
