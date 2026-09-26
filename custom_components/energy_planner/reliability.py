@@ -62,6 +62,13 @@ def migrate_records(records, *, fallback_capacity_kwh=None):
             row["capacity_inferred"] = True
             inferred += 1
             changed = True
+        if capacity is not None and row.get("topology_signature") is None:
+            row["topology_signature"] = {
+                "capacity_kwh": round(capacity, 3),
+                "pack_counts": None,
+            }
+            row["topology_metadata_inferred"] = True
+            changed = True
         if row.get("record_schema") != RELIABILITY_RECORD_SCHEMA_VERSION:
             row["record_schema"] = RELIABILITY_RECORD_SCHEMA_VERSION
             changed = True
