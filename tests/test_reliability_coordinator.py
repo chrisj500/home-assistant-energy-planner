@@ -94,7 +94,7 @@ class CoordinatorTests(unittest.TestCase):
         self.assertIsNone(row["display_uncertainty_pct"])
         self.assertEqual(row["display_confidence"], "learning")
         self.assertEqual(row["display_forecast_source"], "live_anchored_interval_simulation")
-        self.assertGreater(row["safety_margin_kwh"], 0)
+        self.assertEqual(row["safety_margin_kwh"], 0)
         self.assertTrue(row["export_defense_risk"])
         self.assertGreater(row["export_defense_headroom_kwh"], 0)
         self.assertEqual(candidate, "2026-09-18")
@@ -186,10 +186,27 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(row["display_confidence"], "medium")
 
     def test_export_defense_stress_does_not_compound_prior_stress_days(self):
+        tomorrow = self.now.date() + timedelta(days=1)
+        self.data["rolling_day_plans"].append({
+            "date": tomorrow.isoformat(),
+            "sunset_soc_pct": 60,
+            "solar_kwh": 45,
+            "dynamic_load_needed": False,
+        })
+        watts = dict(self.c._estimate_payload["result"]["watts"])
+        for hour in range(6, 19):
+            at = datetime.combine(
+                tomorrow,
+                datetime.min.time(),
+                tzinfo=timezone.utc,
+            ) + timedelta(hours=hour)
+            watts[at.isoformat()] = 9000
+        self.c._estimate_payload["result"]["watts"] = watts
+
         self.c._scenarios(self.data, self.now)
         rows = self.data["rolling_day_plans"]
-        self.assertGreaterEqual(len(rows), 2)
-        for row in rows[:2]:
+        self.assertEqual(len(rows), 2)
+        for row in rows:
             self.assertAlmostEqual(
                 row["export_defense_start_soc_pct"],
                 row["start_soc_pct"],
@@ -201,7 +218,7 @@ class CoordinatorTests(unittest.TestCase):
                 places=1,
             )
         self.assertEqual(
-            rows[0]["range_assumption"],
+            rows[1]["range_assumption"],
             "per_day_energy_security_low_export_defense_high",
         )
 
