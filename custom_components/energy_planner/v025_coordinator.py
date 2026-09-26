@@ -741,6 +741,9 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             ):
                 self._trust.setdefault(key, default)
 
+            # Snapshot BEFORE migration so schema upgrades are guaranteed to be
+            # persisted even when this refresh does not otherwise change state.
+            previous_trust = deepcopy(self._trust)
             legacy_capacity = number(
                 self.cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH)
             )
@@ -752,16 +755,18 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             self._trust["reliability_record_schema"] = (
                 RELIABILITY_RECORD_SCHEMA_VERSION
             )
-            self._trust["reliability_record_migration"] = {
-                **migration,
-                "at": now.isoformat(),
-                "fallback_capacity_kwh": legacy_capacity,
-            }
+            if migration["changed"] or "reliability_record_migration" not in self._trust:
+                self._trust["reliability_record_migration"] = {
+                    **migration,
+                    "at": now.isoformat(),
+                    "fallback_capacity_kwh": legacy_capacity,
+                }
 
             # Require new confirmation refreshes after restart, but preserve all
             # completed reliability evidence.
             self._trust["revisions"] = []
-        previous_trust = deepcopy(self._trust)
+        else:
+            previous_trust = deepcopy(self._trust)
         topology_signature = {
             "capacity_kwh": round(
                 number(data.get("battery_capacity_kwh")) or 0.0,
@@ -770,6 +775,11 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             "pack_counts": data.get("battery_pack_counts"),
         }
         previous_signature = self._trust.get("battery_topology_signature")
+        if isinstance(previous_signature, dict):
+            previous_signature = {
+                "capacity_kwh": previous_signature.get("capacity_kwh"),
+                "pack_counts": previous_signature.get("pack_counts"),
+            }
         first_dynamic_change = (
             previous_signature is None
             and data.get("battery_topology_source") in {
@@ -808,6 +818,19 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 forecast_learning_discarded_pending=discarded_pending,
             )
         self._trust["battery_topology_signature"] = topology_signature
+        migration_info = self._trust.get("reliability_record_migration") or {}
+        data.update(
+            forecast_reliability_record_schema=self._trust.get(
+                "reliability_record_schema",
+                RELIABILITY_RECORD_SCHEMA_VERSION,
+            ),
+            forecast_reliability_migrated_records=migration_info.get(
+                "records", len(self._trust.get("records", []))
+            ),
+            forecast_reliability_inferred_capacity_records=migration_info.get(
+                "capacity_inferred_records", 0
+            ),
+        )
 
         self._update_counterfactual_ledger(data, now)
         status, reason = "unavailable", "Forecast inputs unavailable—do not act."
