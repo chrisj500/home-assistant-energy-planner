@@ -209,12 +209,12 @@ class CoordinatorTests(unittest.TestCase):
         for row in rows:
             self.assertAlmostEqual(
                 row["export_defense_start_soc_pct"],
-                row["start_soc_pct"],
+                row["nominal_start_soc_pct"],
                 places=1,
             )
             self.assertAlmostEqual(
                 row["energy_security_start_soc_pct"],
-                row["start_soc_pct"],
+                row["nominal_start_soc_pct"],
                 places=1,
             )
         self.assertEqual(
