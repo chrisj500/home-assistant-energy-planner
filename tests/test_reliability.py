@@ -90,6 +90,23 @@ class ReliabilityTests(unittest.TestCase):
         self.assertIsNone(evidence([], 0)["mae_soc"])
         self.assertEqual(evidence([{"lead": 0, "error_soc": 30}] * 10, 0)["confidence"], "low")
 
+    def test_export_bias_is_directional_not_absolute(self):
+        overpredicted = [
+            {"lead": 0, "error_soc": value}
+            for value in (-30, -20, -10, -5)
+        ]
+        profile = evidence(overpredicted, 0)
+        self.assertEqual(profile["export_underprediction_bias_soc"], 0.0)
+        self.assertLess(profile["signed_bias_soc"], 0)
+
+        underpredicted = [
+            {"lead": 0, "error_soc": value}
+            for value in (4, 8, -2, 6)
+        ]
+        profile = evidence(underpredicted, 0)
+        self.assertAlmostEqual(profile["signed_bias_soc"], 4.0)
+        self.assertAlmostEqual(profile["export_underprediction_bias_soc"], 4.0)
+
     def test_today_envelope_anchors_to_live_soc_and_converges(self):
         sunrise = self.now.replace(hour=6)
         sunset = self.now.replace(hour=18)
