@@ -6,6 +6,110 @@ from math import isfinite
 
 
 MIN_EVIDENCE_SAMPLES = 3
+RELIABILITY_RECORD_SCHEMA_VERSION = 2
+
+
+def _record_capacity(record, fallback_capacity_kwh=None):
+    for key in (
+        "capacity_kwh",
+        "forecast_capacity_kwh",
+        "settled_capacity_kwh",
+    ):
+        value = number(record.get(key))
+        if value is not None and value > 0:
+            return value
+    fallback = number(fallback_capacity_kwh)
+    return fallback if fallback is not None and fallback > 0 else None
+
+
+def migrate_records(records, *, fallback_capacity_kwh=None):
+    """Upgrade historical SOC-error records to topology-aware kWh records.
+
+    Legacy records are preserved. Before automatic topology discovery, the
+    configured planner capacity was the capacity used to produce and score those
+    forecasts, so it is the best available migration basis for records that
+    predate explicit topology metadata.
+    """
+    migrated = []
+    changed = False
+    migrated_count = 0
+    inferred = 0
+    for original in records or []:
+        row = dict(original)
+        capacity = _record_capacity(row, fallback_capacity_kwh)
+        error_soc = number(row.get("error_soc"))
+        predicted_soc = number(row.get("predicted_soc"))
+        actual_soc = number(row.get("actual_soc"))
+
+        if number(row.get("error_kwh")) is None and error_soc is not None and capacity:
+            row["error_kwh"] = error_soc / 100.0 * capacity
+            changed = True
+        if (
+            number(row.get("predicted_stored_kwh")) is None
+            and predicted_soc is not None
+            and capacity
+        ):
+            row["predicted_stored_kwh"] = predicted_soc / 100.0 * capacity
+            changed = True
+        if (
+            number(row.get("actual_stored_kwh")) is None
+            and actual_soc is not None
+            and capacity
+        ):
+            row["actual_stored_kwh"] = actual_soc / 100.0 * capacity
+            changed = True
+        if capacity is not None and number(row.get("capacity_kwh")) is None:
+            row["capacity_kwh"] = capacity
+            row["capacity_inferred"] = True
+            inferred += 1
+            changed = True
+        if capacity is not None and row.get("topology_signature") is None:
+            row["topology_signature"] = {
+                "capacity_kwh": round(capacity, 3),
+                "pack_counts": None,
+            }
+            row["topology_metadata_inferred"] = True
+            changed = True
+        if row.get("record_schema") != RELIABILITY_RECORD_SCHEMA_VERSION:
+            row["record_schema"] = RELIABILITY_RECORD_SCHEMA_VERSION
+            changed = True
+        if row != original:
+            migrated_count += 1
+        migrated.append(row)
+    return migrated, {
+        "changed": changed,
+        "records": len(migrated),
+        "migrated_records": migrated_count,
+        "capacity_inferred_records": inferred,
+    }
+
+
+def _record_error(record, *, current_capacity_kwh=None):
+    """Return topology-normalized SOC error plus physical kWh error."""
+    current_capacity = number(current_capacity_kwh)
+    error_kwh = number(record.get("error_kwh"))
+    historical_capacity = _record_capacity(record)
+    error_soc = number(record.get("error_soc"))
+
+    if error_kwh is None and error_soc is not None and historical_capacity:
+        error_kwh = error_soc / 100.0 * historical_capacity
+
+    if error_kwh is not None and current_capacity is not None and current_capacity > 0:
+        return error_kwh / current_capacity * 100.0, error_kwh
+
+    if error_soc is not None:
+        if (
+            historical_capacity is not None
+            and current_capacity is not None
+            and current_capacity > 0
+        ):
+            normalized_soc = (
+                error_soc * historical_capacity / current_capacity
+            )
+            return normalized_soc, error_soc / 100.0 * historical_capacity
+        return error_soc, error_kwh
+
+    return None, error_kwh
 
 
 def number(value):
@@ -16,21 +120,40 @@ def number(value):
         return None
 
 
-def evidence(records, lead):
-    signed = [number(r.get("error_soc")) for r in records if r.get("lead") == lead]
-    signed = [v for v in signed if v is not None][-30:]
+def evidence(records, lead, *, capacity_kwh=None):
+    pairs = [
+        _record_error(record, current_capacity_kwh=capacity_kwh)
+        for record in records
+        if record.get("lead") == lead
+    ][-30:]
+    signed = [soc for soc, _kwh in pairs if soc is not None]
+    signed_kwh = [kwh for _soc, kwh in pairs if kwh is not None]
     errors = [abs(v) for v in signed]
+    error_kwh = [abs(v) for v in signed_kwh]
+
     # Engineering floor for the DISPLAY envelope only; this is deliberately
     # two-sided and is not used directly to create export headroom.
     width = max([10.0 + 3.0 * lead, *errors])
     mae = sum(errors) / len(errors) if errors else None
-    # error_soc = actual - predicted. Only a positive systematic bias means the
-    # planner has tended to UNDER-predict ending SOC, which is the direction
-    # relevant to unexpected export. Over-prediction must not create headroom.
+    mae_kwh = sum(error_kwh) / len(error_kwh) if error_kwh else None
+
+    # Physical kWh error is retained across topology changes. For display and
+    # SOC-based policy thresholds, that error is re-expressed against the
+    # CURRENT battery capacity, so adding capacity does not erase evidence and
+    # does not overstate the same historical energy miss in percentage points.
     signed_bias = sum(signed) / len(signed) if signed else None
+    signed_bias_kwh = (
+        sum(signed_kwh) / len(signed_kwh) if signed_kwh else None
+    )
     export_underprediction_bias = (
         max(float(signed_bias), 0.0) if signed_bias is not None else 0.0
     )
+    export_underprediction_bias_kwh = (
+        max(float(signed_bias_kwh), 0.0)
+        if signed_bias_kwh is not None
+        else 0.0
+    )
+
     confidence = "learning" if len(errors) < MIN_EVIDENCE_SAMPLES else "low"
     if len(errors) >= MIN_EVIDENCE_SAMPLES and mae <= 10:
         confidence = "medium"
@@ -39,9 +162,12 @@ def evidence(records, lead):
     return {
         "samples": len(errors),
         "mae_soc": mae,
+        "mae_kwh": mae_kwh,
         "width_soc": width,
         "signed_bias_soc": signed_bias,
+        "signed_bias_kwh": signed_bias_kwh,
         "export_underprediction_bias_soc": export_underprediction_bias,
+        "export_underprediction_bias_kwh": export_underprediction_bias_kwh,
         "confidence": confidence,
     }
 

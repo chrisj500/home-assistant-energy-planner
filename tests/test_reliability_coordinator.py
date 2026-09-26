@@ -26,7 +26,17 @@ from counterfactual import (
 from export_defense import assess_export_defense
 from rolling_ev import DaylightWindow, simulate_rolling_days, choose_ev_charge_window
 from simulation import ControllerSettings
-from reliability import MIN_EVIDENCE_SAMPLES, evidence, gate, number, observe, suppress_actions, sunset_envelope
+from reliability import (
+    MIN_EVIDENCE_SAMPLES,
+    RELIABILITY_RECORD_SCHEMA_VERSION,
+    evidence,
+    gate,
+    migrate_records,
+    number,
+    observe,
+    suppress_actions,
+    sunset_envelope,
+)
 
 
 class Parent:
@@ -306,6 +316,7 @@ class CoordinatorTests(unittest.TestCase):
         self.data["rolling_day_plans"][0]["sunset_soc_pct"] = 20
         self.c._score_forecasts(self.data, self.now + timedelta(hours=1))
         self.data["weighted_soc"] = 30
+        self.data["stored_energy"] = 14.7456
         sunset = self.now.replace(hour=18)
         self.c._score_forecasts(self.data, sunset)
         self.c._score_forecasts(self.data, sunset + timedelta(minutes=1))
@@ -313,6 +324,117 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(len(records), 1)
         self.assertEqual(records[0]["predicted_soc"], 100)
         self.assertEqual(records[0]["error_soc"], -70)
+        self.assertAlmostEqual(records[0]["predicted_stored_kwh"], 49.152)
+        self.assertAlmostEqual(records[0]["actual_stored_kwh"], 14.7456)
+        self.assertAlmostEqual(records[0]["error_kwh"], -34.4064)
+        self.assertEqual(
+            records[0]["topology_signature"],
+            {"capacity_kwh": 49.152, "pack_counts": None},
+        )
+        self.assertEqual(
+            records[0]["record_schema"],
+            RELIABILITY_RECORD_SCHEMA_VERSION,
+        )
+
+    def test_topology_change_discards_pending_but_preserves_completed_evidence(self):
+        self.c._trust["records"] = [
+            {
+                "lead": 0,
+                "error_soc": 10.0,
+                "error_kwh": 4.9152,
+                "capacity_kwh": 49.152,
+                "record_schema": RELIABILITY_RECORD_SCHEMA_VERSION,
+            }
+        ] * 3
+        self.c._trust["pending"] = {
+            "old/topology": {
+                "date": "2026-09-18",
+                "lead": 0,
+                "predicted_soc": 80.0,
+            }
+        }
+        self.c._trust["battery_topology_signature"] = {
+            "capacity_kwh": 49.152,
+            "pack_counts": [3, 2, 3],
+        }
+        baseline = deepcopy(self.data)
+        baseline.update(
+            battery_capacity_kwh=55.296,
+            battery_configured_capacity_kwh=49.152,
+            battery_bank_capacities_kwh=[18.432, 12.288, 24.576],
+            battery_bank_socs_pct=[80.0, 80.0, 80.0],
+            battery_pack_counts=[3, 2, 4],
+            battery_topology_source="ecoflow_iot",
+            stored_energy=44.2368,
+        )
+        self.c.baseline = baseline
+
+        result = asyncio.run(self.c._async_update_data())
+
+        self.assertEqual(len(self.c._trust["records"]), 3)
+        self.assertNotIn("old/topology", self.c._trust["pending"])
+        self.assertIn(
+            "2026-09-18/2026-09-18",
+            self.c._trust["pending"],
+        )
+        self.assertEqual(result["forecast_learning_preserved_samples"], 3)
+        self.assertEqual(result["forecast_learning_discarded_pending"], 1)
+        self.assertEqual(
+            result["forecast_learning_rebased_reason"],
+            "battery_topology_changed",
+        )
+        self.assertEqual(result["forecast_learning_sunset_samples"], 3)
+
+    def test_legacy_records_migrate_on_load_without_losing_samples(self):
+        legacy = {
+            "records": [
+                {
+                    "lead": 0,
+                    "predicted_soc": 60.0,
+                    "actual_soc": 70.0,
+                    "error_soc": 10.0,
+                }
+            ] * 3,
+            "pending": {},
+            "revisions": [],
+            "decisions": [],
+            "counterfactual_ledger": None,
+        }
+
+        async def load():
+            return deepcopy(legacy)
+
+        async def save(data):
+            self.saved = deepcopy(data)
+
+        self.c._trust = None
+        self.c._trust_store = SimpleNamespace(async_load=load, async_save=save)
+        baseline = deepcopy(self.data)
+        baseline.update(
+            battery_capacity_kwh=55.296,
+            battery_configured_capacity_kwh=49.152,
+            battery_bank_capacities_kwh=[18.432, 12.288, 24.576],
+            battery_bank_socs_pct=[80.0, 80.0, 80.0],
+            battery_pack_counts=[3, 2, 4],
+            battery_topology_source="ecoflow_iot",
+            stored_energy=44.2368,
+        )
+        self.c.baseline = baseline
+
+        result = asyncio.run(self.c._async_update_data())
+
+        self.assertEqual(len(self.c._trust["records"]), 3)
+        for row in self.c._trust["records"]:
+            self.assertAlmostEqual(row["error_kwh"], 4.9152)
+            self.assertAlmostEqual(row["capacity_kwh"], 49.152)
+            self.assertTrue(row["capacity_inferred"])
+        self.assertEqual(result["forecast_learning_sunset_samples"], 3)
+        self.assertEqual(result["forecast_learning_preserved_samples"], 3)
+        self.assertEqual(
+            self.c._trust["reliability_record_schema"],
+            RELIABILITY_RECORD_SCHEMA_VERSION,
+        )
+        self.assertTrue(hasattr(self, "saved"))
 
     def test_missed_sunset_is_not_scored_next_morning(self):
         self.c._score_forecasts(self.data, self.now)

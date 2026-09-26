@@ -4,7 +4,16 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "energy_planner"))
-from reliability import evidence, observe, gate, suppress_actions, number, sunset_envelope
+from reliability import (
+    RELIABILITY_RECORD_SCHEMA_VERSION,
+    evidence,
+    gate,
+    migrate_records,
+    number,
+    observe,
+    suppress_actions,
+    sunset_envelope,
+)
 
 
 class ReliabilityTests(unittest.TestCase):
@@ -82,6 +91,70 @@ class ReliabilityTests(unittest.TestCase):
         rows[0]["solar_kwh"] = 20
         _, unstable, _, _ = observe(h, now=self.now + timedelta(hours=1), revision="b", rows=rows, candidate=None)
         self.assertFalse(unstable)
+
+    def test_legacy_soc_records_migrate_to_physical_energy(self):
+        records = [{
+            "lead": 0,
+            "predicted_soc": 60.0,
+            "actual_soc": 70.0,
+            "error_soc": 10.0,
+        }]
+        migrated, info = migrate_records(
+            records,
+            fallback_capacity_kwh=49.152,
+        )
+        row = migrated[0]
+        self.assertTrue(info["changed"])
+        self.assertEqual(info["capacity_inferred_records"], 1)
+        self.assertEqual(row["record_schema"], RELIABILITY_RECORD_SCHEMA_VERSION)
+        self.assertAlmostEqual(row["capacity_kwh"], 49.152)
+        self.assertAlmostEqual(row["predicted_stored_kwh"], 29.4912)
+        self.assertAlmostEqual(row["actual_stored_kwh"], 34.4064)
+        self.assertAlmostEqual(row["error_kwh"], 4.9152)
+        self.assertEqual(
+            row["topology_signature"],
+            {"capacity_kwh": 49.152, "pack_counts": None},
+        )
+
+    def test_physical_error_survives_capacity_increase(self):
+        records = [{
+            "lead": 0,
+            "error_soc": 10.0,
+            "error_kwh": 4.9152,
+            "capacity_kwh": 49.152,
+            "record_schema": RELIABILITY_RECORD_SCHEMA_VERSION,
+        }]
+        old = evidence(records, 0, capacity_kwh=49.152)
+        larger = evidence(records, 0, capacity_kwh=55.296)
+        self.assertAlmostEqual(old["mae_soc"], 10.0)
+        self.assertAlmostEqual(larger["mae_soc"], 8.8888889, places=5)
+        self.assertAlmostEqual(old["mae_kwh"], 4.9152)
+        self.assertAlmostEqual(larger["mae_kwh"], 4.9152)
+        self.assertAlmostEqual(
+            larger["export_underprediction_bias_kwh"],
+            4.9152,
+        )
+
+    def test_completed_kwh_records_need_no_migration_rewrite(self):
+        records = [{
+            "lead": 1,
+            "error_soc": -5.0,
+            "error_kwh": -2.4576,
+            "capacity_kwh": 49.152,
+            "predicted_stored_kwh": 30.0,
+            "actual_stored_kwh": 27.5424,
+            "topology_signature": {
+                "capacity_kwh": 49.152,
+                "pack_counts": [3, 2, 3],
+            },
+            "record_schema": RELIABILITY_RECORD_SCHEMA_VERSION,
+        }]
+        migrated, info = migrate_records(
+            records,
+            fallback_capacity_kwh=55.296,
+        )
+        self.assertFalse(info["changed"])
+        self.assertEqual(migrated, records)
 
     def test_history_is_horizon_specific_and_no_samples_is_not_confident(self):
         records = [{"lead": 0, "error_soc": 1}] * 10
