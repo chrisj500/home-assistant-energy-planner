@@ -936,6 +936,9 @@ class EnergyPlannerSensor(CoordinatorEntity[EnergyPlannerCoordinator], SensorEnt
             "reliability_record_schema": data.get(
                 "forecast_reliability_record_schema"
             ),
+            "reliability_record_count": data.get(
+                "forecast_reliability_record_count"
+            ),
             "migrated_reliability_records": data.get(
                 "forecast_reliability_migrated_records"
             ),
