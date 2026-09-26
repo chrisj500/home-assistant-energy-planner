@@ -546,10 +546,24 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
         remaining_solar = _num(self.hass, cfg.get(CONF_SOLAR_REMAINING))
         expected_load = _num(self.hass, cfg.get(CONF_EXPECTED_LOAD_REMAINING))
         charge_limit = _num(self.hass, cfg.get(CONF_CHARGE_LIMIT))
-        soc_values = (
-            _num(self.hass, cfg.get(CONF_SOC_1)),
-            _num(self.hass, cfg.get(CONF_SOC_2)),
-            _num(self.hass, cfg.get(CONF_SOC_3)),
+        topology_socs = baseline.get("battery_bank_socs_pct")
+        topology_capacities = baseline.get("battery_bank_capacities_kwh")
+        topology_capacity = baseline.get("battery_capacity_kwh")
+        bank_socs = (
+            tuple(float(value) for value in topology_socs)
+            if isinstance(topology_socs, (list, tuple)) and len(topology_socs) == 3
+            else None
+        )
+        bank_capacities = (
+            tuple(float(value) for value in topology_capacities)
+            if isinstance(topology_capacities, (list, tuple))
+            and len(topology_capacities) == 3
+            else None
+        )
+        capacity = (
+            float(topology_capacity)
+            if isinstance(topology_capacity, (int, float))
+            else None
         )
         _sunrise, sunset = _solar_window(self.hass, now.date())
         duration_h = max((sunset - now).total_seconds() / 3600.0, 0.0) if sunset is not None else 0.0
@@ -605,9 +619,9 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
         required = (
             expected_load,
             charge_limit,
-            soc_values[0],
-            soc_values[1],
-            soc_values[2],
+            capacity,
+            bank_socs,
+            bank_capacities,
             sunset,
         )
         if (
@@ -620,14 +634,6 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
             return shadow
 
         scale = 1.0  # Provider energy must not inherit the legacy local multiplier.
-        weights = _parse_weights(cfg.get(CONF_SOC_WEIGHTS, DEFAULT_WEIGHTS))
-        capacity = float(cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH))
-        total_weight = sum(weights)
-        bank_capacities = tuple(capacity * weight / total_weight for weight in weights)
-        bank_socs = tuple(float(value) for value in soc_values if value is not None)
-        if len(bank_socs) != 3:
-            shadow.update(self._professional_outputs(now))
-            return shadow
 
         average_load_kw = max(float(expected_load), 0.0) / duration_h
         charge_efficiency = float(cfg.get(OPT_CHARGE_EFFICIENCY, DEFAULT_CHARGE_EFFICIENCY))
@@ -706,24 +712,24 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
         if planning_load_w is None:
             return self._rolling_ev_fallback("planning_load_unavailable")
 
-        soc_values = (
-            _num(self.hass, cfg.get(CONF_SOC_1)),
-            _num(self.hass, cfg.get(CONF_SOC_2)),
-            _num(self.hass, cfg.get(CONF_SOC_3)),
-        )
-        if any(value is None for value in soc_values):
+        topology_socs = baseline.get("battery_bank_socs_pct")
+        topology_capacities = baseline.get("battery_bank_capacities_kwh")
+        topology_capacity = baseline.get("battery_capacity_kwh")
+        if (
+            not isinstance(topology_socs, (list, tuple))
+            or len(topology_socs) != 3
+            or not isinstance(topology_capacities, (list, tuple))
+            or len(topology_capacities) != 3
+            or not isinstance(topology_capacity, (int, float))
+        ):
             return self._rolling_ev_fallback(
-                "battery_soc_unavailable",
+                "battery_topology_unavailable",
                 planning_load_w=planning_load_w,
                 planning_source=planning_source,
             )
-        bank_socs = tuple(float(value) for value in soc_values if value is not None)
-        if len(bank_socs) != 3:
-            return self._rolling_ev_fallback(
-                "battery_soc_unavailable",
-                planning_load_w=planning_load_w,
-                planning_source=planning_source,
-            )
+        bank_socs = tuple(float(value) for value in topology_socs)
+        bank_capacities = tuple(float(value) for value in topology_capacities)
+        capacity = float(topology_capacity)
 
         charge_limit = _num(self.hass, cfg.get(CONF_CHARGE_LIMIT))
         if charge_limit is None:
@@ -733,10 +739,6 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
                 planning_source=planning_source,
             )
 
-        weights = _parse_weights(cfg.get(CONF_SOC_WEIGHTS, DEFAULT_WEIGHTS))
-        capacity = float(cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH))
-        total_weight = sum(weights)
-        bank_capacities = tuple(capacity * weight / total_weight for weight in weights)
         reserve = baseline.get("effective_reserve_floor")
         reserve_pct = float(reserve) if isinstance(reserve, (int, float)) else 10.0
         overnight_drop_kw = baseline.get("calibration_overnight_median_kw")
