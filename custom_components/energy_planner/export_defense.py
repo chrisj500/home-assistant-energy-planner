@@ -29,7 +29,7 @@ def assess_export_defense(
     defense,
     capacity_kwh: float,
     charge_limit_pct: float,
-    forecast_width_soc: float,
+    forecast_underprediction_soc: float,
     charge_efficiency: float,
     threshold_kwh: float = 0.25,
 ) -> ExportDefenseAssessment:
@@ -49,7 +49,7 @@ def assess_export_defense(
     """
     capacity = max(float(capacity_kwh), 0.001)
     limit = _clamp(charge_limit_pct, 0.0, 100.0)
-    width = _clamp(forecast_width_soc, 0.0, 100.0)
+    underprediction = _clamp(forecast_underprediction_soc, 0.0, 100.0)
     efficiency = _clamp(charge_efficiency, 0.0, 1.0)
     threshold = max(float(threshold_kwh), 0.0)
 
@@ -66,9 +66,12 @@ def assess_export_defense(
         0.0,
     )
 
-    risk_ceiling = _clamp(limit - width, 0.0, limit)
-    defended_soc = max(nominal_soc, defense_soc)
-    uncertainty = max(defended_soc - risk_ceiling, 0.0) / 100.0 * capacity
+    risk_ceiling = _clamp(limit - underprediction, 0.0, limit)
+    # The high-solar/low-load simulation already supplies an explicit stress
+    # case. Historical error is therefore applied to the NOMINAL point only;
+    # adding it to the stress case double-counts uncertainty and creates false
+    # export warnings after weather/production forecasts move lower.
+    uncertainty = max(nominal_soc - risk_ceiling, 0.0) / 100.0 * capacity
 
     headroom = max(direct, uncertainty)
     at_ceiling = (
@@ -86,7 +89,7 @@ def assess_export_defense(
     elif at_ceiling:
         reason = "projected_saturation"
     elif uncertainty > 0.0:
-        reason = "forecast_error_band_reaches_charge_ceiling"
+        reason = "systematic_underprediction_reaches_charge_ceiling"
     else:
         reason = "clear"
 

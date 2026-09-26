@@ -368,28 +368,60 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         #   objective. It must never be replaced by the energy-security case.
         lower_points = [IntervalPoint(p.at, p.watts * .70) for p in points]
         upper_points = [IntervalPoint(p.at, p.watts * 1.30) for p in points]
-        common = dict(reference=now, daylight_windows=windows, initial_bank_socs_pct=socs,
-                      bank_capacities_kwh=capacities, charge_limit_pct=limit,
-                      reserve_pct=reserve, charge_efficiency=efficiency,
-                      controller=controller, step_minutes=5)
+        common = dict(
+            reference=now,
+            daylight_windows=windows,
+            initial_bank_socs_pct=socs,
+            bank_capacities_kwh=capacities,
+            charge_limit_pct=limit,
+            reserve_pct=reserve,
+            charge_efficiency=efficiency,
+            controller=controller,
+            step_minutes=5,
+        )
         nominal = simulate_rolling_days(
             points=points,
             average_load_kw=load / 1000,
             overnight_drop_kw=median_drop,
             **common,
         )
-        energy_security = simulate_rolling_days(
-            points=lower_points,
-            average_load_kw=load / 1000 * 1.30,
-            overnight_drop_kw=max([median_drop * 1.30, *drops]),
-            **common,
-        )
-        export_defense = simulate_rolling_days(
-            points=upper_points,
-            average_load_kw=load / 1000 * .70,
-            overnight_drop_kw=min([median_drop * .70, *drops]),
-            **common,
-        )
+
+        # Stress each target day from that day's NOMINAL starting battery state.
+        # Do not compound "30% more solar / 30% less load" across every prior day;
+        # doing so manufactures distant saturation risk even after the point
+        # forecast and weather have moved materially lower.
+        window_by_date = {window.day: window for window in windows}
+        energy_security = []
+        export_defense = []
+        for mid in nominal:
+            window = window_by_date[mid.day]
+            stress_common = dict(
+                reference=mid.start,
+                daylight_windows=[window],
+                initial_bank_socs_pct=mid.starting_bank_socs_pct,
+                bank_capacities_kwh=capacities,
+                charge_limit_pct=limit,
+                reserve_pct=reserve,
+                charge_efficiency=efficiency,
+                controller=controller,
+                step_minutes=5,
+            )
+            low_day = simulate_rolling_days(
+                points=lower_points,
+                average_load_kw=load / 1000 * 1.30,
+                overnight_drop_kw=0.0,
+                **stress_common,
+            )
+            high_day = simulate_rolling_days(
+                points=upper_points,
+                average_load_kw=load / 1000 * .70,
+                overnight_drop_kw=0.0,
+                **stress_common,
+            )
+            if len(low_day) != 1 or len(high_day) != 1:
+                raise ValueError("Incomplete per-day stress scenario")
+            energy_security.append(low_day[0])
+            export_defense.append(high_day[0])
 
         counterfactual = []
         counterfactual_stored = number(data.get("counterfactual_stored_kwh"))
@@ -423,11 +455,10 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             forecast_export_wall_energy_kwh=0.0,
             forecast_export_risk_reason="clear",
             forecast_export_risk_days=[],
-            forecast_export_model="export_defense_v1",
+            forecast_export_model="export_defense_v2",
             forecast_objective="zero_export",
         )
         reserve_floor = min(max(float(reserve), 0.0), 100.0)
-        window_by_date = {window.day: window for window in windows}
         current_soc = sum(soc * cap for soc, cap in zip(socs, capacities)) / capacity
         for index, (row, mid, lo, hi) in enumerate(
             zip(rows, nominal, energy_security, export_defense)
@@ -463,13 +494,18 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 if is_today and window.sunrise <= now < window.sunset
                 else "interval_simulation"
             )
-            effective_width = width * remaining_fraction if is_today else width
+            export_bias = float(
+                profile.get("export_underprediction_bias_soc") or 0.0
+            )
+            effective_export_bias = (
+                export_bias * remaining_fraction if is_today else export_bias
+            )
             export_assessment = assess_export_defense(
                 nominal=mid,
                 defense=hi,
                 capacity_kwh=capacity,
                 charge_limit_pct=limit,
-                forecast_width_soc=effective_width,
+                forecast_underprediction_soc=effective_export_bias,
                 charge_efficiency=efficiency,
             )
             cf_mid = counterfactual[index] if index < len(counterfactual) else None
@@ -501,7 +537,14 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 "display_confidence": profile["confidence"],
                 "confidence": profile["confidence"], "error_samples": profile["samples"],
                 "historical_mae_soc": profile["mae_soc"],
+                "nominal_start_soc_pct": round(mid.start_soc_pct, 2),
+                "historical_signed_bias_soc": profile.get("signed_bias_soc"),
+                "export_underprediction_bias_soc": profile.get(
+                    "export_underprediction_bias_soc"
+                ),
+                "energy_security_start_soc_pct": round(lo.start_soc_pct, 2),
                 "energy_security_sunset_soc_pct": round(lo.end_soc_pct, 2),
+                "export_defense_start_soc_pct": round(hi.start_soc_pct, 2),
                 "export_defense_sunset_soc_pct": round(hi.end_soc_pct, 2),
                 "export_defense_export_kwh": round(hi.capacity_export_kwh, 3),
                 "export_defense_direct_headroom_kwh": round(
@@ -531,7 +574,7 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 ),
                 "forecast_objective": "zero_export",
                 "range_kind": "scenario_envelope_not_probability_interval",
-                "range_assumption": "energy_security_low_export_defense_high",
+                "range_assumption": "per_day_energy_security_low_export_defense_high",
                 "counterfactual_sunset_soc_pct": (
                     round(cf_mid.end_soc_pct, 2) if cf_mid is not None else None
                 ),

@@ -39,6 +39,7 @@ class RollingDayPlan:
     available_headroom_kwh: float
     headroom_margin_kwh: float
     headroom_shortfall_kwh: float
+    starting_bank_socs_pct: tuple[float, float, float]
     ending_bank_socs_pct: tuple[float, float, float]
 
 
@@ -232,6 +233,7 @@ def simulate_rolling_days(
                 available_headroom_kwh=available_headroom,
                 headroom_margin_kwh=margin,
                 headroom_shortfall_kwh=shortfall,
+                starting_bank_socs_pct=start_socs,
                 ending_bank_socs_pct=socs,
             )
         )
