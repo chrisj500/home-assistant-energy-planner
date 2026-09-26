@@ -75,6 +75,27 @@ class SensorCatalogTests(unittest.TestCase):
             ("storm_safety_status", "Storm Safety Status"),
         )
 
+    def test_auto_battery_topology_entities_are_registered(self) -> None:
+        source = SENSOR_PATH.read_text(encoding="utf-8")
+        for key in (
+            "battery_capacity_kwh",
+            "battery_pack_count_total",
+            "battery_topology_source",
+        ):
+            self.assertIn(key, source)
+
+        config_flow_path = (
+            Path(__file__).resolve().parents[1]
+            / "custom_components"
+            / "energy_planner"
+            / "config_flow.py"
+        )
+        config_source = config_flow_path.read_text(encoding="utf-8")
+        self.assertGreaterEqual(
+            config_source.count("OPT_AUTO_BATTERY_TOPOLOGY"),
+            3,
+        )
+
     def test_export_first_forecast_entities_are_registered(self) -> None:
         source = SENSOR_PATH.read_text(encoding="utf-8")
         for key in (
