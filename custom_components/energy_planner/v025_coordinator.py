@@ -664,6 +664,45 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             # Require new confirmations after restart; keep scored forecasts.
             self._trust["revisions"] = []
         previous_trust = deepcopy(self._trust)
+        topology_signature = {
+            "capacity_kwh": round(
+                number(data.get("battery_capacity_kwh")) or 0.0,
+                3,
+            ),
+            "pack_counts": data.get("battery_pack_counts"),
+            "source": data.get("battery_topology_source"),
+        }
+        previous_signature = self._trust.get("battery_topology_signature")
+        first_dynamic_change = (
+            previous_signature is None
+            and data.get("battery_topology_source") in {
+                "ecoflow_iot",
+                "ecoflow_iot_cached",
+            }
+            and abs(
+                (number(data.get("battery_capacity_kwh")) or 0.0)
+                - (number(data.get("battery_configured_capacity_kwh")) or 0.0)
+            )
+            > 0.01
+        )
+        signature_changed = (
+            previous_signature is not None
+            and previous_signature != topology_signature
+        )
+        if first_dynamic_change or signature_changed:
+            # Sunset SOC errors are capacity dependent. Do not carry evidence
+            # learned against a different physical bank into the new topology.
+            self._trust["records"] = []
+            self._trust["pending"] = {}
+            self._trust["revisions"] = []
+            self._trust["decisions"] = []
+            self._trust["battery_topology_reset_at"] = now.isoformat()
+            data.update(
+                forecast_learning_reset_reason="battery_topology_changed",
+                forecast_learning_reset_at=now.isoformat(),
+            )
+        self._trust["battery_topology_signature"] = topology_signature
+
         self._update_counterfactual_ledger(data, now)
         status, reason = "unavailable", "Forecast inputs unavailable—do not act."
 
