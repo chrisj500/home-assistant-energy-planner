@@ -25,7 +25,7 @@ class ExportDefenseTests(unittest.TestCase):
             defense=Plan(100.0),
             capacity_kwh=49.152,
             charge_limit_pct=100.0,
-            forecast_width_soc=12.0,
+            forecast_underprediction_soc=12.0,
             charge_efficiency=0.9,
         )
         self.assertTrue(result.risk)
@@ -38,7 +38,7 @@ class ExportDefenseTests(unittest.TestCase):
             defense=Plan(100.0, headroom_shortfall_kwh=4.0, capacity_export_kwh=4.4),
             capacity_kwh=49.152,
             charge_limit_pct=100.0,
-            forecast_width_soc=6.0,
+            forecast_underprediction_soc=6.0,
             charge_efficiency=0.9,
         )
         self.assertTrue(result.risk)
@@ -51,11 +51,24 @@ class ExportDefenseTests(unittest.TestCase):
             defense=Plan(72.0),
             capacity_kwh=49.152,
             charge_limit_pct=100.0,
-            forecast_width_soc=10.0,
+            forecast_underprediction_soc=10.0,
             charge_efficiency=0.9,
         )
         self.assertFalse(result.risk)
         self.assertEqual(result.headroom_kwh, 0.0)
+
+    def test_stress_case_and_historical_error_are_not_double_counted(self) -> None:
+        result = assess_export_defense(
+            nominal=Plan(54.4),
+            defense=Plan(78.8),
+            capacity_kwh=49.152,
+            charge_limit_pct=100.0,
+            forecast_underprediction_soc=23.2,
+            charge_efficiency=0.9,
+        )
+        self.assertFalse(result.risk)
+        self.assertEqual(result.headroom_kwh, 0.0)
+        self.assertAlmostEqual(result.risk_adjusted_ceiling_pct, 76.8)
 
     def test_forecast_error_band_creates_headroom_before_saturation(self) -> None:
         result = assess_export_defense(
@@ -63,7 +76,7 @@ class ExportDefenseTests(unittest.TestCase):
             defense=Plan(94.0),
             capacity_kwh=49.152,
             charge_limit_pct=100.0,
-            forecast_width_soc=10.0,
+            forecast_underprediction_soc=10.0,
             charge_efficiency=0.9,
         )
         self.assertTrue(result.risk)
@@ -76,7 +89,7 @@ class ExportDefenseTests(unittest.TestCase):
             defense=Plan(100.0, headroom_shortfall_kwh=6.0, capacity_export_kwh=6.5),
             capacity_kwh=49.152,
             charge_limit_pct=100.0,
-            forecast_width_soc=0.0,
+            forecast_underprediction_soc=0.0,
             charge_efficiency=0.9,
         )
         self.assertEqual(result.direct_headroom_kwh, 6.0)
