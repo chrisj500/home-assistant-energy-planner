@@ -23,7 +23,12 @@ class EnergyPlannerV016Coordinator(EnergyPlannerV015Coordinator):
         else:
             phase = "daylight"
 
-        capacity = float(self.cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH))
+        capacity = float(
+            data.get(
+                "battery_capacity_kwh",
+                self.cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH),
+            )
+        )
         next_sunset = select_next_sunset_forecast(
             phase=phase,
             data=data,
