@@ -17,18 +17,33 @@ def number(value):
 
 
 def evidence(records, lead):
-    errors = [number(r.get("error_soc")) for r in records if r.get("lead") == lead]
-    errors = [abs(v) for v in errors if v is not None][-30:]
-    # Engineering floor, not a claimed statistical confidence interval.
+    signed = [number(r.get("error_soc")) for r in records if r.get("lead") == lead]
+    signed = [v for v in signed if v is not None][-30:]
+    errors = [abs(v) for v in signed]
+    # Engineering floor for the DISPLAY envelope only; this is deliberately
+    # two-sided and is not used directly to create export headroom.
     width = max([10.0 + 3.0 * lead, *errors])
     mae = sum(errors) / len(errors) if errors else None
+    # error_soc = actual - predicted. Only a positive systematic bias means the
+    # planner has tended to UNDER-predict ending SOC, which is the direction
+    # relevant to unexpected export. Over-prediction must not create headroom.
+    signed_bias = sum(signed) / len(signed) if signed else None
+    export_underprediction_bias = (
+        max(float(signed_bias), 0.0) if signed_bias is not None else 0.0
+    )
     confidence = "learning" if len(errors) < MIN_EVIDENCE_SAMPLES else "low"
     if len(errors) >= MIN_EVIDENCE_SAMPLES and mae <= 10:
         confidence = "medium"
     if len(errors) >= 10 and mae <= 5:
         confidence = "high"
-    return {"samples": len(errors), "mae_soc": mae, "width_soc": width,
-            "confidence": confidence}
+    return {
+        "samples": len(errors),
+        "mae_soc": mae,
+        "width_soc": width,
+        "signed_bias_soc": signed_bias,
+        "export_underprediction_bias_soc": export_underprediction_bias,
+        "confidence": confidence,
+    }
 
 
 def sunset_envelope(*, now, sunrise, sunset, target_date, current_soc,
