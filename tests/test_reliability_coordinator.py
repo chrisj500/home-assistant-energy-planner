@@ -112,7 +112,7 @@ class CoordinatorTests(unittest.TestCase):
         self.assertGreaterEqual(row["sunset_soc_high_pct"], 25)
         self.assertEqual(
             row["range_assumption"],
-            "energy_security_low_export_defense_high",
+            "per_day_energy_security_low_export_defense_high",
         )
 
     def test_afternoon_range_uses_current_soc_and_remaining_daylight(self):
@@ -184,6 +184,45 @@ class CoordinatorTests(unittest.TestCase):
         self.assertEqual(result["forecast_reliability_status"], "unstable")
         self.assertEqual(row["confidence"], "low")
         self.assertEqual(row["display_confidence"], "medium")
+
+    def test_export_defense_stress_does_not_compound_prior_stress_days(self):
+        self.c._scenarios(self.data, self.now)
+        rows = self.data["rolling_day_plans"]
+        self.assertGreaterEqual(len(rows), 2)
+        for row in rows[:2]:
+            self.assertAlmostEqual(
+                row["export_defense_start_soc_pct"],
+                row["start_soc_pct"],
+                places=1,
+            )
+            self.assertAlmostEqual(
+                row["energy_security_start_soc_pct"],
+                row["start_soc_pct"],
+                places=1,
+            )
+        self.assertEqual(
+            rows[0]["range_assumption"],
+            "per_day_energy_security_low_export_defense_high",
+        )
+
+    def test_low_nominal_and_subfull_stress_case_is_not_export_risk(self):
+        from export_defense import assess_export_defense
+
+        class Plan:
+            def __init__(self, soc):
+                self.end_soc_pct = soc
+                self.headroom_shortfall_kwh = 0.0
+                self.capacity_export_kwh = 0.0
+
+        result = assess_export_defense(
+            nominal=Plan(54.43),
+            defense=Plan(78.84),
+            capacity_kwh=49.152,
+            charge_limit_pct=100.0,
+            forecast_underprediction_soc=0.0,
+            charge_efficiency=0.9,
+        )
+        self.assertFalse(result.risk)
 
     def test_export_risk_uses_high_solar_case_not_low_solar_case(self):
         # Nominal production is moderate, but the export-defense envelope should
