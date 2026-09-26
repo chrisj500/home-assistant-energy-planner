@@ -1,6 +1,6 @@
-# Energy Planning dashboard v24
+# Energy Planning dashboard v25
 #
-# Compact operating dashboard for Energy Planner v0.1.47.
+# Compact operating dashboard for Energy Planner v0.1.49.
 # Requires custom:button-card.
 #
 # Design priorities:
@@ -251,6 +251,9 @@ views:
             triggers_update:
               - sensor.ecoflow_smart_home_panel_2_backup_battery
               - sensor.energy_planner_whole_bank_soc
+              - sensor.energy_planner_effective_battery_capacity
+              - sensor.energy_planner_battery_pack_count
+              - sensor.energy_planner_battery_topology_source
               - sensor.ecoflow_smart_home_panel_2_ac1_battery
               - sensor.ecoflow_smart_home_panel_2_ac1_power
               - sensor.ecoflow_smart_home_panel_2_ac2_battery
@@ -283,6 +286,25 @@ views:
                     num(
                       'sensor.ecoflow_smart_home_panel_2_backup_battery'
                     );
+
+                  const capacity =
+                    num(
+                      'sensor.energy_planner_effective_battery_capacity'
+                    );
+
+                  const packCount =
+                    num(
+                      'sensor.energy_planner_battery_pack_count'
+                    );
+
+                  const topologySource =
+                    states['sensor.energy_planner_battery_topology_source']?.state;
+
+                  const bankSubtitle = [
+                    'EcoFlow Smart Home Panel 2',
+                    packCount === null ? null : `${Math.round(packCount)} packs`,
+                    capacity === null ? null : `${capacity.toFixed(1)} kWh`
+                  ].filter(Boolean).join(' · ');
 
                   const soc1 =
                     num(
@@ -552,7 +574,7 @@ views:
                             color:
                               rgba(255,255,255,.55);
                           ">
-                            EcoFlow Smart Home Panel 2
+                            ${bankSubtitle}
                           </div>
 
                         </div>
@@ -1470,6 +1492,9 @@ views:
               - sensor.energy_planner_forecast_confidence
               - sensor.energy_planner_forecast_error_samples
               - sensor.energy_planner_forecast_reliability_reason
+              - sensor.energy_planner_effective_battery_capacity
+              - sensor.energy_planner_battery_pack_count
+              - sensor.energy_planner_battery_topology_source
               - binary_sensor.energy_planner_forecast_export_risk
               - sensor.energy_planner_forecast_export_risk_date
               - sensor.energy_planner_forecast_export_defense_headroom

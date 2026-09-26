@@ -12,6 +12,7 @@ from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
 from homeassistant.util import dt as dt_util
 
+from .battery_topology import BatteryTopology, resolve_battery_topology
 from .calibration import (
     CalibrationProfile,
     HeadroomDecision,
@@ -353,6 +354,7 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             f"energy_planner.{entry.entry_id}.calibration",
         )
         self._calibration_data: dict[str, Any] | None = None
+        self._battery_topology: BatteryTopology | None = None
 
     @property
     def cfg(self) -> dict[str, Any]:
@@ -521,28 +523,28 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             and today_sunrise <= now < today_sunset
         )
 
-        weights_raw = str(cfg.get(CONF_SOC_WEIGHTS, DEFAULT_WEIGHTS))
-        try:
-            weights = [float(x.strip()) for x in weights_raw.split(",")]
-        except ValueError:
-            weights = [3.0, 2.0, 3.0]
-        if len(weights) != 3 or sum(weights) <= 0:
-            weights = [3.0, 2.0, 3.0]
-
-        soc_values = [
-            _num(self.hass, cfg.get(CONF_SOC_1)),
-            _num(self.hass, cfg.get(CONF_SOC_2)),
-            _num(self.hass, cfg.get(CONF_SOC_3)),
-        ]
-        bank_socs = (
-            tuple(float(value) for value in soc_values)
-            if all(value is not None for value in soc_values)
-            else None
+        previous_topology = self._battery_topology
+        topology = resolve_battery_topology(
+            self.hass,
+            cfg,
+            previous=previous_topology,
         )
+        topology_changed = False
+        if topology.auto_detected:
+            if previous_topology is not None and previous_topology.auto_detected:
+                topology_changed = (
+                    previous_topology.pack_counts != topology.pack_counts
+                    or abs(previous_topology.capacity_kwh - topology.capacity_kwh) > 0.01
+                )
+            elif abs(
+                topology.capacity_kwh - topology.configured_capacity_kwh
+            ) > 0.01:
+                topology_changed = True
+            self._battery_topology = topology
 
-        capacity = float(cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH))
-        total_weight = sum(weights)
-        bank_capacities = tuple(capacity * weight / total_weight for weight in weights)
+        bank_socs = topology.bank_socs_pct
+        capacity = topology.capacity_kwh
+        bank_capacities = topology.bank_capacities_kwh
         weighted_soc = _weighted_soc(bank_socs, bank_capacities) if bank_socs else None
         stored = _stored_energy(bank_socs, bank_capacities) if bank_socs else None
         charge_limit = _num(self.hass, cfg.get(CONF_CHARGE_LIMIT))
@@ -551,6 +553,13 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if stored is not None and charge_limit is not None
             else None
         )
+
+        if topology_changed:
+            calibration_data = await self._ensure_calibration_data()
+            calibration_data.pop("daylight_pending", None)
+            calibration_data.pop("overnight_pending", None)
+            calibration_data["battery_topology_reset_at"] = now.isoformat()
+            await self._save_calibration_data()
 
         await self._finalize_calibration_history(
             now=now,
@@ -1097,6 +1106,18 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "weighted_soc": weighted_soc,
             "stored_energy": stored,
             "battery_headroom": headroom,
+            "battery_capacity_kwh": capacity,
+            "battery_configured_capacity_kwh": topology.configured_capacity_kwh,
+            "battery_bank_socs_pct": list(bank_socs) if bank_socs else None,
+            "battery_bank_capacities_kwh": list(bank_capacities),
+            "battery_topology_source": topology.source,
+            "battery_topology_reason": topology.reason,
+            "battery_pack_counts": (
+                list(topology.pack_counts) if topology.pack_counts else None
+            ),
+            "battery_pack_count_total": topology.total_pack_count,
+            "battery_discovered_dpu_count": topology.discovered_dpu_count,
+            "battery_topology_changed": topology_changed,
             "upcoming_solar": upcoming,
             "reserve": reserve,
             "effective_reserve_floor": effective_reserve,

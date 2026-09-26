@@ -34,6 +34,7 @@ from .const import (
     CONF_SOLAR_TODAY,
     CONF_SOLAR_TOMORROW,
     CONF_STORM_WARNING,
+    DEFAULT_AUTO_BATTERY_TOPOLOGY,
     DEFAULT_CAPACITY_KWH,
     DEFAULT_CHARGE_EFFICIENCY,
     DEFAULT_DISCRETIONARY_THRESHOLD_KWH,
@@ -46,6 +47,7 @@ from .const import (
     DEFAULT_STRONG_SOLAR_KWH,
     DEFAULT_WEIGHTS,
     DOMAIN,
+    OPT_AUTO_BATTERY_TOPOLOGY,
     OPT_AUTO_HEADROOM,
     OPT_CHARGE_EFFICIENCY,
     OPT_DISCRETIONARY_THRESHOLD_KWH,
@@ -88,6 +90,10 @@ class EnergyPlannerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 vol.Optional(CONF_BATTERY_POWER_2): SENSOR_SELECTOR,
                 vol.Optional(CONF_BATTERY_POWER_3): SENSOR_SELECTOR,
                 vol.Optional(CONF_CAPACITY_KWH, default=DEFAULT_CAPACITY_KWH): vol.Coerce(float),
+                vol.Optional(
+                    OPT_AUTO_BATTERY_TOPOLOGY,
+                    default=DEFAULT_AUTO_BATTERY_TOPOLOGY,
+                ): bool,
                 vol.Required(CONF_CHARGE_LIMIT): NUMBER_SELECTOR,
                 vol.Required(CONF_BACKUP_RESERVE): NUMBER_SELECTOR,
                 vol.Required(CONF_STORM_WARNING): BINARY_SELECTOR,
@@ -148,6 +154,15 @@ class EnergyPlannerOptionsFlow(config_entries.OptionsFlow):
                     CONF_CAPACITY_KWH,
                     default=float(current.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH)),
                 ): vol.Coerce(float),
+                vol.Optional(
+                    OPT_AUTO_BATTERY_TOPOLOGY,
+                    default=bool(
+                        current.get(
+                            OPT_AUTO_BATTERY_TOPOLOGY,
+                            DEFAULT_AUTO_BATTERY_TOPOLOGY,
+                        )
+                    ),
+                ): bool,
                 vol.Required(
                     CONF_CHARGE_LIMIT,
                     default=current.get(CONF_CHARGE_LIMIT),

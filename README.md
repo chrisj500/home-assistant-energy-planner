@@ -1,5 +1,17 @@
 # Home Assistant Energy Planner
 
+## v0.1.49 automatic battery topology
+
+Energy Planner now queries the installed EcoFlow IoT coordinator for each Delta Pro
+Ultra's reported battery-pack count and automatically rebuilds total and per-bank
+capacity. The optional EcoFlow IoT **Battery pack count** entity does not need to
+be enabled, and no additional EcoFlow API call is made.
+
+Manual capacity and SOC weights remain a fallback. A confirmed physical bank
+change invalidates capacity-dependent in-progress calibration/forecast evidence,
+and the Battery Bank dashboard now shows the detected pack count and effective
+capacity. See [release notes](RELEASE_NOTES_0.1.49.md).
+
 ## v0.1.41 AC solar learning foundation
 
 Energy Planner now collects and evaluates AC production forecasts locally, without

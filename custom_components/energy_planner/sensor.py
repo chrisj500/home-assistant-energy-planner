@@ -90,6 +90,24 @@ SENSORS = (
     EnergyPlannerSensorDescription(key="forecast_learning_progress", data_key="forecast_learning_progress", name="Forecast Learning Progress"),
     EnergyPlannerSensorDescription(key="storm_safety_status", data_key="storm_safety_status", name="Storm Safety Status"),
     _soc("weighted_soc", "weighted_soc", "Whole Bank SOC"),
+    _energy(
+        "battery_capacity",
+        "battery_capacity_kwh",
+        "Effective Battery Capacity",
+        storage=True,
+    ),
+    EnergyPlannerSensorDescription(
+        key="battery_pack_count",
+        data_key="battery_pack_count_total",
+        name="Battery Pack Count",
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+    ),
+    EnergyPlannerSensorDescription(
+        key="battery_topology_source",
+        data_key="battery_topology_source",
+        name="Battery Topology Source",
+    ),
     _energy("stored_energy", "stored_energy", "Whole Bank Stored Energy", storage=True),
     _energy("battery_headroom", "battery_headroom", "Battery Headroom", storage=True),
     EnergyPlannerSensorDescription(
@@ -870,6 +888,21 @@ class EnergyPlannerSensor(CoordinatorEntity[EnergyPlannerCoordinator], SensorEnt
                 "entity_id": data.get("storm_warning_entity"),
                 "raw_state": data.get("storm_warning_state"),
                 "active": data.get("storm"),
+            }
+        if self.entity_description.key == "battery_topology_source":
+            return {
+                "reason": data.get("battery_topology_reason"),
+                "effective_capacity_kwh": data.get("battery_capacity_kwh"),
+                "configured_capacity_kwh": data.get(
+                    "battery_configured_capacity_kwh"
+                ),
+                "pack_counts": data.get("battery_pack_counts"),
+                "pack_count_total": data.get("battery_pack_count_total"),
+                "bank_socs_pct": data.get("battery_bank_socs_pct"),
+                "bank_capacities_kwh": data.get(
+                    "battery_bank_capacities_kwh"
+                ),
+                "discovered_dpu_count": data.get("battery_discovered_dpu_count"),
             }
         if self.entity_description.key == "forecast_learning_progress":
             return {
