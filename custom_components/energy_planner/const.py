@@ -28,6 +28,7 @@ CONF_EV_CHARGING_POWER = "ev_charging_power_entity"
 CONF_FORECAST_SOLAR_API_KEY = "forecast_solar_api_key"
 
 OPT_AUTO_HEADROOM = "auto_headroom"
+OPT_AUTO_BATTERY_TOPOLOGY = "auto_battery_topology"
 OPT_MIN_RESERVE = "minimum_reserve"
 OPT_STRONG_SOLAR_KWH = "strong_solar_kwh"  # legacy compatibility
 OPT_EV_TARGET_SOC = "ev_target_soc"
@@ -41,6 +42,8 @@ OPT_DISCRETIONARY_THRESHOLD_KWH = "discretionary_threshold_kwh"
 
 DEFAULT_WEIGHTS = "3,2,3"
 DEFAULT_CAPACITY_KWH = 49.152
+DEFAULT_AUTO_BATTERY_TOPOLOGY = True
+DPU_BATTERY_PACK_CAPACITY_KWH = 6.144
 DEFAULT_MIN_RESERVE = 10.0
 DEFAULT_STRONG_SOLAR_KWH = 35.0
 DEFAULT_EV_TARGET_SOC = 100.0
