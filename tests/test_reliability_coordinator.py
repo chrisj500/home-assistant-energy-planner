@@ -372,7 +372,11 @@ class CoordinatorTests(unittest.TestCase):
         result = asyncio.run(self.c._async_update_data())
 
         self.assertEqual(len(self.c._trust["records"]), 3)
-        self.assertEqual(self.c._trust["pending"], {})
+        self.assertNotIn("old/topology", self.c._trust["pending"])
+        self.assertIn(
+            "2026-09-18/2026-09-18",
+            self.c._trust["pending"],
+        )
         self.assertEqual(result["forecast_learning_preserved_samples"], 3)
         self.assertEqual(result["forecast_learning_discarded_pending"], 1)
         self.assertEqual(
