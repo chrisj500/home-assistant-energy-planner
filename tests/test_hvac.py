@@ -133,6 +133,36 @@ class HVACTests(unittest.TestCase):
         observe(restored, self.sample(1300))
         self.assertEqual(len(restored["samples"]), 1)
 
+    def test_recovery_rebases_rate_when_homepod_falls_back_to_thermostat(self):
+        memory = {}
+        first = self.sample(1000)
+        first.update(
+            indoor_c=23,
+            precision_indoor_c=22.8,
+            precision_temperature_source="homepod_physical_room_median",
+            target_c=22,
+            outdoor_c=30,
+        )
+        observe(memory, first)
+
+        fallback = self.sample(1300)
+        fallback.update(
+            indoor_c=22.8,
+            precision_indoor_c=None,
+            precision_temperature_source=None,
+            target_c=22,
+            outdoor_c=30,
+        )
+        recovery = observe(memory, fallback)["recovery"]
+
+        self.assertEqual(recovery["temperature_signal_source"], "thermostat")
+        self.assertAlmostEqual(recovery["call_minutes"], 5.0)
+        self.assertAlmostEqual(recovery["rate_segment_minutes"], 0.0)
+        self.assertEqual(
+            memory["recovery_call"]["rate_movement_source"],
+            "thermostat",
+        )
+
     def test_live_recovery_uses_homepod_precision_while_thermostat_is_integer(self):
         memory = {}
         first = self.sample(1000)
