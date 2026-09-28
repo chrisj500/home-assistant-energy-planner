@@ -96,6 +96,8 @@ def room_summary(temperatures, humidities):
     temps, humidity = means(temperatures), means(humidities)
     return {
         "temperature_c": sum(temps) / len(temps) if temps else None,
+        "precision_temperature_c": median(temps) if temps else None,
+        "physical_temperatures_c": temps,
         "humidity": sum(humidity) / len(humidity) if humidity else None,
         "room_count": len(temps),
         "spread_c": max(temps) - min(temps) if temps else None,
@@ -118,6 +120,16 @@ def _directional_progress(action, start_c, end_c):
     if action == "heating":
         return end_c - start_c
     return 0.0
+
+
+def _temperature_signal(sample):
+    """Use high-resolution room movement when available; thermostat remains control truth."""
+    precision = number(sample.get("precision_indoor_c"))
+    if precision is not None:
+        return precision, str(
+            sample.get("precision_temperature_source") or "homepod_physical_room_median"
+        )
+    return number(sample.get("indoor_c")), "thermostat"
 
 
 def _evidence_confidence(samples):
@@ -153,14 +165,22 @@ def _recovery_cycle(call, sample):
     duration = sample["at"] - call["at"]
     if duration < 600 or duration > 4 * 3600:
         return None
+    movement_now, movement_source = _temperature_signal(sample)
+    movement_start = number(call.get("movement_indoor_c"))
+    if movement_start is None or movement_now is None:
+        return None
+    if call.get("movement_source") not in (None, movement_source):
+        return None
     progress = _directional_progress(
-        call["action"], call["indoor_c"], sample["indoor_c"]
+        call["action"], movement_start, movement_now
     )
     if progress < 0.15:
         return None
     rate = progress / (duration / 3600)
     if not 0.05 <= rate <= 10:
         return None
+    # Preserve thermostat-referenced outdoor matching so new cycles remain
+    # comparable with the existing historical recovery-cycle population.
     mean_indoor = (call["indoor_c"] + sample["indoor_c"]) / 2
     mean_outdoor = (call["outdoor_c"] + sample["outdoor_c"]) / 2
     return {
@@ -169,6 +189,7 @@ def _recovery_cycle(call, sample):
         "rate_c_per_hour": rate,
         "outdoor_delta_c": abs(mean_indoor - mean_outdoor),
         "duration_minutes": duration / 60,
+        "temperature_signal_source": movement_source,
     }
 
 
@@ -200,10 +221,13 @@ def update_recovery(memory, sample, continuous):
             call = None
 
     if active and call is None:
+        movement_indoor_c, movement_source = _temperature_signal(sample)
         call = {
             "at": now,
             "action": action,
             "indoor_c": sample["indoor_c"],
+            "movement_indoor_c": movement_indoor_c,
+            "movement_source": movement_source,
             "target_c": sample["target_c"],
             "outdoor_c": sample["outdoor_c"],
         }
@@ -216,14 +240,22 @@ def update_recovery(memory, sample, continuous):
     elif estimate_action == "heating":
         error = max(0.0, sample["target_c"] - sample["indoor_c"])
 
+    movement_indoor_c, movement_source = _temperature_signal(sample)
     live_rate = None
     call_minutes = None
     if active and call is not None:
         duration = now - call["at"]
         call_minutes = max(0.0, duration / 60)
-        if duration >= 600:
+        call_source = call.get("movement_source")
+        call_movement = number(call.get("movement_indoor_c"))
+        if (
+            duration >= 600
+            and call_movement is not None
+            and movement_indoor_c is not None
+            and call_source in (None, movement_source)
+        ):
             progress = _directional_progress(
-                action, call["indoor_c"], sample["indoor_c"]
+                action, call_movement, movement_indoor_c
             )
             if progress >= 0.15:
                 candidate = progress / (duration / 3600)
@@ -385,6 +417,9 @@ def update_recovery(memory, sample, continuous):
         "eta_correction_reason": eta_correction_reason,
         "rate_c_per_hour": rate,
         "source": recovery_source,
+        "temperature_signal_source": movement_source,
+        "temperature_signal_c": movement_indoor_c,
+        "thermostat_temperature_c": sample["indoor_c"],
         "call_minutes": call_minutes,
         "completed_cycles": len(
             [row for row in cycles if row["action"] in ("cooling", "heating")]
@@ -446,9 +481,14 @@ def update_thermal_model(memory, sample, continuous):
         and sample["condenser_w"] < CONDENSER_RUNNING_W
         and sample["blower_w"] < BLOWER_RUNNING_W
     )
+    thermal_indoor_c, thermal_source = _temperature_signal(sample)
     window = memory.get("thermal_window")
+    signal_changed = (
+        window is not None
+        and window.get("temperature_source") not in (None, thermal_source)
+    )
 
-    if window is not None and (not continuous or not passive):
+    if window is not None and (not continuous or not passive or signal_changed):
         candidate, rejection = _thermal_candidate_detail(window)
         if candidate is not None:
             history.append({"ended_at": window["last_at"], **candidate})
@@ -468,16 +508,17 @@ def update_thermal_model(memory, sample, continuous):
         if window is None or not continuous:
             window = {
                 "at": now,
-                "indoor_c": sample["indoor_c"],
+                "indoor_c": thermal_indoor_c,
                 "last_at": now,
-                "last_indoor_c": sample["indoor_c"],
+                "last_indoor_c": thermal_indoor_c,
+                "temperature_source": thermal_source,
                 "outdoor_sum": sample["outdoor_c"],
                 "outdoor_count": 1,
             }
             memory["thermal_window"] = window
         else:
             window["last_at"] = now
-            window["last_indoor_c"] = sample["indoor_c"]
+            window["last_indoor_c"] = thermal_indoor_c
             window["outdoor_sum"] += sample["outdoor_c"]
             window["outdoor_count"] += 1
 
@@ -501,8 +542,8 @@ def update_thermal_model(memory, sample, continuous):
     if live is not None and confidence == "none":
         confidence = "low"
     drift = (
-        -coefficient * (sample["indoor_c"] - sample["outdoor_c"])
-        if coefficient is not None
+        -coefficient * (thermal_indoor_c - sample["outdoor_c"])
+        if coefficient is not None and thermal_indoor_c is not None
         else None
     )
     return {
@@ -522,8 +563,13 @@ def update_thermal_model(memory, sample, continuous):
         "time_constant_hours": 1 / coefficient if coefficient else None,
         "predicted_drift_c_per_hour": drift,
         "current_indoor_outdoor_delta_c": (
-            sample["indoor_c"] - sample["outdoor_c"]
+            thermal_indoor_c - sample["outdoor_c"]
+            if thermal_indoor_c is not None
+            else None
         ),
+        "temperature_signal_source": thermal_source,
+        "temperature_signal_c": thermal_indoor_c,
+        "thermostat_temperature_c": sample["indoor_c"],
         "live_window_minutes": (
             (window["last_at"] - window["at"]) / 60 if window is not None else 0
         ),
@@ -608,13 +654,19 @@ def observe(memory, sample):
 
     recovery = update_recovery(memory, sample, bool(continuous))
     thermal = update_thermal_model(memory, sample, bool(continuous))
+    movement_indoor_c, movement_source = _temperature_signal(sample)
 
     if (
         not continuous
         or previous["action"] != action
         or previous["target_c"] != sample["target_c"]
+        or memory.get("call", {}).get("temperature_source") not in (None, movement_source)
     ):
-        memory["call"] = {"at": now, "temperature": sample["indoor_c"]}
+        memory["call"] = {
+            "at": now,
+            "temperature": movement_indoor_c,
+            "temperature_source": movement_source,
+        }
         memory.pop("missing_since", None)
 
     call = memory["call"]
@@ -635,7 +687,7 @@ def observe(memory, sample):
         memory.pop("missing_since", None)
 
     progress_c = (
-        call["temperature"] - sample["indoor_c"]
+        call["temperature"] - movement_indoor_c
     ) * (1 if action == "cooling" else -1)
     status = "learning"
     reason = "Collecting HVAC power and temperature response"
@@ -651,11 +703,19 @@ def observe(memory, sample):
     if continuous and not missing and not demand and status != "suspected_fault":
         if not rows or now - rows[-1]["at"] >= 300:
             row = dict(sample)
+            previous_movement_c, previous_movement_source = _temperature_signal(previous)
+            if previous_movement_source == movement_source:
+                response_delta = movement_indoor_c - previous_movement_c
+                response_source = movement_source
+            else:
+                response_delta = sample["indoor_c"] - previous["indoor_c"]
+                response_source = "thermostat_fallback"
             row["response_c_per_hour"] = (
-                (sample["indoor_c"] - previous["indoor_c"])
+                response_delta
                 * 3600
                 / (now - previous["at"])
             )
+            row["response_temperature_source"] = response_source
             rows.append(row)
 
     memory["previous"] = dict(sample)
@@ -707,6 +767,12 @@ def observe(memory, sample):
         "electrical_power_w": sample["blower_w"] + sample["condenser_w"],
         "thermostat_action": action,
         "unmet_setpoint": demand,
+        "temperature_signal": {
+            "source": movement_source,
+            "temperature_c": movement_indoor_c,
+            "thermostat_temperature_c": sample["indoor_c"],
+            "precision_temperature_c": number(sample.get("precision_indoor_c")),
+        },
         "recovery": recovery,
         "thermal": thermal,
         **learning,
