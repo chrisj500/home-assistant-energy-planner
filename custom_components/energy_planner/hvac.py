@@ -244,15 +244,68 @@ def _recovery_population(rows):
     return rows, "legacy_cycles"
 
 
-def _recovery_cycle(call, sample):
-    # Logical call duration may span a restart. Rate learning uses the most
-    # recent continuous measurement segment, which is rebased after long gaps.
-    rate_at = number(call.get("rate_at"))
-    if rate_at is None:
-        rate_at = call["at"]
-    duration = sample["at"] - rate_at
-    if duration < 600 or duration > 4 * 3600:
+def _recovery_duration_projection(row, error_c):
+    """Project ETA from a clean target-ended duration observation."""
+    duration = number(
+        row.get("logical_duration_minutes", row.get("duration_minutes"))
+    )
+    start_error = number(row.get("start_error_c"))
+    if (
+        duration is None
+        or duration <= 0
+        or start_error is None
+        or start_error <= 0.05
+        or error_c <= 0
+    ):
         return None
+    return duration * error_c / start_error
+
+
+def _recovery_cycle(call, sample):
+    """Return a target-ended observation even when no precision rate is usable."""
+    logical_duration = sample["at"] - call["at"]
+    if logical_duration <= 0 or logical_duration > 4 * 3600:
+        return None
+
+    action = call["action"]
+    target_c = number(call.get("target_c"))
+    start_indoor_c = number(call.get("indoor_c"))
+    if action == "cooling":
+        start_error_c = (
+            max(0.0, start_indoor_c - target_c)
+            if start_indoor_c is not None and target_c is not None
+            else None
+        )
+    elif action == "heating":
+        start_error_c = (
+            max(0.0, target_c - start_indoor_c)
+            if start_indoor_c is not None and target_c is not None
+            else None
+        )
+    else:
+        start_error_c = None
+
+    # Preserve thermostat-referenced outdoor matching independently of whether
+    # the high-resolution movement is sufficient for a physical rate sample.
+    rate_indoor = number(call.get("rate_indoor_c"))
+    rate_outdoor = number(call.get("rate_outdoor_c"))
+    current_indoor = number(sample.get("indoor_c"))
+    current_outdoor = number(sample.get("outdoor_c"))
+    if rate_indoor is None:
+        rate_indoor = start_indoor_c
+    if rate_outdoor is None:
+        rate_outdoor = number(call.get("outdoor_c"))
+    outdoor_delta_c = None
+    if (
+        rate_indoor is not None
+        and rate_outdoor is not None
+        and current_indoor is not None
+        and current_outdoor is not None
+    ):
+        mean_indoor = (rate_indoor + current_indoor) / 2
+        mean_outdoor = (rate_outdoor + current_outdoor) / 2
+        outdoor_delta_c = abs(mean_indoor - mean_outdoor)
+
     movement_now, movement_source = _temperature_signal(sample)
     movement_start = number(
         call.get("rate_movement_indoor_c", call.get("movement_indoor_c"))
@@ -260,37 +313,111 @@ def _recovery_cycle(call, sample):
     movement_start_source = call.get(
         "rate_movement_source", call.get("movement_source")
     )
-    if movement_start is None or movement_now is None:
-        return None
-    if movement_start_source not in (None, movement_source):
-        return None
-    progress = _directional_progress(
-        call["action"], movement_start, movement_now
-    )
-    if progress < 0.15:
-        return None
-    rate = progress / (duration / 3600)
-    if not 0.05 <= rate <= 10:
-        return None
-    # Preserve thermostat-referenced outdoor matching so new cycles remain
-    # comparable with the existing historical recovery-cycle population.
-    rate_indoor = number(call.get("rate_indoor_c"))
-    rate_outdoor = number(call.get("rate_outdoor_c"))
-    if rate_indoor is None:
-        rate_indoor = call["indoor_c"]
-    if rate_outdoor is None:
-        rate_outdoor = call["outdoor_c"]
-    mean_indoor = (rate_indoor + sample["indoor_c"]) / 2
-    mean_outdoor = (rate_outdoor + sample["outdoor_c"]) / 2
+    rate_at = number(call.get("rate_at"))
+    if rate_at is None:
+        rate_at = call["at"]
+    rate_duration = sample["at"] - rate_at
+    rate = None
+    rate_progress_c = None
+    rate_rejection_reason = None
+
+    if rate_duration < 600:
+        rate_rejection_reason = "rate_segment_too_short"
+    elif rate_duration > 4 * 3600:
+        rate_rejection_reason = "rate_segment_too_long"
+    elif movement_start is None or movement_now is None:
+        rate_rejection_reason = "temperature_signal_missing"
+    elif movement_start_source not in (None, movement_source):
+        rate_rejection_reason = "temperature_signal_changed"
+    else:
+        rate_progress_c = _directional_progress(
+            action, movement_start, movement_now
+        )
+        if rate_progress_c < 0.15:
+            rate_rejection_reason = "insufficient_precision_movement"
+        else:
+            candidate = rate_progress_c / (rate_duration / 3600)
+            if 0.05 <= candidate <= 10:
+                rate = candidate
+            else:
+                rate_rejection_reason = "rate_out_of_range"
+
     return {
         "ended_at": sample["at"],
-        "action": call["action"],
+        "action": action,
         "rate_c_per_hour": rate,
-        "outdoor_delta_c": abs(mean_indoor - mean_outdoor),
-        "duration_minutes": duration / 60,
-        "logical_duration_minutes": (sample["at"] - call["at"]) / 60,
+        "rate_sample_valid": rate is not None,
+        "rate_rejection_reason": rate_rejection_reason,
+        "rate_progress_c": rate_progress_c,
+        "outdoor_delta_c": outdoor_delta_c,
+        "duration_minutes": logical_duration / 60,
+        "logical_duration_minutes": logical_duration / 60,
+        "start_error_c": start_error_c,
+        "duration_sample_valid": (
+            start_error_c is not None and start_error_c > 0.05
+        ),
         "temperature_signal_source": movement_source,
     }
+
+
+def _target_cycle_exists(cycles, action, ended_at):
+    return any(
+        row.get("phase_end") == "target_reached"
+        and row.get("action") == action
+        and number(row.get("ended_at")) is not None
+        and abs(row["ended_at"] - ended_at) <= 120
+        for row in cycles
+    )
+
+
+def _backfill_target_cycle_from_overrun(cycles, overrun):
+    """Retain v0.1.60 target durations that were dropped for low movement."""
+    if not isinstance(overrun, dict) or overrun.get("started_mid_overrun"):
+        return None
+    duration = number(overrun.get("recovery_duration_minutes"))
+    action = overrun.get("action")
+    target_at = number(overrun.get("at"))
+    if duration is None or duration <= 0 or action not in ("cooling", "heating"):
+        return None
+    if target_at is None:
+        ended_at = number(overrun.get("ended_at"))
+        overrun_duration = number(overrun.get("duration_minutes"))
+        if ended_at is not None and overrun_duration is not None:
+            target_at = ended_at - overrun_duration * 60
+    if target_at is None or _target_cycle_exists(cycles, action, target_at):
+        return None
+
+    row = {
+        "ended_at": target_at,
+        "action": action,
+        "rate_c_per_hour": number(overrun.get("recovery_rate_c_per_hour")),
+        "rate_sample_valid": number(
+            overrun.get("recovery_rate_c_per_hour")
+        ) is not None,
+        "rate_rejection_reason": (
+            None
+            if number(overrun.get("recovery_rate_c_per_hour")) is not None
+            else "backfilled_duration_only"
+        ),
+        "outdoor_delta_c": number(
+            overrun.get("recovery_outdoor_delta_c")
+        ),
+        "duration_minutes": duration,
+        "logical_duration_minutes": duration,
+        "start_error_c": number(overrun.get("recovery_start_error_c")),
+        "duration_sample_valid": (
+            number(overrun.get("recovery_start_error_c")) is not None
+            and number(overrun.get("recovery_start_error_c")) > 0.05
+        ),
+        "temperature_signal_source": overrun.get(
+            "temperature_signal_source"
+        ),
+        "phase_end": "target_reached",
+        "clean_target_cycle": True,
+        "backfilled_from_overrun": True,
+    }
+    cycles.append(row)
+    return row
 
 
 def update_recovery(memory, sample, continuous, rate_continuous=None):
@@ -306,6 +433,10 @@ def update_recovery(memory, sample, continuous, rate_continuous=None):
     memory["overrun_cycles"] = overruns = [
         row for row in overruns if 0 <= now - row.get("ended_at", now) <= 30 * 86400
     ]
+
+    for completed_overrun in overruns:
+        _backfill_target_cycle_from_overrun(cycles, completed_overrun)
+    _backfill_target_cycle_from_overrun(cycles, memory.get("overrun_call"))
 
     action = sample["action"]
     active = action in ("cooling", "heating")
@@ -417,6 +548,16 @@ def update_recovery(memory, sample, continuous, rate_continuous=None):
             "call_started_at": call["at"],
             "recovery_duration_minutes": recovery_completed_duration,
             "recovery_rate_c_per_hour": recovery_completed_rate,
+            "recovery_start_error_c": (
+                number(cycle.get("start_error_c"))
+                if cycle is not None
+                else None
+            ),
+            "recovery_outdoor_delta_c": (
+                number(cycle.get("outdoor_delta_c"))
+                if cycle is not None
+                else None
+            ),
             "started_mid_overrun": False,
         }
         _update_overrun_call(
@@ -518,9 +659,30 @@ def update_recovery(memory, sample, continuous, rate_continuous=None):
         ]
         model_cycles, population = _recovery_population(all_action_cycles)
         count = len(model_cycles)
-        confidence = _evidence_confidence(count)
+        rate_cycles = [
+            row
+            for row in model_cycles
+            if number(row.get("rate_c_per_hour")) is not None
+        ]
+        duration_cycles = [
+            row
+            for row in model_cycles
+            if number(row.get("start_error_c")) is not None
+            and number(
+                row.get(
+                    "logical_duration_minutes",
+                    row.get("duration_minutes"),
+                )
+            ) is not None
+            and number(row.get("start_error_c")) > 0.05
+        ]
+        usable_eta_samples = max(len(rate_cycles), len(duration_cycles))
+        confidence = _evidence_confidence(usable_eta_samples)
         models[recovery_action] = {
             "samples": count,
+            "usable_eta_samples": usable_eta_samples,
+            "rate_samples": len(rate_cycles),
+            "duration_samples": len(duration_cycles),
             "all_samples": len(all_action_cycles),
             "clean_target_samples": len(
                 [
@@ -531,8 +693,24 @@ def update_recovery(memory, sample, continuous, rate_continuous=None):
             ),
             "population": population,
             "rate_c_per_hour": (
-                median([row["rate_c_per_hour"] for row in model_cycles])
-                if model_cycles
+                median([row["rate_c_per_hour"] for row in rate_cycles])
+                if rate_cycles
+                else None
+            ),
+            "duration_minutes_per_c": (
+                median(
+                    [
+                        number(
+                            row.get(
+                                "logical_duration_minutes",
+                                row.get("duration_minutes"),
+                            )
+                        )
+                        / number(row.get("start_error_c"))
+                        for row in duration_cycles
+                    ]
+                )
+                if duration_cycles
                 else None
             ),
             "confidence": confidence,
@@ -555,31 +733,69 @@ def update_recovery(memory, sample, continuous, rate_continuous=None):
     matched = [
         row
         for row in estimate_cycles
-        if abs(row["outdoor_delta_c"] - current_delta) <= 4
+        if number(row.get("outdoor_delta_c")) is not None
+        and abs(row["outdoor_delta_c"] - current_delta) <= 4
     ]
     if estimate_action and not matched:
         matched = estimate_cycles
+
+    rate_matched = [
+        row
+        for row in matched
+        if number(row.get("rate_c_per_hour")) is not None
+    ]
     historical_rate = (
-        median([row["rate_c_per_hour"] for row in matched])
-        if matched
+        median([row["rate_c_per_hour"] for row in rate_matched])
+        if rate_matched
         else None
     )
-    historical_confidence = _evidence_confidence(len(matched))
+    duration_projections = [
+        projected
+        for row in matched
+        for projected in [_recovery_duration_projection(row, error)]
+        if projected is not None
+    ]
+    historical_duration_eta = (
+        median(duration_projections) if duration_projections else None
+    )
+    historical_rate_confidence = _evidence_confidence(len(rate_matched))
+    historical_duration_confidence = _evidence_confidence(
+        len(duration_projections)
+    )
 
     rate = live_rate if live_rate is not None else historical_rate
-    source = (
-        "live_call"
-        if live_rate is not None
-        else "history"
-        if historical_rate is not None
-        else "learning"
-    )
-
-    raw_eta = (
-        min(360.0, error / rate * 60)
-        if demand_active and rate is not None and rate > 0
-        else None
-    )
+    if live_rate is not None:
+        source = "live_call"
+        raw_eta = (
+            min(360.0, error / live_rate * 60)
+            if demand_active and live_rate > 0
+            else None
+        )
+        historical_confidence = (
+            historical_duration_confidence
+            if historical_duration_confidence != "none"
+            else historical_rate_confidence
+        )
+    elif historical_duration_eta is not None:
+        source = "history_duration"
+        raw_eta = (
+            min(360.0, historical_duration_eta)
+            if demand_active
+            else None
+        )
+        historical_confidence = historical_duration_confidence
+    elif historical_rate is not None:
+        source = "history"
+        raw_eta = (
+            min(360.0, error / historical_rate * 60)
+            if demand_active and historical_rate > 0
+            else None
+        )
+        historical_confidence = historical_rate_confidence
+    else:
+        source = "learning"
+        raw_eta = None
+        historical_confidence = "none"
 
     eta = None
     eta_target_at = None
@@ -673,7 +889,7 @@ def update_recovery(memory, sample, continuous, rate_continuous=None):
             if historical_confidence != "none"
             else "low"
         )
-    elif recovery_source == "history":
+    elif recovery_source in ("history", "history_duration"):
         confidence = historical_confidence
         recovery_status = (
             "ready" if confidence == "high" else "provisional"
@@ -783,6 +999,11 @@ def update_recovery(memory, sample, continuous, rate_continuous=None):
             ]
         ),
         "matched_cycles": len(matched) if estimate_action else 0,
+        "matched_rate_cycles": len(rate_matched) if estimate_action else 0,
+        "matched_duration_cycles": (
+            len(duration_projections) if estimate_action else 0
+        ),
+        "historical_duration_eta_minutes": historical_duration_eta,
         "model_population": estimate_population,
         "models": models,
         "aborted_calls": sum(
