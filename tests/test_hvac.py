@@ -689,6 +689,60 @@ class HVACTests(unittest.TestCase):
             0,
         )
 
+    def test_v060_duration_only_backfill_keeps_legacy_eta_until_usable_clean_cycle(self):
+        memory = {
+            "recovery_cycles": [
+                {
+                    "ended_at": 900,
+                    "action": "cooling",
+                    "rate_c_per_hour": 1.0,
+                    "outdoor_delta_c": 7,
+                    "duration_minutes": 60,
+                }
+            ],
+            "overrun_cycles": [],
+            "overrun_call": {
+                "at": 1660,
+                "last_at": 1660,
+                "action": "cooling",
+                "target_c": 22,
+                "call_started_at": 1000,
+                "recovery_duration_minutes": 11.0,
+                "recovery_rate_c_per_hour": None,
+                "started_mid_overrun": False,
+                "temperature_signal_source": "homepod_physical_room_median",
+            },
+        }
+        active = self.sample(1720)
+        active.update(
+            indoor_c=22,
+            precision_indoor_c=22.0,
+            target_c=22,
+            outdoor_c=30,
+        )
+        observe(memory, active)
+
+        stopped = self.sample(1780)
+        stopped.update(
+            action="idle",
+            indoor_c=22,
+            precision_indoor_c=22.0,
+            target_c=22,
+            outdoor_c=30,
+            condenser_w=0,
+            blower_w=10,
+        )
+        observe(memory, stopped)
+
+        next_call = self.sample(2000)
+        next_call.update(indoor_c=23, target_c=22, outdoor_c=30)
+        recovery = observe(memory, next_call)["recovery"]
+
+        self.assertEqual(recovery["clean_target_cycles"], 1)
+        self.assertEqual(recovery["model_population"], "legacy_cycles")
+        self.assertEqual(recovery["source"], "history")
+        self.assertAlmostEqual(recovery["eta_minutes"], 60.0)
+
     def test_equipment_stop_finalizes_overrun_model(self):
         memory = {}
         start = self.sample(1000)
