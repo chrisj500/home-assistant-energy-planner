@@ -1003,7 +1003,7 @@ class HVACTests(unittest.TestCase):
         result = observe(memory, next_call)
         recovery = result["recovery"]
 
-        self.assertEqual(recovery["source"], "history")
+        self.assertEqual(recovery["source"], "history_duration")
         self.assertEqual(recovery["status"], "provisional")
         self.assertEqual(recovery["confidence"], "low")
         self.assertIsNotNone(recovery["eta_minutes"])
