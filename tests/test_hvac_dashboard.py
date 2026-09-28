@@ -58,7 +58,11 @@ class HVACDashboardTests(unittest.TestCase):
                 status:'provisional',
                 eta_minutes:18,
                 rate_c_per_hour:1,
-                completed_cycles:1
+                completed_cycles:3,
+                models:{
+                  cooling:{samples:3,rate_c_per_hour:1.6379276427178264,confidence:'high',status:'ready'},
+                  heating:{samples:0,rate_c_per_hour:null,confidence:'none',status:'learning'}
+                }
               },
               thermal:{
                 status:'provisional',
@@ -138,8 +142,30 @@ class HVACDashboardTests(unittest.TestCase):
         if (!(contextPos > fallback.indexOf('THERMOSTAT') && contextPos < roomPos)) {
           throw Error('Outdoor context is not between thermostat and room grid');
         }
-        if (!fallback.includes('Recovery ETA 18 min')) {
-          throw Error('Compact recovery estimate');
+        if (!fallback.includes('≈ 18 min to target')) {
+          throw Error('Live recovery estimate is not shown on thermostat face');
+        }
+        if (fallback.includes('Recovery ETA 18 min')) {
+          throw Error('Recovery ETA is duplicated outside the thermostat face');
+        }
+
+        const learnedEtaStates = JSON.parse(JSON.stringify(baseStates));
+        learnedEtaStates['climate.thermostat'].attributes.hvac_action = 'idle';
+        learnedEtaStates['climate.thermostat'].attributes.current_temperature = 73;
+        learnedEtaStates['climate.thermostat'].attributes.temperature = 70;
+        learnedEtaStates['sensor.energy_planner_hvac_model_status'].attributes.recovery.active = false;
+        learnedEtaStates['sensor.energy_planner_hvac_model_status'].attributes.recovery.eta_minutes = null;
+        learnedEtaStates['sensor.energy_planner_hvac_model_status'].attributes.recovery.rate_c_per_hour = null;
+        const learnedEta = render(learnedEtaStates,hass);
+        if (!learnedEta.includes('≈ 1 hr 1 min to target')) {
+          throw Error('Setpoint change did not use learned cooling rate immediately');
+        }
+
+        const atTargetStates = JSON.parse(JSON.stringify(learnedEtaStates));
+        atTargetStates['climate.thermostat'].attributes.current_temperature = 70;
+        const atTarget = render(atTargetStates,hass);
+        if (atTarget.includes('to target')) {
+          throw Error('Time-to-target should disappear when the target is reached');
         }
         if (fallback.includes('Passive thermal drift')) {
           throw Error('Detailed thermal diagnostics leaked onto compact overview');
