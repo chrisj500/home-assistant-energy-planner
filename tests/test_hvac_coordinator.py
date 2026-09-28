@@ -281,6 +281,20 @@ class HVACCoordinatorTests(unittest.TestCase):
             result["hvac_diagnostics"]["persistence"]["restored_samples"],
             26,
         )
+        self.assertTrue(
+            result["hvac_diagnostics"]["persistence"]["interrupted_recovery_call"]
+        )
+        self.assertTrue(
+            result["hvac_diagnostics"]["persistence"]["interrupted_thermal_window"]
+        )
+        self.assertEqual(
+            result["hvac_diagnostics"]["recovery"]["restart_interrupted_cycles"],
+            1,
+        )
+        self.assertEqual(
+            result["hvac_diagnostics"]["thermal"]["restart_interrupted_windows"],
+            1,
+        )
         self.assertEqual(
             self.saved["entity_mapping"]["room_prefixes"],
             ",".join(self.c._room_prefixes()),
@@ -335,6 +349,97 @@ class HVACCoordinatorTests(unittest.TestCase):
         self.assertEqual(
             persistence["reset_reason"]["stored"]["hvac_condenser"],
             "sensor.old_condenser_power",
+        )
+
+    def test_restart_weather_failure_keeps_persisted_last_good_forecast(self):
+        identity = self.c._model_identity(self.c._room_prefixes())
+        cached_hour = {
+            "at": (self.now + timedelta(hours=1)).timestamp(),
+            "temperature_c": 26.666667,
+            "humidity": 65,
+        }
+        persisted = {
+            "entity_mapping": identity,
+            "samples": self._persisted_hvac_rows(36),
+            "recovery_cycles": [],
+            "thermal_samples": [],
+            "weather_cache": {
+                "hours": [cached_hour],
+                "last_success": (self.now - timedelta(minutes=10)).timestamp(),
+                "last_attempt": (self.now - timedelta(hours=1)).timestamp(),
+                "last_error": None,
+                "last_error_at": None,
+            },
+        }
+
+        async def load_hvac():
+            return persisted
+
+        async def failed_weather(*args, **kwargs):
+            raise RuntimeError("weather service warming up after restart")
+
+        self.c._hvac_store = SimpleNamespace(
+            async_load=load_hvac,
+            async_save=self.c._hvac_store.async_save,
+        )
+        self.c.hass.services = SimpleNamespace(async_call=failed_weather)
+
+        result = asyncio.run(self.c._async_update_data())
+        diagnostics = result["hvac_diagnostics"]
+        weather = diagnostics["weather_forecast"]
+
+        self.assertTrue(diagnostics["weather_available"])
+        self.assertEqual(diagnostics["hourly_forecast_hours"], 1)
+        self.assertEqual(weather["source"], "cached_fallback")
+        self.assertEqual(
+            weather["last_error"],
+            "weather_service_error:RuntimeError",
+        )
+        self.assertEqual(len(self.saved["weather_cache"]["hours"]), 1)
+        self.assertEqual(
+            diagnostics["persistence"]["restored_weather_hours"],
+            1,
+        )
+
+    def test_restart_weather_cache_expires_instead_of_hiding_long_outage(self):
+        identity = self.c._model_identity(self.c._room_prefixes())
+        persisted = {
+            "entity_mapping": identity,
+            "samples": self._persisted_hvac_rows(36),
+            "recovery_cycles": [],
+            "thermal_samples": [],
+            "weather_cache": {
+                "hours": [{
+                    "at": (self.now + timedelta(hours=1)).timestamp(),
+                    "temperature_c": 26.666667,
+                    "humidity": 65,
+                }],
+                "last_success": (self.now - timedelta(hours=7)).timestamp(),
+                "last_attempt": (self.now - timedelta(hours=1)).timestamp(),
+                "last_error": None,
+                "last_error_at": None,
+            },
+        }
+
+        async def load_hvac():
+            return persisted
+
+        async def failed_weather(*args, **kwargs):
+            raise RuntimeError("weather unavailable")
+
+        self.c._hvac_store = SimpleNamespace(
+            async_load=load_hvac,
+            async_save=self.c._hvac_store.async_save,
+        )
+        self.c.hass.services = SimpleNamespace(async_call=failed_weather)
+
+        result = asyncio.run(self.c._async_update_data())
+        diagnostics = result["hvac_diagnostics"]
+        self.assertFalse(diagnostics["weather_available"])
+        self.assertEqual(diagnostics["hourly_forecast_hours"], 0)
+        self.assertEqual(
+            diagnostics["weather_forecast"]["source"],
+            "unavailable",
         )
 
     def test_stale_room_blocks_existing_advice(self):
