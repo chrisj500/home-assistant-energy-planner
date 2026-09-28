@@ -806,6 +806,7 @@ def observe(memory, sample):
 
     if (
         not measurement_continuous
+        or not isinstance(memory.get("call"), dict)
         or previous["action"] != action
         or previous["target_c"] != sample["target_c"]
         or memory.get("call", {}).get("temperature_source") not in (None, movement_source)
