@@ -377,7 +377,7 @@ class HVACTests(unittest.TestCase):
         self.assertAlmostEqual(result["recovery"]["call_minutes"], 0.0)
         self.assertFalse(result["restart_resume"]["resumed_recovery_call"])
 
-    def test_recovery_eta_survives_restart_without_bridging_temperature_rate(self):
+    def test_recovery_eta_survives_brief_restart_with_same_target_time(self):
         memory = {
             "recovery_cycles": [{
                 "ended_at": 900,
@@ -390,18 +390,26 @@ class HVACTests(unittest.TestCase):
         first = self.sample(1000)
         first.update(indoor_c=23, target_c=22, outdoor_c=30)
         observe(memory, first)
+        self.assertAlmostEqual(
+            memory["recovery_eta"]["target_at"],
+            4600.0,
+        )
 
         restored = deepcopy(memory)
-        restored.pop("previous", None)
-        restored.pop("recovery_call", None)
-
+        restored["_restart_pending"] = True
         after_restart = self.sample(1300)
         after_restart.update(indoor_c=23, target_c=22, outdoor_c=30)
-        recovery = observe(restored, after_restart)["recovery"]
+        result = observe(restored, after_restart)
+        recovery = result["recovery"]
 
         self.assertAlmostEqual(recovery["eta_minutes"], 55.0)
         self.assertAlmostEqual(recovery["eta_target_at"], 4600.0)
         self.assertAlmostEqual(recovery["eta_raw_minutes"], 60.0)
+        self.assertAlmostEqual(recovery["call_minutes"], 5.0)
+        self.assertEqual(
+            result["restart_resume"]["status"],
+            "resumed_full_continuity",
+        )
 
     def test_completed_recovery_cycle_is_retained(self):
         memory = {}
