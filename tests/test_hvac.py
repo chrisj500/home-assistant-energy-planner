@@ -356,6 +356,39 @@ class HVACTests(unittest.TestCase):
         self.assertTrue(result["restart_resume"]["resumed_recovery_call"])
         self.assertFalse(result["restart_resume"]["rate_learning_rebased"])
 
+    def test_repeated_brief_restarts_keep_same_recovery_target_time(self):
+        memory = {
+            "recovery_cycles": [{
+                "ended_at": 900,
+                "action": "cooling",
+                "rate_c_per_hour": 1.0,
+                "outdoor_delta_c": 7,
+                "duration_minutes": 60,
+            }]
+        }
+        first = self.sample(1000)
+        first.update(indoor_c=23, target_c=22, outdoor_c=30)
+        observe(memory, first)
+        target_at = memory["recovery_eta"]["target_at"]
+
+        for at in (1060, 1120, 1180):
+            memory = deepcopy(memory)
+            memory["_restart_pending"] = True
+            sample = self.sample(at)
+            sample.update(indoor_c=23, target_c=22, outdoor_c=30)
+            result = observe(memory, sample)
+            self.assertEqual(
+                result["restart_resume"]["status"],
+                "resumed_full_continuity",
+            )
+            self.assertAlmostEqual(
+                result["recovery"]["eta_target_at"],
+                target_at,
+            )
+
+        self.assertAlmostEqual(result["recovery"]["call_minutes"], 3.0)
+        self.assertAlmostEqual(result["recovery"]["eta_minutes"], 57.0)
+
     def test_long_restart_preserves_logical_call_but_rebases_rate_learning(self):
         memory = {}
         first = self.sample(1000)
