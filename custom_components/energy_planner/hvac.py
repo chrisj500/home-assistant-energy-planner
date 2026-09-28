@@ -162,14 +162,24 @@ def _requested_recovery_action(sample, active_action):
 
 
 def _recovery_cycle(call, sample):
-    duration = sample["at"] - call["at"]
+    # Logical call duration may span a restart. Rate learning uses the most
+    # recent continuous measurement segment, which is rebased after long gaps.
+    rate_at = number(call.get("rate_at"))
+    if rate_at is None:
+        rate_at = call["at"]
+    duration = sample["at"] - rate_at
     if duration < 600 or duration > 4 * 3600:
         return None
     movement_now, movement_source = _temperature_signal(sample)
-    movement_start = number(call.get("movement_indoor_c"))
+    movement_start = number(
+        call.get("rate_movement_indoor_c", call.get("movement_indoor_c"))
+    )
+    movement_start_source = call.get(
+        "rate_movement_source", call.get("movement_source")
+    )
     if movement_start is None or movement_now is None:
         return None
-    if call.get("movement_source") not in (None, movement_source):
+    if movement_start_source not in (None, movement_source):
         return None
     progress = _directional_progress(
         call["action"], movement_start, movement_now
@@ -181,20 +191,29 @@ def _recovery_cycle(call, sample):
         return None
     # Preserve thermostat-referenced outdoor matching so new cycles remain
     # comparable with the existing historical recovery-cycle population.
-    mean_indoor = (call["indoor_c"] + sample["indoor_c"]) / 2
-    mean_outdoor = (call["outdoor_c"] + sample["outdoor_c"]) / 2
+    rate_indoor = number(call.get("rate_indoor_c"))
+    rate_outdoor = number(call.get("rate_outdoor_c"))
+    if rate_indoor is None:
+        rate_indoor = call["indoor_c"]
+    if rate_outdoor is None:
+        rate_outdoor = call["outdoor_c"]
+    mean_indoor = (rate_indoor + sample["indoor_c"]) / 2
+    mean_outdoor = (rate_outdoor + sample["outdoor_c"]) / 2
     return {
         "ended_at": sample["at"],
         "action": call["action"],
         "rate_c_per_hour": rate,
         "outdoor_delta_c": abs(mean_indoor - mean_outdoor),
         "duration_minutes": duration / 60,
+        "logical_duration_minutes": (sample["at"] - call["at"]) / 60,
         "temperature_signal_source": movement_source,
     }
 
 
-def update_recovery(memory, sample, continuous):
+def update_recovery(memory, sample, continuous, rate_continuous=None):
     """Learn recovery rate and maintain a Nest-like countdown to the target."""
+    if rate_continuous is None:
+        rate_continuous = continuous
     now = sample["at"]
     cycles = memory.setdefault("recovery_cycles", [])
     memory["recovery_cycles"] = cycles = [
@@ -230,6 +249,11 @@ def update_recovery(memory, sample, continuous):
             "movement_source": movement_source,
             "target_c": sample["target_c"],
             "outdoor_c": sample["outdoor_c"],
+            "rate_at": now,
+            "rate_indoor_c": sample["indoor_c"],
+            "rate_outdoor_c": sample["outdoor_c"],
+            "rate_movement_indoor_c": movement_indoor_c,
+            "rate_movement_source": movement_source,
         }
         memory["recovery_call"] = call
 
@@ -243,13 +267,24 @@ def update_recovery(memory, sample, continuous):
     movement_indoor_c, movement_source = _temperature_signal(sample)
     live_rate = None
     call_minutes = None
+    rate_segment_minutes = None
     if active and call is not None:
-        duration = now - call["at"]
-        call_minutes = max(0.0, duration / 60)
-        call_source = call.get("movement_source")
-        call_movement = number(call.get("movement_indoor_c"))
+        logical_duration = now - call["at"]
+        call_minutes = max(0.0, logical_duration / 60)
+        rate_at = number(call.get("rate_at"))
+        if rate_at is None:
+            rate_at = call["at"]
+        rate_duration = now - rate_at
+        rate_segment_minutes = max(0.0, rate_duration / 60)
+        call_source = call.get(
+            "rate_movement_source", call.get("movement_source")
+        )
+        call_movement = number(
+            call.get("rate_movement_indoor_c", call.get("movement_indoor_c"))
+        )
         if (
-            duration >= 600
+            rate_continuous
+            and rate_duration >= 600
             and call_movement is not None
             and movement_indoor_c is not None
             and call_source in (None, movement_source)
@@ -258,7 +293,7 @@ def update_recovery(memory, sample, continuous):
                 action, call_movement, movement_indoor_c
             )
             if progress >= 0.15:
-                candidate = progress / (duration / 3600)
+                candidate = progress / (rate_duration / 3600)
                 if 0.05 <= candidate <= 10:
                     live_rate = candidate
 
@@ -421,6 +456,7 @@ def update_recovery(memory, sample, continuous):
         "temperature_signal_c": movement_indoor_c,
         "thermostat_temperature_c": sample["indoor_c"],
         "call_minutes": call_minutes,
+        "rate_segment_minutes": rate_segment_minutes,
         "completed_cycles": len(
             [row for row in cycles if row["action"] in ("cooling", "heating")]
         ),
@@ -597,6 +633,91 @@ def learning_progress(rows):
     }
 
 
+def _restart_resume(memory, sample, previous, continuous):
+    """Validate persisted transient state on the first observation after restart."""
+    if not memory.pop("_restart_pending", False):
+        return bool(continuous), bool(continuous)
+
+    now = sample["at"]
+    previous_at = number(previous.get("at")) if isinstance(previous, dict) else None
+    gap = now - previous_at if previous_at is not None else None
+    previous_target = (
+        number(previous.get("target_c")) if isinstance(previous, dict) else None
+    )
+    current_target = number(sample.get("target_c"))
+    same_target = (
+        previous_target is not None
+        and current_target is not None
+        and abs(previous_target - current_target) <= 0.1
+    )
+    same_action = (
+        isinstance(previous, dict)
+        and previous.get("action") == sample.get("action")
+    )
+    same_mode = (
+        isinstance(previous, dict)
+        and previous.get("mode") == sample.get("mode")
+    )
+    compatible = (
+        gap is not None
+        and gap > 0
+        and same_target
+        and same_action
+        and same_mode
+    )
+
+    had_recovery = isinstance(memory.get("recovery_call"), dict)
+    had_thermal = isinstance(memory.get("thermal_window"), dict)
+
+    if not compatible:
+        for key in ("call", "missing_since", "recovery_call", "thermal_window"):
+            memory.pop(key, None)
+        memory["_restart_resume"] = {
+            "status": "state_changed_or_missing_baseline",
+            "gap_minutes": gap / 60 if gap is not None and gap >= 0 else None,
+            "resumed_recovery_call": False,
+            "resumed_thermal_window": False,
+            "rate_learning_rebased": False,
+        }
+        return bool(continuous), bool(continuous)
+
+    if gap <= 600:
+        memory["_restart_resume"] = {
+            "status": "resumed_full_continuity",
+            "gap_minutes": gap / 60,
+            "resumed_recovery_call": had_recovery,
+            "resumed_thermal_window": had_thermal,
+            "rate_learning_rebased": False,
+        }
+        return True, True
+
+    # A long restart can still preserve the logical call and ETA when the
+    # equipment/mode/target are unchanged. Rebase only the measurement segment
+    # so rate learning never invents observations during the outage.
+    recovery_call = memory.get("recovery_call")
+    if isinstance(recovery_call, dict):
+        movement_indoor_c, movement_source = _temperature_signal(sample)
+        recovery_call.update(
+            rate_at=now,
+            rate_indoor_c=sample["indoor_c"],
+            rate_outdoor_c=sample["outdoor_c"],
+            rate_movement_indoor_c=movement_indoor_c,
+            rate_movement_source=movement_source,
+            restart_rate_rebased_at=now,
+        )
+    memory.pop("thermal_window", None)
+    memory.pop("call", None)
+    memory.pop("missing_since", None)
+    memory["_restart_resume"] = {
+        "status": "resumed_logical_rebased_measurements",
+        "gap_minutes": gap / 60,
+        "resumed_recovery_call": had_recovery,
+        "resumed_thermal_window": False,
+        "rate_learning_rebased": True,
+    }
+    return True, False
+
+
 def observe(memory, sample):
     """Only continuous five-minute observations train the model.
 
@@ -609,7 +730,7 @@ def observe(memory, sample):
         r for r in rows if 0 <= now - r["at"] <= 30 * 86400
     ]
     previous = memory.get("previous")
-    continuous = previous and 0 < now - previous["at"] <= 600
+    continuous = bool(previous and 0 < now - previous["at"] <= 600)
     action = sample.get("action")
     required = (
         "indoor_c",
@@ -652,12 +773,20 @@ def observe(memory, sample):
             **progress,
         }
 
-    recovery = update_recovery(memory, sample, bool(continuous))
-    thermal = update_thermal_model(memory, sample, bool(continuous))
+    logical_continuous, measurement_continuous = _restart_resume(
+        memory, sample, previous, continuous
+    )
+    recovery = update_recovery(
+        memory,
+        sample,
+        logical_continuous,
+        rate_continuous=measurement_continuous,
+    )
+    thermal = update_thermal_model(memory, sample, measurement_continuous)
     movement_indoor_c, movement_source = _temperature_signal(sample)
 
     if (
-        not continuous
+        not measurement_continuous
         or previous["action"] != action
         or previous["target_c"] != sample["target_c"]
         or memory.get("call", {}).get("temperature_source") not in (None, movement_source)
@@ -700,7 +829,7 @@ def observe(memory, sample):
         reason = "Sustained unmet setpoint without expected temperature progress"
 
     # Do not train on missing load, catch-up demand, or an anomalous response.
-    if continuous and not missing and not demand and status != "suspected_fault":
+    if measurement_continuous and not missing and not demand and status != "suspected_fault":
         if not rows or now - rows[-1]["at"] >= 300:
             row = dict(sample)
             previous_movement_c, previous_movement_source = _temperature_signal(previous)
@@ -773,6 +902,7 @@ def observe(memory, sample):
             "thermostat_temperature_c": sample["indoor_c"],
             "precision_temperature_c": number(sample.get("precision_indoor_c")),
         },
+        "restart_resume": memory.get("_restart_resume"),
         "recovery": recovery,
         "thermal": thermal,
         **learning,
