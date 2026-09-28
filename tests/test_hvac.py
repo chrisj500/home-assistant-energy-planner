@@ -279,6 +279,10 @@ class HVACTests(unittest.TestCase):
         first.update(indoor_c=25, target_c=22, outdoor_c=30)
         observe(memory, first)
 
+        progress = self.sample(1600)
+        progress.update(indoor_c=24.7, target_c=22, outdoor_c=30)
+        observe(memory, progress)
+
         end = self.sample(2200)
         end.update(
             action="idle",
