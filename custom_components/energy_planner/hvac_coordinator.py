@@ -678,33 +678,30 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                     if call_at is not None
                     else None
                 )
+                previous_state = self._hvac_memory.get("previous")
+                previous_at = (
+                    number(previous_state.get("at"))
+                    if isinstance(previous_state, dict)
+                    else None
+                )
+                thermal_window = self._hvac_memory.get("thermal_window")
                 restart_resume = {
                     "status": "pending_live_inputs",
                     "gap_minutes": (
-                        max(
-                            0.0,
-                            (
-                                now.timestamp()
-                                - number(self._hvac_memory.get("previous", {}).get("at"))
-                            )
-                            / 60,
-                        )
-                        if number(self._hvac_memory.get("previous", {}).get("at"))
-                        is not None
+                        max(0.0, (now.timestamp() - previous_at) / 60)
+                        if previous_at is not None
                         else None
                     ),
                     "resumed_recovery_call": bool(recovery_call),
-                    "resumed_thermal_window": bool(
-                        self._hvac_memory.get("thermal_window")
-                    ),
+                    "resumed_thermal_window": isinstance(thermal_window, dict),
                     "rate_learning_rebased": False,
                 }
                 self._hvac_persistence.update(
                     restart_resume_status="pending_live_inputs",
                     restart_gap_minutes=restart_resume["gap_minutes"],
                     restored_recovery_call=bool(recovery_call),
-                    restored_thermal_window=bool(
-                        self._hvac_memory.get("thermal_window")
+                    restored_thermal_window=isinstance(
+                        thermal_window, dict
                     ),
                     rate_learning_rebased=False,
                     interrupted_recovery_call=False,
@@ -788,31 +785,14 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                             max(
                                 0.0,
                                 (
-                                    number(
-                                        self._hvac_memory.get(
-                                            "thermal_window", {}
-                                        ).get("last_at")
-                                    )
-                                    - number(
-                                        self._hvac_memory.get(
-                                            "thermal_window", {}
-                                        ).get("at")
-                                    )
+                                    number(thermal_window.get("last_at"))
+                                    - number(thermal_window.get("at"))
                                 )
                                 / 60,
                             )
-                            if number(
-                                self._hvac_memory.get(
-                                    "thermal_window", {}
-                                ).get("last_at")
-                            )
-                            is not None
-                            and number(
-                                self._hvac_memory.get(
-                                    "thermal_window", {}
-                                ).get("at")
-                            )
-                            is not None
+                            if isinstance(thermal_window, dict)
+                            and number(thermal_window.get("last_at")) is not None
+                            and number(thermal_window.get("at")) is not None
                             else 0
                         ),
                     },
