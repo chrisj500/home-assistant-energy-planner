@@ -580,6 +580,16 @@ class HVACTests(unittest.TestCase):
         )
         observe(memory, start)
 
+        middle = self.sample(1300)
+        middle.update(
+            indoor_c=23,
+            precision_indoor_c=22.05,
+            precision_temperature_source="homepod_physical_room_median",
+            target_c=22,
+            outdoor_c=30,
+        )
+        observe(memory, middle)
+
         target = self.sample(1660)
         target.update(
             indoor_c=22,
