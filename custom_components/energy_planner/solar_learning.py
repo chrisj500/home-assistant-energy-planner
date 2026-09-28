@@ -7,10 +7,10 @@ from __future__ import annotations
 import math
 from statistics import median
 
-MODEL_VERSION = 2
+MODEL_VERSION = 3
 RETENTION_DAYS = 90
-MIN_DAYS = 7
-MIN_SAMPLES = 8
+MIN_DAYS = 3
+MIN_SAMPLES = 3
 MAX_GAP_SECONDS = 180
 
 
