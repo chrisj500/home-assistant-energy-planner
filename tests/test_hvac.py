@@ -237,6 +237,42 @@ class HVACTests(unittest.TestCase):
         self.assertEqual(result["thermal"]["status"], "ready")
         self.assertEqual(result["thermal"]["source"], "history")
 
+    def test_thermal_rejections_explain_unusable_idle_windows(self):
+        memory = {}
+        for i in range(7):
+            sample = self.sample(1000 + i * 300)
+            sample.update(
+                action="idle",
+                indoor_c=22.0,
+                target_c=22,
+                outdoor_c=10,
+                condenser_w=0,
+                blower_w=10,
+            )
+            observe(memory, sample)
+
+        active = self.sample(3100)
+        active.update(
+            action="cooling",
+            indoor_c=22.0,
+            target_c=21,
+            outdoor_c=10,
+            condenser_w=2000,
+            blower_w=200,
+        )
+        result = observe(memory, active)
+
+        thermal = result["thermal"]
+        self.assertEqual(
+            thermal["rejection_counts"]["insufficient_indoor_movement"],
+            1,
+        )
+        self.assertEqual(thermal["rejected_windows"], 1)
+        self.assertEqual(
+            thermal["last_rejection"]["reason"],
+            "insufficient_indoor_movement",
+        )
+
     def test_general_learning_has_explicit_completion_criteria(self):
         rows = []
         for day in range(HVAC_READY_DAYS):
