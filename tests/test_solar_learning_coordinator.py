@@ -91,6 +91,44 @@ class SolarCoordinatorTests(unittest.TestCase):
         self.assertTrue(self.c._solar_memory["reset_at"].startswith("2026-09-23T12:00"))
         self.assertNotIn("old", self.c._solar_memory["pending"])
 
+    def test_restart_before_enphase_load_preserves_solar_learning(self):
+        first = self.update()
+        before = deepcopy(self.saved)
+        self.assertEqual(first["solar_learning_diagnostics"]["source_identity_status"], "complete")
+        self.assertTrue(before["pending"])
+
+        # Simulate HA restarting with Forecast.Solar ready before Enphase.
+        self.c._solar_memory = None
+        self.states.pop("sensor.envoy_test_lifetime_energy_production")
+        self.now += timedelta(minutes=2)
+        partial = self.update()
+        diagnostics = partial["solar_learning_diagnostics"]
+
+        self.assertEqual(diagnostics["source_identity_status"], "deferred")
+        self.assertEqual(diagnostics["source_identity_missing"], ["energy"])
+        self.assertEqual(self.c._solar_memory["identity"], before["identity"])
+        self.assertEqual(self.c._solar_memory["identity_component_fingerprints"],
+                         before["identity_component_fingerprints"])
+        self.assertEqual(self.c._solar_memory["pending"], before["pending"])
+        self.assertNotIn("reset_at", self.c._solar_memory)
+
+        # Once Enphase appears, the complete identity matches the persisted one
+        # and the same training history remains intact.
+        self.states["sensor.envoy_test_lifetime_energy_production"] = SimpleNamespace(
+            entity_id="sensor.envoy_test_lifetime_energy_production",
+            state="5",
+            attributes={"unit_of_measurement": "MWh"},
+            last_updated=self.now,
+            last_reported=self.now,
+        )
+        self.now += timedelta(minutes=2)
+        complete = self.update()["solar_learning_diagnostics"]
+        self.assertEqual(complete["source_identity_status"], "complete")
+        self.assertEqual(complete["source_identity_missing"], [])
+        self.assertEqual(self.c._solar_memory["identity"], before["identity"])
+        self.assertEqual(self.c._solar_memory["pending"], before["pending"])
+        self.assertNotIn("reset_at", self.c._solar_memory)
+
     def test_stale_production_excluded_and_stale_forecast_not_issued(self):
         self.now += timedelta(hours=3)
         data = self.update()
