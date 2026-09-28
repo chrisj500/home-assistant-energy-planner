@@ -10,6 +10,10 @@ from statistics import median
 HVAC_READY_SAMPLES = 36
 HVAC_READY_DAYS = 3
 
+RECOVERY_ETA_CORRECTION_INTERVAL_SECONDS = 300
+RECOVERY_ETA_MATERIAL_MINUTES = 5.0
+RECOVERY_ETA_MATERIAL_FRACTION = 0.20
+
 
 VALID_ACTIONS = ("cooling", "heating", "idle", "off", "fan")
 CONDENSER_RUNNING_W = 100
@@ -127,6 +131,24 @@ def _evidence_confidence(samples):
     return "high"
 
 
+def _requested_recovery_action(sample, active_action):
+    """Return the recovery direction implied by mode/setpoint even before HVAC starts."""
+    if active_action in ("cooling", "heating"):
+        return active_action
+
+    mode = str(sample.get("mode") or "").lower()
+    indoor = number(sample.get("indoor_c"))
+    target = number(sample.get("target_c"))
+    if indoor is None or target is None:
+        return None
+
+    if mode in ("cool", "dry") and indoor > target + 0.05:
+        return "cooling"
+    if mode == "heat" and indoor < target - 0.05:
+        return "heating"
+    return None
+
+
 def _recovery_cycle(call, sample):
     duration = sample["at"] - call["at"]
     if duration < 600 or duration > 4 * 3600:
@@ -151,7 +173,7 @@ def _recovery_cycle(call, sample):
 
 
 def update_recovery(memory, sample, continuous):
-    """Learn empirical recovery rate and estimate ETA to the active setpoint."""
+    """Learn recovery rate and maintain a Nest-like countdown to the target."""
     now = sample["at"]
     cycles = memory.setdefault("recovery_cycles", [])
     memory["recovery_cycles"] = cycles = [
@@ -187,10 +209,11 @@ def update_recovery(memory, sample, continuous):
         }
         memory["recovery_call"] = call
 
+    estimate_action = _requested_recovery_action(sample, action if active else None)
     error = 0.0
-    if action == "cooling":
+    if estimate_action == "cooling":
         error = max(0.0, sample["indoor_c"] - sample["target_c"])
-    elif action == "heating":
+    elif estimate_action == "heating":
         error = max(0.0, sample["target_c"] - sample["indoor_c"])
 
     live_rate = None
@@ -231,13 +254,11 @@ def update_recovery(memory, sample, continuous):
     matched = [
         row
         for row in cycles
-        if row["action"] == action
+        if row["action"] == estimate_action
         and abs(row["outdoor_delta_c"] - current_delta) <= 4
     ]
-    # Prefer weather-similar cycles, but do not suppress an estimate merely
-    # because there is only one. Fall back to all cycles for this action.
-    if not matched:
-        matched = [row for row in cycles if row["action"] == action]
+    if estimate_action and not matched:
+        matched = [row for row in cycles if row["action"] == estimate_action]
     historical_rate = (
         median([row["rate_c_per_hour"] for row in matched])
         if matched
@@ -253,15 +274,83 @@ def update_recovery(memory, sample, continuous):
         if historical_rate is not None
         else "learning"
     )
-    eta = None
-    if active and error <= 0.05:
-        eta = 0.0
-        source = "at_target"
-    elif active and rate is not None and rate > 0:
-        eta = min(360.0, error / rate * 60)
 
-    recovery_source = source if active else "inactive"
-    if not active:
+    demand_active = estimate_action in ("cooling", "heating") and error > 0.05
+    raw_eta = (
+        min(360.0, error / rate * 60)
+        if demand_active and rate is not None and rate > 0
+        else None
+    )
+
+    eta = None
+    eta_target_at = None
+    eta_last_corrected_at = None
+    eta_correction_reason = None
+    eta_state = memory.get("recovery_eta")
+    same_eta = (
+        isinstance(eta_state, dict)
+        and eta_state.get("action") == estimate_action
+        and number(eta_state.get("target_c")) is not None
+        and abs(eta_state["target_c"] - sample["target_c"]) <= 0.1
+    )
+
+    if not demand_active:
+        memory.pop("recovery_eta", None)
+        if active and error <= 0.05:
+            eta = 0.0
+            eta_target_at = now
+            source = "at_target"
+            eta_correction_reason = "at_target"
+    elif raw_eta is not None:
+        projected_target_at = now + raw_eta * 60
+
+        if not same_eta:
+            eta_state = {
+                "action": estimate_action,
+                "target_c": sample["target_c"],
+                "target_at": projected_target_at,
+                "anchored_at": now,
+                "last_corrected_at": now,
+                "correction_reason": "initial_estimate",
+            }
+            memory["recovery_eta"] = eta_state
+        else:
+            target_at = number(eta_state.get("target_at"))
+            if target_at is None:
+                target_at = projected_target_at
+                eta_state["target_at"] = target_at
+
+            remaining = max(0.0, (target_at - now) / 60)
+            last_corrected = number(eta_state.get("last_corrected_at"))
+            if last_corrected is None:
+                last_corrected = number(eta_state.get("anchored_at")) or now
+
+            material_change = abs(raw_eta - remaining) >= max(
+                RECOVERY_ETA_MATERIAL_MINUTES,
+                max(remaining, 1.0) * RECOVERY_ETA_MATERIAL_FRACTION,
+            )
+            expired = target_at <= now
+            live_correction_due = (
+                live_rate is not None
+                and now - last_corrected >= RECOVERY_ETA_CORRECTION_INTERVAL_SECONDS
+                and material_change
+            )
+
+            if expired or live_correction_due:
+                eta_state["target_at"] = projected_target_at
+                eta_state["last_corrected_at"] = now
+                eta_state["correction_reason"] = (
+                    "expired_reanchor" if expired else "live_rate_correction"
+                )
+
+        eta_target_at = number(eta_state.get("target_at"))
+        eta_last_corrected_at = number(eta_state.get("last_corrected_at"))
+        eta_correction_reason = eta_state.get("correction_reason")
+        if eta_target_at is not None:
+            eta = max(0.0, min(360.0, (eta_target_at - now) / 60))
+
+    recovery_source = source if demand_active or source == "at_target" else "inactive"
+    if recovery_source == "inactive":
         recovery_status = "inactive"
         confidence = "none"
     elif recovery_source == "at_target":
@@ -283,17 +372,24 @@ def update_recovery(memory, sample, continuous):
 
     return {
         "active": active,
+        "demand_active": demand_active,
         "action": action if active else None,
+        "requested_action": estimate_action,
         "status": recovery_status,
         "confidence": confidence,
         "eta_minutes": eta,
+        "eta_raw_minutes": raw_eta,
+        "eta_target_at": eta_target_at,
+        "eta_method": "target_time_countdown" if eta_target_at is not None else None,
+        "eta_last_corrected_at": eta_last_corrected_at,
+        "eta_correction_reason": eta_correction_reason,
         "rate_c_per_hour": rate,
         "source": recovery_source,
         "call_minutes": call_minutes,
         "completed_cycles": len(
             [row for row in cycles if row["action"] in ("cooling", "heating")]
         ),
-        "matched_cycles": len(matched) if active else 0,
+        "matched_cycles": len(matched) if estimate_action else 0,
         "models": models,
         "restart_interrupted_cycles": int(memory.get("recovery_restart_interruptions", 0)),
     }
