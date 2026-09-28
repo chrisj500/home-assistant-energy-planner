@@ -14,7 +14,7 @@ from .coordinator import _solar_window
 from .forecast_solar_shadow import interval_points_from_payload, integrate_interval_energy_kwh, weather_rows
 from .headroom import correct_current_day_points
 from .hvac_coordinator import EnergyPlannerHVACCoordinator
-from .solar_learning import finalize, issue, lead_bucket, number, observe, scorecard, sky_bucket
+from .solar_learning import finalize, issue, lead_bucket, merge_recovery, number, observe, scorecard, sky_bucket
 
 _LOGGER = logging.getLogger(__name__)
 DEFAULT_SOLAR_SOURCES = {
@@ -55,6 +55,22 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
         candidates = [s.entity_id for s in self.hass.states.async_all()
                       if s.entity_id.startswith("sensor.envoy_") and s.entity_id.endswith("_lifetime_energy_production")]
         return candidates[0] if len(candidates) == 1 else None
+
+    async def async_restore_solar_learning(self, bundle):
+        """Merge validated historical forecast outcomes into the live learner."""
+        if self._solar_memory is None:
+            loaded = await self._solar_learning_store.async_load()
+            self._solar_memory = loaded if isinstance(loaded, dict) else {}
+            self._solar_memory.pop("previous", None)
+        now = dt_util.now()
+        audit = merge_recovery(self._solar_memory, bundle, now.timestamp())
+        audit["restored_at"] = now.isoformat()
+        audit["bundle_sha256"] = sha256(json.dumps(bundle, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        self._solar_memory["recovery_audit"] = audit
+        await self._solar_learning_store.async_save(self._solar_memory)
+        self._solar_saved_at = now.timestamp()
+        await self.async_request_refresh()
+        return audit
 
     async def _solar_update(self, now):
         cfg = self.cfg
@@ -190,6 +206,7 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
             "reset_changed_components": memory.get("reset_changed_components"),
             "source_identity_status": "complete" if identity is not None else "deferred",
             "source_identity_missing": missing_identity_parts,
+            "recovery_audit": memory.get("recovery_audit"),
             "hourly_shadow": newest, "retention_days": 90,
             "training_policy": "8 distinct target hours across 7 days per local-hour/lead/cloud group; score latest issue per target and horizon; bounded to +/-25%; never applied"}
         if issued or self._solar_saved_at is None or stamp - self._solar_saved_at >= 300:
