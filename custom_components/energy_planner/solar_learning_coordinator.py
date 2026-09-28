@@ -14,7 +14,7 @@ from .coordinator import _solar_window
 from .forecast_solar_shadow import interval_points_from_payload, integrate_interval_energy_kwh, weather_rows
 from .headroom import correct_current_day_points
 from .hvac_coordinator import EnergyPlannerHVACCoordinator
-from .solar_learning import MODEL_VERSION, finalize, issue, lead_bucket, merge_recovery, number, observe, scorecard, sky_bucket
+from .solar_learning import finalize, issue, lead_bucket, merge_recovery, number, observe, scorecard, sky_bucket
 
 _LOGGER = logging.getLogger(__name__)
 DEFAULT_SOLAR_SOURCES = {
@@ -195,7 +195,7 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
             state = "forecast_unavailable"
         elif any(r["trained"] for r in newest):
             state = "shadow" if valid else state
-        diagnostic = {"forecast_applied": False, "model": "hour_lead_cloud_residual_v3", "model_version": MODEL_VERSION,
+        diagnostic = {"forecast_applied": False, "model": "hour_lead_cloud_residual_v3", "model_version": 3,
             "status": state, "sources": {**sources, "power": power_entity, "energy": energy_entity},
             "current_observation": sample, "weather_forecast_available": weather_fresh,
             "forecast_fresh": forecast_fresh, "pending_forecasts": len(pending),
