@@ -181,9 +181,25 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
             }
 
         if reset_reason is None:
-            # Persisted transient state is a restart-resume candidate. The first
-            # live observation validates mode/action/target before continuing it.
-            memory["_restart_pending"] = True
+            # Only genuine persisted continuity gets startup grace. An empty
+            # store/cold start must still surface missing inputs immediately.
+            previous_state = memory.get("previous")
+            restart_candidate = (
+                isinstance(previous_state, dict)
+                and any(
+                    isinstance(memory.get(key), dict)
+                    for key in (
+                        "call",
+                        "recovery_call",
+                        "recovery_eta",
+                        "thermal_window",
+                    )
+                )
+            )
+            if restart_candidate:
+                # The first complete live observation validates
+                # mode/action/target before continuing persisted state.
+                memory["_restart_pending"] = True
         else:
             self._clear_restart_continuity(memory)
         self._hvac_persistence = {
@@ -207,7 +223,9 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                 restored_thermal_window if reset_reason is None else False
             ),
             "restart_resume_status": (
-                "pending_validation" if reset_reason is None else "not_applicable"
+                "pending_validation"
+                if reset_reason is None and memory.get("_restart_pending")
+                else "not_applicable"
             ),
             "restart_gap_minutes": None,
             "rate_learning_rebased": False,
