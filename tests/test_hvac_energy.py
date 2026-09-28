@@ -31,14 +31,26 @@ class HVACEnergyTests(unittest.TestCase):
         self.assertEqual(result["day"], "2026-09-24")
         self.assertFalse(result["partial"])
 
-    def test_restart_preserves_total_not_gap(self):
+    def test_brief_restart_uses_persisted_previous_sample(self):
+        now = datetime(2026, 9, 23, 12, tzinfo=ZoneInfo("UTC"))
+        memory = {}
+        update_energy(memory, now, 1000)
+
+        # A persisted previous sample lets a short HA restart retain measured
+        # energy continuity. update_energy itself limits this bridge to 5 min.
+        restored = dict(memory)
+        update_energy(restored, now + timedelta(minutes=2), 1000)
+        self.assertAlmostEqual(restored["kwh"], 2 / 60)
+
+    def test_long_restart_preserves_total_but_does_not_fill_gap(self):
         now = datetime(2026, 9, 23, 12, tzinfo=ZoneInfo("UTC"))
         memory = {}
         update_energy(memory, now, 1000)
         update_energy(memory, now + timedelta(minutes=1), 1000)
-        memory.pop("previous")
-        update_energy(memory, now + timedelta(minutes=2), 1000)
-        self.assertAlmostEqual(memory["kwh"], 1 / 60)
+
+        restored = dict(memory)
+        update_energy(restored, now + timedelta(minutes=10), 1000)
+        self.assertAlmostEqual(restored["kwh"], 1 / 60)
 
     def test_dst_coverage_uses_elapsed_seconds(self):
         now = datetime(2026, 11, 1, 3, tzinfo=ZoneInfo("America/New_York"))

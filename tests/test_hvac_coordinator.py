@@ -235,7 +235,7 @@ class HVACCoordinatorTests(unittest.TestCase):
             )
         return rows
 
-    def test_restart_alias_resolution_preserves_hvac_learning_history(self):
+    def test_restart_alias_resolution_preserves_active_hvac_call(self):
         identity = self.c._model_identity(self.c._room_prefixes())
         stored_identity = dict(identity)
         stored_identity["room_prefixes"] = ",".join(
@@ -246,6 +246,9 @@ class HVACCoordinatorTests(unittest.TestCase):
                 "sensor.home_homepod_indoor_climate_main_bedroom_right",
             )
         )
+        target_c = celsius(72, "°F")
+        indoor_c = celsius(74, "°F")
+        outdoor_c = celsius(80, "°F")
         persisted = {
             "entity_mapping": stored_identity,
             "samples": self._persisted_hvac_rows(),
@@ -267,25 +270,60 @@ class HVACCoordinatorTests(unittest.TestCase):
                     "mean_outdoor_delta_c": 5,
                 }
             ],
-            "previous": {"at": self.now.timestamp() - 300},
-            "call": {"at": self.now.timestamp() - 1800, "temperature": 24},
-            "missing_since": self.now.timestamp() - 600,
+            "previous": {
+                "at": self.now.timestamp() - 300,
+                "day": self.now.date().isoformat(),
+                "mode": "cool",
+                "action": "cooling",
+                "target_c": target_c,
+                "indoor_c": indoor_c,
+                "precision_indoor_c": indoor_c,
+                "precision_temperature_source": "homepod_physical_room_median",
+                "outdoor_c": outdoor_c,
+                "humidity": 60,
+                "condenser_w": 1600,
+                "blower_w": 300,
+            },
+            "call": {
+                "at": self.now.timestamp() - 900,
+                "temperature": indoor_c,
+                "temperature_source": "homepod_physical_room_median",
+            },
             "recovery_call": {
                 "at": self.now.timestamp() - 900,
                 "action": "cooling",
-                "indoor_c": 24,
-                "target_c": 22,
-                "outdoor_c": 28,
+                "indoor_c": indoor_c,
+                "movement_indoor_c": indoor_c,
+                "movement_source": "homepod_physical_room_median",
+                "target_c": target_c,
+                "outdoor_c": outdoor_c,
+                "rate_at": self.now.timestamp() - 900,
+                "rate_indoor_c": indoor_c,
+                "rate_outdoor_c": outdoor_c,
+                "rate_movement_indoor_c": indoor_c,
+                "rate_movement_source": "homepod_physical_room_median",
             },
-            "thermal_window": {
-                "at": self.now.timestamp() - 3600,
-                "indoor_c": 22,
-                "last_at": self.now.timestamp() - 300,
-                "last_indoor_c": 21.8,
-                "outdoor_sum": 70,
-                "outdoor_count": 7,
+            "recovery_eta": {
+                "action": "cooling",
+                "target_c": target_c,
+                "target_at": self.now.timestamp() + 600,
+                "anchored_at": self.now.timestamp() - 600,
+                "last_corrected_at": self.now.timestamp() - 600,
+                "correction_reason": "initial_estimate",
             },
         }
+
+        self.states["climate.thermostat"].attributes.update(
+            current_temperature=74,
+            temperature=72,
+            hvac_action="cooling",
+        )
+        self.states["sensor.hvac_power"].state = "1350"
+        self.states[
+            "sensor.ecoflow_smart_home_panel_2_circuit_4_power"
+        ].state = "300"
+        for prefix in self.c._room_prefixes():
+            self.states[prefix + "_temperature"].state = "74"
 
         async def load_hvac():
             return persisted
@@ -298,34 +336,128 @@ class HVACCoordinatorTests(unittest.TestCase):
 
         self.assertEqual(len(self.saved["samples"]), 26)
         self.assertEqual(len(self.saved["recovery_cycles"]), 1)
-        self.assertEqual(len(self.saved["thermal_samples"]), 1)
-        self.assertNotIn("recovery_call", self.saved)
+        self.assertIn("recovery_call", self.saved)
+        self.assertAlmostEqual(
+            result["hvac_diagnostics"]["recovery"]["call_minutes"],
+            15.0,
+        )
+        self.assertEqual(
+            result["hvac_diagnostics"]["recovery"]["eta_target_at"],
+            persisted["recovery_eta"]["target_at"],
+        )
         self.assertEqual(
             result["hvac_diagnostics"]["persistence"]["status"],
             "restored",
         )
         self.assertEqual(
-            result["hvac_diagnostics"]["persistence"]["restored_samples"],
-            26,
+            result["hvac_diagnostics"]["persistence"]["restart_resume_status"],
+            "resumed_full_continuity",
         )
         self.assertTrue(
+            result["hvac_diagnostics"]["persistence"]["restored_recovery_call"]
+        )
+        self.assertFalse(
             result["hvac_diagnostics"]["persistence"]["interrupted_recovery_call"]
-        )
-        self.assertTrue(
-            result["hvac_diagnostics"]["persistence"]["interrupted_thermal_window"]
-        )
-        self.assertEqual(
-            result["hvac_diagnostics"]["recovery"]["restart_interrupted_cycles"],
-            1,
-        )
-        self.assertEqual(
-            result["hvac_diagnostics"]["thermal"]["restart_interrupted_windows"],
-            1,
         )
         self.assertEqual(
             self.saved["entity_mapping"]["room_prefixes"],
             ",".join(self.c._room_prefixes()),
         )
+
+    def test_restart_waits_for_delayed_thermostat_without_erasing_call(self):
+        identity = self.c._model_identity(self.c._room_prefixes())
+        target_c = celsius(72, "°F")
+        indoor_c = celsius(74, "°F")
+        outdoor_c = celsius(80, "°F")
+        persisted = {
+            "entity_mapping": identity,
+            "samples": self._persisted_hvac_rows(),
+            "recovery_cycles": [],
+            "previous": {
+                "at": self.now.timestamp() - 60,
+                "day": self.now.date().isoformat(),
+                "mode": "cool",
+                "action": "cooling",
+                "target_c": target_c,
+                "indoor_c": indoor_c,
+                "precision_indoor_c": indoor_c,
+                "precision_temperature_source": "homepod_physical_room_median",
+                "outdoor_c": outdoor_c,
+                "humidity": 60,
+                "condenser_w": 1600,
+                "blower_w": 300,
+            },
+            "recovery_call": {
+                "at": self.now.timestamp() - 600,
+                "action": "cooling",
+                "indoor_c": indoor_c,
+                "movement_indoor_c": indoor_c,
+                "movement_source": "homepod_physical_room_median",
+                "target_c": target_c,
+                "outdoor_c": outdoor_c,
+            },
+            "recovery_eta": {
+                "action": "cooling",
+                "target_c": target_c,
+                "target_at": self.now.timestamp() + 600,
+                "anchored_at": self.now.timestamp() - 600,
+                "last_corrected_at": self.now.timestamp() - 600,
+                "correction_reason": "initial_estimate",
+            },
+        }
+        self.states["climate.thermostat"].attributes.update(
+            current_temperature=74,
+            temperature=72,
+            hvac_action="cooling",
+        )
+        self.states["sensor.hvac_power"].state = "1350"
+        self.states[
+            "sensor.ecoflow_smart_home_panel_2_circuit_4_power"
+        ].state = "300"
+
+        self.states["climate.thermostat"].state = "unavailable"
+
+        async def load_hvac():
+            return persisted
+
+        self.c._hvac_store = SimpleNamespace(
+            async_load=load_hvac,
+            async_save=self.c._hvac_store.async_save,
+        )
+        first = asyncio.run(self.c._async_update_data())
+
+        self.assertIn("recovery_call", self.saved)
+        self.assertTrue(self.saved["_restart_pending"])
+        self.assertEqual(
+            first["hvac_diagnostics"]["persistence"]["restart_resume_status"],
+            "pending_live_inputs",
+        )
+        self.assertEqual(
+            first["hvac_diagnostics"]["recovery"]["source"],
+            "restart_resume_pending",
+        )
+
+        self.now += timedelta(minutes=1)
+        self.states["climate.thermostat"].state = "cool"
+        self.states["climate.thermostat"].last_updated = self.now
+        self.states["climate.thermostat"].last_reported = self.now
+        for prefix in self.c._room_prefixes():
+            temp = self.states[prefix + "_temperature"]
+            temp.state = "74"
+            temp.attributes["fresh"] = True
+            temp.attributes["last_received"] = self.now.isoformat()
+            hum = self.states[prefix + "_humidity"]
+            hum.attributes["fresh"] = True
+            hum.attributes["last_received"] = self.now.isoformat()
+
+        second = asyncio.run(self.c._async_update_data())
+        self.assertFalse(self.saved.get("_restart_pending", False))
+        self.assertIn("recovery_call", self.saved)
+        self.assertEqual(
+            second["hvac_diagnostics"]["persistence"]["restart_resume_status"],
+            "resumed_full_continuity",
+        )
+
 
     def test_store_without_identity_adopts_mapping_without_erasing_history(self):
         persisted = {
@@ -469,12 +601,24 @@ class HVACCoordinatorTests(unittest.TestCase):
             "unavailable",
         )
 
-    def test_stale_room_blocks_existing_advice(self):
+    def test_stale_room_falls_back_to_thermostat_without_hvac_hold(self):
         self.states["binary_sensor.homepod_indoor_climate_stale_readings"].state = "on"
         result = asyncio.run(self.c._async_update_data())
-        self.assertEqual(result["forecast_reliability_status"], "hvac_hold")
-        self.assertFalse(result["rolling_ev_auto_charge_eligible"])
-        self.assertEqual(self.saved["samples"], [])
+
+        self.assertNotEqual(
+            result.get("forecast_reliability_status"),
+            "hvac_hold",
+        )
+        self.assertTrue(result["rolling_ev_auto_charge_eligible"])
+        self.assertFalse(result["hvac_diagnostics"]["room_data_healthy"])
+        self.assertEqual(
+            result["hvac_diagnostics"]["temperature_precision_status"],
+            "thermostat_fallback",
+        )
+        self.assertEqual(
+            result["hvac_diagnostics"]["temperature_signal"]["source"],
+            "thermostat",
+        )
 
     def test_disabled_does_not_read_or_hold(self):
         self.c.cfg["hvac_learning_enabled"] = False

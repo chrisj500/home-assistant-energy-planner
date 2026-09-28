@@ -148,13 +148,8 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
 
         weather_cache = memory.get("weather_cache") if isinstance(memory.get("weather_cache"), dict) else {}
         weather_hours = weather_cache.get("hours") if isinstance(weather_cache.get("hours"), list) else []
-        interrupted_recovery_call = "recovery_call" in memory
-        interrupted_thermal_window = "thermal_window" in memory
-        if interrupted_recovery_call:
-            memory["recovery_restart_interruptions"] = int(memory.get("recovery_restart_interruptions", 0)) + 1
-        if interrupted_thermal_window:
-            rejections = memory.setdefault("thermal_rejections", {})
-            rejections["restart_interrupted"] = int(rejections.get("restart_interrupted", 0)) + 1
+        restored_recovery_call = "recovery_call" in memory
+        restored_thermal_window = "thermal_window" in memory
 
         restored = {
             "samples": len(memory.get("samples", [])),
@@ -185,7 +180,28 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                 "current": current_identity,
             }
 
-        self._clear_restart_continuity(memory)
+        if reset_reason is None:
+            # Only genuine persisted continuity gets startup grace. An empty
+            # store/cold start must still surface missing inputs immediately.
+            previous_state = memory.get("previous")
+            restart_candidate = (
+                isinstance(previous_state, dict)
+                and any(
+                    isinstance(memory.get(key), dict)
+                    for key in (
+                        "call",
+                        "recovery_call",
+                        "recovery_eta",
+                        "thermal_window",
+                    )
+                )
+            )
+            if restart_candidate:
+                # The first complete live observation validates
+                # mode/action/target before continuing persisted state.
+                memory["_restart_pending"] = True
+        else:
+            self._clear_restart_continuity(memory)
         self._hvac_persistence = {
             "status": status,
             "restored_samples": restored["samples"] if reset_reason is None else 0,
@@ -198,12 +214,21 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
             "restored_weather_hours": (
                 restored["weather_hours"] if reset_reason is None else 0
             ),
-            "interrupted_recovery_call": (
-                interrupted_recovery_call if reset_reason is None else False
+            "interrupted_recovery_call": False,
+            "interrupted_thermal_window": False,
+            "restored_recovery_call": (
+                restored_recovery_call if reset_reason is None else False
             ),
-            "interrupted_thermal_window": (
-                interrupted_thermal_window if reset_reason is None else False
+            "restored_thermal_window": (
+                restored_thermal_window if reset_reason is None else False
             ),
+            "restart_resume_status": (
+                "pending_validation"
+                if reset_reason is None and memory.get("_restart_pending")
+                else "not_applicable"
+            ),
+            "restart_gap_minutes": None,
+            "rate_learning_rebased": False,
             "reset_reason": reset_reason,
         }
         return memory
@@ -425,7 +450,6 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
         try:
             if self._hvac_energy is None:
                 self._hvac_energy = await self._hvac_energy_store.async_load() or {}
-                self._hvac_energy.pop("previous", None)
 
             mapping = {
                 "condenser": self._entity("hvac_condenser"),
@@ -513,6 +537,11 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                     "restored_weather_hours": 0,
                     "interrupted_recovery_call": False,
                     "interrupted_thermal_window": False,
+                    "restored_recovery_call": False,
+                    "restored_thermal_window": False,
+                    "restart_resume_status": "not_applicable",
+                    "restart_gap_minutes": None,
+                    "rate_learning_rebased": False,
                     "reset_reason": {
                         "stored": previous_identity,
                         "current": self._normalize_stored_identity(identity),
@@ -612,11 +641,198 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                 "blower_w": blower_w,
             }
 
-            # Never train through a room telemetry outage.
-            if not room_health:
-                sample["humidity"] = None
+            # HomePods are a precision enhancement, not a hard dependency.
+            # _temperature_signal falls back to the thermostat when room data is
+            # stale/unavailable.
 
-            diagnostics = observe(self._hvac_memory, sample)
+            required_sample_values = (
+                "indoor_c",
+                "target_c",
+                "outdoor_c",
+                "condenser_w",
+                "blower_w",
+                "humidity",
+            )
+            restart_pending = bool(self._hvac_memory.get("_restart_pending"))
+            startup_inputs_ready = (
+                action in ("cooling", "heating", "idle", "off", "fan")
+                and all(number(sample.get(key)) is not None for key in required_sample_values)
+            )
+            restart_waiting = restart_pending and not startup_inputs_ready
+
+            if restart_waiting:
+                # Do not let integrations/entities that restore a minute later than
+                # Energy Planner erase a persisted active call. Keep the state
+                # pending until a complete live observation can validate it.
+                rows = self._hvac_memory.get("samples", [])
+                days = len(
+                    {
+                        row.get("day")
+                        for row in rows
+                        if isinstance(row, dict) and row.get("day")
+                    }
+                )
+                learning_ready = len(rows) >= 36 and days >= 3
+                recovery_call = self._hvac_memory.get("recovery_call")
+                recovery_eta = self._hvac_memory.get("recovery_eta")
+                eta_target_at = (
+                    number(recovery_eta.get("target_at"))
+                    if isinstance(recovery_eta, dict)
+                    else None
+                )
+                eta_minutes = (
+                    max(0.0, min(360.0, (eta_target_at - now.timestamp()) / 60))
+                    if eta_target_at is not None
+                    else None
+                )
+                call_at = (
+                    number(recovery_call.get("at"))
+                    if isinstance(recovery_call, dict)
+                    else None
+                )
+                call_minutes = (
+                    max(0.0, (now.timestamp() - call_at) / 60)
+                    if call_at is not None
+                    else None
+                )
+                previous_state = self._hvac_memory.get("previous")
+                previous_at = (
+                    number(previous_state.get("at"))
+                    if isinstance(previous_state, dict)
+                    else None
+                )
+                thermal_window = self._hvac_memory.get("thermal_window")
+                restart_resume = {
+                    "status": "pending_live_inputs",
+                    "gap_minutes": (
+                        max(0.0, (now.timestamp() - previous_at) / 60)
+                        if previous_at is not None
+                        else None
+                    ),
+                    "resumed_recovery_call": bool(recovery_call),
+                    "resumed_thermal_window": isinstance(thermal_window, dict),
+                    "rate_learning_rebased": False,
+                }
+                self._hvac_persistence.update(
+                    restart_resume_status="pending_live_inputs",
+                    restart_gap_minutes=restart_resume["gap_minutes"],
+                    restored_recovery_call=bool(recovery_call),
+                    restored_thermal_window=isinstance(
+                        thermal_window, dict
+                    ),
+                    rate_learning_rebased=False,
+                    interrupted_recovery_call=False,
+                    interrupted_thermal_window=False,
+                )
+                diagnostics = {
+                    "status": "ready" if learning_ready else "learning",
+                    "reason": (
+                        "Waiting for live HVAC inputs after restart; persisted "
+                        "learning and active-cycle state retained"
+                    ),
+                    "samples": len(rows),
+                    "learning_ready": learning_ready,
+                    "learning_samples": len(rows),
+                    "learning_samples_required": 36,
+                    "learning_days": days,
+                    "learning_days_required": 3,
+                    "learning_progress_pct": round(
+                        100 * min(len(rows) / 36, days / 3, 1.0), 1
+                    ),
+                    "electrical_power_w": (
+                        condenser_w + blower_w
+                        if condenser_w is not None and blower_w is not None
+                        else None
+                    ),
+                    "thermostat_action": action,
+                    "unmet_setpoint": None,
+                    "restart_resume": restart_resume,
+                    "recovery": {
+                        "active": bool(recovery_call),
+                        "demand_active": None,
+                        "action": (
+                            recovery_call.get("action")
+                            if isinstance(recovery_call, dict)
+                            else None
+                        ),
+                        "requested_action": (
+                            recovery_call.get("action")
+                            if isinstance(recovery_call, dict)
+                            else None
+                        ),
+                        "status": "restoring",
+                        "confidence": "unknown",
+                        "eta_minutes": eta_minutes,
+                        "eta_raw_minutes": None,
+                        "eta_target_at": eta_target_at,
+                        "eta_method": (
+                            "target_time_countdown"
+                            if eta_target_at is not None
+                            else None
+                        ),
+                        "eta_last_corrected_at": (
+                            recovery_eta.get("last_corrected_at")
+                            if isinstance(recovery_eta, dict)
+                            else None
+                        ),
+                        "eta_correction_reason": "restart_resume_pending",
+                        "rate_c_per_hour": None,
+                        "source": "restart_resume_pending",
+                        "call_minutes": call_minutes,
+                        "rate_segment_minutes": None,
+                        "completed_cycles": len(
+                            self._hvac_memory.get("recovery_cycles", [])
+                        ),
+                        "matched_cycles": 0,
+                        "models": {},
+                        "restart_interrupted_cycles": int(
+                            self._hvac_memory.get(
+                                "recovery_restart_interruptions", 0
+                            )
+                        ),
+                    },
+                    "thermal": {
+                        "status": "restoring",
+                        "confidence": "unknown",
+                        "source": "restart_resume_pending",
+                        "samples": len(
+                            self._hvac_memory.get("thermal_samples", [])
+                        ),
+                        "live_window_minutes": (
+                            max(
+                                0.0,
+                                (
+                                    number(thermal_window.get("last_at"))
+                                    - number(thermal_window.get("at"))
+                                )
+                                / 60,
+                            )
+                            if isinstance(thermal_window, dict)
+                            and number(thermal_window.get("last_at")) is not None
+                            and number(thermal_window.get("at")) is not None
+                            else 0
+                        ),
+                    },
+                }
+            else:
+                diagnostics = observe(self._hvac_memory, sample)
+                restart_resume = diagnostics.get("restart_resume")
+                if isinstance(restart_resume, dict):
+                    self._hvac_persistence.update(
+                        restart_resume_status=restart_resume.get("status"),
+                        restart_gap_minutes=restart_resume.get("gap_minutes"),
+                        restored_recovery_call=restart_resume.get(
+                            "resumed_recovery_call", False
+                        ),
+                        restored_thermal_window=restart_resume.get(
+                            "resumed_thermal_window", False
+                        ),
+                        rate_learning_rebased=restart_resume.get(
+                            "rate_learning_rebased", False
+                        ),
+                        interrupted_recovery_call=False,
+                        interrupted_thermal_window=False,
+                    )
             hours, weather_diagnostics = await self._hourly_weather(now)
             shadow = hourly_forecast(
                 self._hvac_memory.get("samples", []),
@@ -652,10 +868,9 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                 persistence=dict(getattr(self, "_hvac_persistence", {})),
             )
             if not room_health:
-                diagnostics.update(
-                    status="unavailable",
-                    reason="Indoor room data missing or stale",
-                )
+                diagnostics["temperature_precision_status"] = "thermostat_fallback"
+            else:
+                diagnostics["temperature_precision_status"] = "homepod_precision"
 
             data.update(
                 hvac_status=diagnostics["status"],
