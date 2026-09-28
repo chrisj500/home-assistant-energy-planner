@@ -209,7 +209,7 @@ views:
                   }
 
                   const learnedRateC = demandAction ? num(recovery?.models?.[demandAction]?.rate_c_per_hour) : null;
-                  let bestEta = recovery.active && recoveryEta !== null && recoveryEta > 0
+                  let bestEta = recoveryEta !== null && recoveryEta > 0
                     ? recoveryEta
                     : (demandGap !== null && learnedRateC !== null && learnedRateC > 0
                       ? demandGap / (learnedRateC * rateFactor) * 60
