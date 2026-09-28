@@ -195,7 +195,7 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
             state = "forecast_unavailable"
         elif any(r["trained"] for r in newest):
             state = "shadow" if valid else state
-        diagnostic = {"forecast_applied": False, "model": "hour_lead_cloud_residual_v2", "model_version": 2,
+        diagnostic = {"forecast_applied": False, "model": "hour_lead_cloud_residual_v3", "model_version": 3,
             "status": state, "sources": {**sources, "power": power_entity, "energy": energy_entity},
             "current_observation": sample, "weather_forecast_available": weather_fresh,
             "forecast_fresh": forecast_fresh, "pending_forecasts": len(pending),
@@ -208,7 +208,7 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
             "source_identity_missing": missing_identity_parts,
             "recovery_audit": memory.get("recovery_audit"),
             "hourly_shadow": newest, "retention_days": 90,
-            "training_policy": "8 distinct target hours across 7 days per local-hour/lead/cloud group; score latest issue per target and horizon; bounded to +/-25%; never applied"}
+            "training_policy": "3 distinct target hours across 3 days per local-hour/lead/cloud group; score latest issue per target and horizon; median residual regularized toward zero; bounded to +/-25%; shadow only"}
         if issued or self._solar_saved_at is None or stamp - self._solar_saved_at >= 300:
             await self._solar_learning_store.async_save(memory)
             self._solar_saved_at = stamp
