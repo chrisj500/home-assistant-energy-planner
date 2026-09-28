@@ -269,6 +269,25 @@ def update_recovery(memory, sample, continuous, rate_continuous=None):
     call_minutes = None
     rate_segment_minutes = None
     if active and call is not None:
+        rate_source = call.get(
+            "rate_movement_source", call.get("movement_source")
+        )
+        if (
+            rate_source is not None
+            and movement_source is not None
+            and rate_source != movement_source
+        ):
+            # Preserve the logical recovery call, but never compare temperature
+            # movement across unlike sensor sources. Rebase the rate segment
+            # when HomePods fall back to the thermostat or return later.
+            call.update(
+                rate_at=now,
+                rate_indoor_c=sample["indoor_c"],
+                rate_outdoor_c=sample["outdoor_c"],
+                rate_movement_indoor_c=movement_indoor_c,
+                rate_movement_source=movement_source,
+                temperature_signal_rebased_at=now,
+            )
         logical_duration = now - call["at"]
         call_minutes = max(0.0, logical_duration / 60)
         rate_at = number(call.get("rate_at"))
