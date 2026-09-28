@@ -79,9 +79,11 @@ views:
                   const unit = a.temperature_unit || hass.config.unit_system.temperature;
                   const current = valid ? num(a.current_temperature) : null;
                   const target = num(a.temperature);
+                  const targetLow = num(a.target_temp_low);
+                  const targetHigh = num(a.target_temp_high);
                   const fmt = x => x === null ? '—' : x.toFixed(1);
                   const setpoint = target !== null ? `${fmt(target)}${esc(unit)}` :
-                    (num(a.target_temp_low) !== null && num(a.target_temp_high) !== null ? `${fmt(num(a.target_temp_low))}–${fmt(num(a.target_temp_high))}${esc(unit)}` : '—');
+                    (targetLow !== null && targetHigh !== null ? `${fmt(targetLow)}–${fmt(targetHigh)}${esc(unit)}` : '—');
 
                   const roomState = (room, metric) => {
                     const suffix = `${room}_${metric}`;
@@ -187,6 +189,40 @@ views:
                   const recoveryEta = num(recovery.eta_minutes);
                   const recoveryRate = num(recovery.rate_c_per_hour);
                   const recoveryCycles = num(recovery.completed_cycles) ?? 0;
+
+                  let demandAction = null;
+                  let demandGap = null;
+                  if (valid && current !== null) {
+                    if (t.state === 'cool' && target !== null && current > target + 0.05) {
+                      demandAction = 'cooling';
+                      demandGap = current - target;
+                    } else if (t.state === 'heat' && target !== null && current < target - 0.05) {
+                      demandAction = 'heating';
+                      demandGap = target - current;
+                    } else if (t.state === 'heat_cool' && targetLow !== null && current < targetLow - 0.05) {
+                      demandAction = 'heating';
+                      demandGap = targetLow - current;
+                    } else if (t.state === 'heat_cool' && targetHigh !== null && current > targetHigh + 0.05) {
+                      demandAction = 'cooling';
+                      demandGap = current - targetHigh;
+                    }
+                  }
+
+                  const learnedRateC = demandAction ? num(recovery?.models?.[demandAction]?.rate_c_per_hour) : null;
+                  let bestEta = recovery.active && recoveryEta !== null && recoveryEta > 0
+                    ? recoveryEta
+                    : (demandGap !== null && learnedRateC !== null && learnedRateC > 0
+                      ? demandGap / (learnedRateC * rateFactor) * 60
+                      : null);
+                  if (bestEta !== null && (!Number.isFinite(bestEta) || bestEta <= 0)) bestEta = null;
+                  if (bestEta !== null) bestEta = Math.min(360, bestEta);
+                  const etaMinutes = bestEta === null ? null : Math.max(1, Math.round(bestEta));
+                  const etaLabel = etaMinutes === null
+                    ? ''
+                    : etaMinutes < 60
+                      ? `≈ ${etaMinutes} min to target`
+                      : `≈ ${Math.floor(etaMinutes / 60)} hr ${etaMinutes % 60 ? `${etaMinutes % 60} min ` : ''}to target`;
+
                   const recoveryLine = recovery.active
                     ? recoveryEta !== null
                       ? `Recovery ETA ${Math.round(recoveryEta)} min · ${(recoveryRate * rateFactor).toFixed(1)}${esc(unit)}/h · ${esc(recovery.status || recovery.source || 'estimate')}`
@@ -218,7 +254,7 @@ views:
                     <div style="font-size:10px;margin-top:4px">Thermostat-reported state · Mode: ${esc(valid ? t.state : 'unknown')}</div>
                     <div style="position:relative;width:min(100%,205px);aspect-ratio:1;margin:10px auto">
                       <svg viewBox="0 0 240 240" style="width:100%;height:100%" aria-hidden="true"><circle cx="120" cy="120" r="105" fill="none" stroke="var(--divider-color)" stroke-width="12"/><circle cx="120" cy="120" r="105" fill="none" stroke="${color}" stroke-width="12" stroke-linecap="round" stroke-dasharray="495 660" transform="rotate(135 120 120)"/><circle cx="120" cy="120" r="89" fill="none" stroke="var(--divider-color)" stroke-width="1"/></svg>
-                      <div style="position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:center"><div style="font-size:10px;letter-spacing:1px">THERMOSTAT</div><div style="font-size:39px;font-weight:650;margin:4px 0">${fmt(current)}<span style="font-size:16px">${esc(unit)}</span></div><div style="font-size:13px">Target ${setpoint}</div><div style="font-size:11px;margin-top:5px">Humidity ${fmt(num(a.current_humidity))}%</div></div>
+                      <div style="position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:center"><div style="font-size:10px;letter-spacing:1px">THERMOSTAT</div><div style="font-size:39px;font-weight:650;margin:4px 0">${fmt(current)}<span style="font-size:16px">${esc(unit)}</span></div><div style="font-size:13px">Target ${setpoint}</div>${etaLabel ? `<div style="font-size:11px;font-weight:650;margin-top:4px">${etaLabel}</div>` : ''}<div style="font-size:11px;margin-top:5px">Humidity ${fmt(num(a.current_humidity))}%</div></div>
                     </div>
                     <div style="margin:0 0 10px;padding:7px 9px;border-radius:12px;background:var(--secondary-background-color);font-size:10px;line-height:1.45;color:var(--secondary-text-color)">
                       <div><ha-icon icon="mdi:thermometer" style="width:16px;margin-right:4px"></ha-icon>${outdoorLine}</div>
@@ -228,7 +264,7 @@ views:
                     <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:11px;border-top:1px solid var(--divider-color);padding-top:11px"><div><div style="font-size:13px">Electricity now</div><div style="font-size:19px;font-weight:650;margin-top:3px">${powerLabel}</div></div><div><div style="font-size:13px">Electricity today</div><div style="font-size:19px;font-weight:650;margin-top:3px">${energyLabel}</div></div><div style="grid-column:1 / -1;font-size:9px;color:var(--secondary-text-color);margin-top:0">${costTodayLabel}</div></div>
                     <div style="margin-top:9px;padding:8px 10px;border-radius:12px;background:rgba(255,255,255,.045);text-align:left">
                       <div style="display:flex;align-items:center;justify-content:space-between;gap:8px"><span style="font-size:10px;font-weight:700">HVAC learner</span><span style="font-size:10px;font-weight:750;color:${learningColor}">${esc(learningState)}</span></div>
-                      <div style="margin-top:4px;font-size:9px;line-height:1.4;color:rgba(255,255,255,.60)">${learningSamples}/${learningSamplesRequired} samples · ${learningDays}/${learningDaysRequired} days · ${learningPct.toFixed(0)}% ready${recovery.active && recoveryEta !== null ? ` · Recovery ETA ${Math.round(recoveryEta)} min` : ''}</div>
+                      <div style="margin-top:4px;font-size:9px;line-height:1.4;color:rgba(255,255,255,.60)">${learningSamples}/${learningSamplesRequired} samples · ${learningDays}/${learningDaysRequired} days · ${learningPct.toFixed(0)}% ready</div>
                     </div>
                   </div>`;
                 ]]]
