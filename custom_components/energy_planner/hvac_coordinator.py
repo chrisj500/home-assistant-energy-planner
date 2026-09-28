@@ -42,7 +42,10 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
             "status": "not_loaded",
             "restored_samples": 0,
             "restored_recovery_cycles": 0,
+            "restored_overrun_cycles": 0,
             "restored_thermal_samples": 0,
+            "restored_recovery_call": False,
+            "restored_overrun_call": False,
             "reset_reason": None,
         }
         self._hvac_energy_store = Store(
@@ -134,6 +137,7 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
             "call",
             "missing_since",
             "recovery_call",
+            "overrun_call",
             "thermal_window",
         ):
             memory.pop(key, None)
@@ -149,11 +153,13 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
         weather_cache = memory.get("weather_cache") if isinstance(memory.get("weather_cache"), dict) else {}
         weather_hours = weather_cache.get("hours") if isinstance(weather_cache.get("hours"), list) else []
         restored_recovery_call = "recovery_call" in memory
+        restored_overrun_call = "overrun_call" in memory
         restored_thermal_window = "thermal_window" in memory
 
         restored = {
             "samples": len(memory.get("samples", [])),
             "recovery_cycles": len(memory.get("recovery_cycles", [])),
+            "overrun_cycles": len(memory.get("overrun_cycles", [])),
             "thermal_samples": len(memory.get("thermal_samples", [])),
             "weather_hours": len(weather_hours),
         }
@@ -191,6 +197,7 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                     for key in (
                         "call",
                         "recovery_call",
+                        "overrun_call",
                         "recovery_eta",
                         "thermal_window",
                     )
@@ -208,6 +215,9 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
             "restored_recovery_cycles": (
                 restored["recovery_cycles"] if reset_reason is None else 0
             ),
+            "restored_overrun_cycles": (
+                restored["overrun_cycles"] if reset_reason is None else 0
+            ),
             "restored_thermal_samples": (
                 restored["thermal_samples"] if reset_reason is None else 0
             ),
@@ -218,6 +228,9 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
             "interrupted_thermal_window": False,
             "restored_recovery_call": (
                 restored_recovery_call if reset_reason is None else False
+            ),
+            "restored_overrun_call": (
+                restored_overrun_call if reset_reason is None else False
             ),
             "restored_thermal_window": (
                 restored_thermal_window if reset_reason is None else False
@@ -533,11 +546,13 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                     "status": "reset_mapping_changed",
                     "restored_samples": 0,
                     "restored_recovery_cycles": 0,
+                    "restored_overrun_cycles": 0,
                     "restored_thermal_samples": 0,
                     "restored_weather_hours": 0,
                     "interrupted_recovery_call": False,
                     "interrupted_thermal_window": False,
                     "restored_recovery_call": False,
+                    "restored_overrun_call": False,
                     "restored_thermal_window": False,
                     "restart_resume_status": "not_applicable",
                     "restart_gap_minutes": None,
@@ -674,6 +689,7 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                 )
                 learning_ready = len(rows) >= 36 and days >= 3
                 recovery_call = self._hvac_memory.get("recovery_call")
+                overrun_call = self._hvac_memory.get("overrun_call")
                 recovery_eta = self._hvac_memory.get("recovery_eta")
                 eta_target_at = (
                     number(recovery_eta.get("target_at"))
@@ -710,6 +726,7 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                         else None
                     ),
                     "resumed_recovery_call": bool(recovery_call),
+                    "resumed_overrun_call": isinstance(overrun_call, dict),
                     "resumed_thermal_window": isinstance(thermal_window, dict),
                     "rate_learning_rebased": False,
                 }
@@ -717,6 +734,7 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                     restart_resume_status="pending_live_inputs",
                     restart_gap_minutes=restart_resume["gap_minutes"],
                     restored_recovery_call=bool(recovery_call),
+                    restored_overrun_call=isinstance(overrun_call, dict),
                     restored_thermal_window=isinstance(
                         thermal_window, dict
                     ),
@@ -748,16 +766,22 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                     "unmet_setpoint": None,
                     "restart_resume": restart_resume,
                     "recovery": {
-                        "active": bool(recovery_call),
-                        "demand_active": None,
+                        "active": bool(recovery_call) or isinstance(overrun_call, dict),
+                        "demand_active": (
+                            False if isinstance(overrun_call, dict) else None
+                        ),
                         "action": (
                             recovery_call.get("action")
                             if isinstance(recovery_call, dict)
+                            else overrun_call.get("action")
+                            if isinstance(overrun_call, dict)
                             else None
                         ),
                         "requested_action": (
                             recovery_call.get("action")
                             if isinstance(recovery_call, dict)
+                            else overrun_call.get("action")
+                            if isinstance(overrun_call, dict)
                             else None
                         ),
                         "status": "restoring",
@@ -779,12 +803,114 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                         "rate_c_per_hour": None,
                         "source": "restart_resume_pending",
                         "call_minutes": call_minutes,
+                        "equipment_call_minutes": (
+                            max(
+                                0.0,
+                                (
+                                    now.timestamp()
+                                    - number(
+                                        overrun_call.get("call_started_at")
+                                    )
+                                )
+                                / 60,
+                            )
+                            if isinstance(overrun_call, dict)
+                            and number(
+                                overrun_call.get("call_started_at")
+                            ) is not None
+                            else call_minutes
+                        ),
+                        "equipment_call_started_at": (
+                            number(overrun_call.get("call_started_at"))
+                            if isinstance(overrun_call, dict)
+                            else call_at
+                        ),
+                        "target_reached_at": (
+                            number(overrun_call.get("at"))
+                            if isinstance(overrun_call, dict)
+                            else None
+                        ),
                         "rate_segment_minutes": None,
                         "completed_cycles": len(
                             self._hvac_memory.get("recovery_cycles", [])
                         ),
+                        "clean_target_cycles": len(
+                            [
+                                row
+                                for row in self._hvac_memory.get(
+                                    "recovery_cycles", []
+                                )
+                                if row.get("phase_end") == "target_reached"
+                            ]
+                        ),
                         "matched_cycles": 0,
+                        "model_population": None,
                         "models": {},
+                        "aborted_calls": sum(
+                            int(value)
+                            for value in self._hvac_memory.get(
+                                "recovery_aborted_reasons", {}
+                            ).values()
+                        ),
+                        "aborted_reasons": dict(
+                            self._hvac_memory.get(
+                                "recovery_aborted_reasons", {}
+                            )
+                        ),
+                        "overrun": {
+                            "active": isinstance(overrun_call, dict),
+                            "duration_minutes": (
+                                max(
+                                    0.0,
+                                    (
+                                        now.timestamp()
+                                        - number(overrun_call.get("at"))
+                                    )
+                                    / 60,
+                                )
+                                if isinstance(overrun_call, dict)
+                                and number(overrun_call.get("at")) is not None
+                                else None
+                            ),
+                            "started_at": (
+                                number(overrun_call.get("at"))
+                                if isinstance(overrun_call, dict)
+                                else None
+                            ),
+                            "started_mid_overrun": (
+                                bool(
+                                    overrun_call.get(
+                                        "started_mid_overrun"
+                                    )
+                                )
+                                if isinstance(overrun_call, dict)
+                                else False
+                            ),
+                            "thermostat_overshoot_c": (
+                                number(
+                                    overrun_call.get(
+                                        "thermostat_overshoot_c"
+                                    )
+                                )
+                                if isinstance(overrun_call, dict)
+                                else None
+                            ),
+                            "precision_overshoot_c": (
+                                number(
+                                    overrun_call.get(
+                                        "precision_overshoot_c"
+                                    )
+                                )
+                                if isinstance(overrun_call, dict)
+                                else None
+                            ),
+                            "completed_cycles": len(
+                                self._hvac_memory.get(
+                                    "overrun_cycles", []
+                                )
+                            ),
+                            "models": {},
+                        },
                         "restart_interrupted_cycles": int(
                             self._hvac_memory.get(
                                 "recovery_restart_interruptions", 0
@@ -823,6 +949,9 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                         restart_gap_minutes=restart_resume.get("gap_minutes"),
                         restored_recovery_call=restart_resume.get(
                             "resumed_recovery_call", False
+                        ),
+                        restored_overrun_call=restart_resume.get(
+                            "resumed_overrun_call", False
                         ),
                         restored_thermal_window=restart_resume.get(
                             "resumed_thermal_window", False

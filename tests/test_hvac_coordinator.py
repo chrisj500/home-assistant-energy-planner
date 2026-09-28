@@ -364,6 +364,108 @@ class HVACCoordinatorTests(unittest.TestCase):
             ",".join(self.c._room_prefixes()),
         )
 
+    def test_restart_preserves_post_target_overrun_and_physical_call_clock(self):
+        identity = self.c._model_identity(self.c._room_prefixes())
+        target_c = celsius(72, "°F")
+        thermostat_c = celsius(71, "°F")
+        outdoor_c = celsius(80, "°F")
+        persisted = {
+            "entity_mapping": identity,
+            "samples": self._persisted_hvac_rows(),
+            "recovery_cycles": [
+                {
+                    "ended_at": self.now.timestamp() - 600,
+                    "action": "cooling",
+                    "rate_c_per_hour": 1.5,
+                    "outdoor_delta_c": 5,
+                    "duration_minutes": 20,
+                    "logical_duration_minutes": 20,
+                    "phase_end": "target_reached",
+                    "clean_target_cycle": True,
+                }
+            ],
+            "overrun_cycles": [],
+            "previous": {
+                "at": self.now.timestamp() - 60,
+                "day": self.now.date().isoformat(),
+                "mode": "cool",
+                "action": "cooling",
+                "target_c": target_c,
+                "indoor_c": thermostat_c,
+                "precision_indoor_c": thermostat_c,
+                "precision_temperature_source": "homepod_physical_room_median",
+                "outdoor_c": outdoor_c,
+                "humidity": 60,
+                "condenser_w": 1350,
+                "blower_w": 300,
+            },
+            "overrun_call": {
+                "at": self.now.timestamp() - 600,
+                "last_at": self.now.timestamp() - 60,
+                "action": "cooling",
+                "target_c": target_c,
+                "call_started_at": self.now.timestamp() - 1800,
+                "recovery_duration_minutes": 20,
+                "recovery_rate_c_per_hour": 1.5,
+                "started_mid_overrun": False,
+                "thermostat_overshoot_c": celsius(1, "°F"),
+                "peak_thermostat_overshoot_c": celsius(1, "°F"),
+                "precision_overshoot_c": celsius(1, "°F"),
+                "peak_precision_overshoot_c": celsius(1, "°F"),
+                "temperature_signal_source": "homepod_physical_room_median",
+            },
+        }
+
+        self.states["climate.thermostat"].attributes.update(
+            current_temperature=71,
+            temperature=72,
+            hvac_action="cooling",
+        )
+        self.states["sensor.hvac_power"].state = "1340"
+        self.states[
+            "sensor.ecoflow_smart_home_panel_2_circuit_4_power"
+        ].state = "300"
+        for prefix in self.c._room_prefixes():
+            self.states[prefix + "_temperature"].state = "71"
+
+        async def load_hvac():
+            return persisted
+
+        self.c._hvac_store = SimpleNamespace(
+            async_load=load_hvac,
+            async_save=self.c._hvac_store.async_save,
+        )
+        result = asyncio.run(self.c._async_update_data())
+
+        self.assertIn("overrun_call", self.saved)
+        self.assertNotIn("recovery_call", self.saved)
+        recovery = result["hvac_diagnostics"]["recovery"]
+        self.assertTrue(recovery["overrun"]["active"])
+        self.assertAlmostEqual(
+            recovery["equipment_call_minutes"],
+            30.0,
+        )
+        self.assertAlmostEqual(
+            recovery["overrun"]["duration_minutes"],
+            10.0,
+        )
+        self.assertEqual(
+            result["hvac_diagnostics"]["persistence"][
+                "restart_resume_status"
+            ],
+            "resumed_full_continuity",
+        )
+        self.assertTrue(
+            result["hvac_diagnostics"]["persistence"][
+                "restored_overrun_call"
+            ]
+        )
+        self.assertTrue(
+            result["hvac_diagnostics"]["restart_resume"][
+                "resumed_overrun_call"
+            ]
+        )
+
     def test_restart_waits_for_delayed_thermostat_without_erasing_call(self):
         identity = self.c._model_identity(self.c._room_prefixes())
         target_c = celsius(72, "°F")
