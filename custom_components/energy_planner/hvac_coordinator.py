@@ -623,9 +623,9 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                 "blower_w": blower_w,
             }
 
-            # Never train through a room telemetry outage.
-            if not room_health:
-                sample["humidity"] = None
+            # HomePods are a precision enhancement, not a hard dependency.
+            # _temperature_signal falls back to the thermostat when room data is
+            # stale/unavailable.
 
             required_sample_values = (
                 "indoor_c",
@@ -637,8 +637,7 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
             )
             restart_pending = bool(self._hvac_memory.get("_restart_pending"))
             startup_inputs_ready = (
-                room_health
-                and action in ("cooling", "heating", "idle", "off", "fan")
+                action in ("cooling", "heating", "idle", "off", "fan")
                 and all(number(sample.get(key)) is not None for key in required_sample_values)
             )
             restart_waiting = restart_pending and not startup_inputs_ready
@@ -850,11 +849,10 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                 power_mapping_valid=power_mapping_valid,
                 persistence=dict(getattr(self, "_hvac_persistence", {})),
             )
-            if not room_health and not restart_waiting:
-                diagnostics.update(
-                    status="unavailable",
-                    reason="Indoor room data missing or stale",
-                )
+            if not room_health:
+                diagnostics["temperature_precision_status"] = "thermostat_fallback"
+            else:
+                diagnostics["temperature_precision_status"] = "homepod_precision"
 
             data.update(
                 hvac_status=diagnostics["status"],
