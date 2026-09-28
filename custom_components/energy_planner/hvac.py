@@ -221,6 +221,15 @@ def _finish_overrun(overrun, ended_at):
         "recovery_duration_minutes": number(
             overrun.get("recovery_duration_minutes")
         ),
+        "recovery_rate_c_per_hour": number(
+            overrun.get("recovery_rate_c_per_hour")
+        ),
+        "recovery_start_error_c": number(
+            overrun.get("recovery_start_error_c")
+        ),
+        "recovery_outdoor_delta_c": number(
+            overrun.get("recovery_outdoor_delta_c")
+        ),
         "total_call_minutes": (
             (ended_at - call_started_at) / 60
             if call_started_at is not None and ended_at >= call_started_at
@@ -239,9 +248,29 @@ def _finish_overrun(overrun, ended_at):
 
 def _recovery_population(rows):
     clean = [row for row in rows if row.get("phase_end") == "target_reached"]
-    if clean:
+    usable_clean = [
+        row
+        for row in clean
+        if number(row.get("rate_c_per_hour")) is not None
+        or (
+            number(row.get("start_error_c")) is not None
+            and number(row.get("start_error_c")) > 0.05
+            and number(
+                row.get(
+                    "logical_duration_minutes",
+                    row.get("duration_minutes"),
+                )
+            ) is not None
+        )
+    ]
+    if usable_clean:
         return clean, "clean_target_cycles"
-    return rows, "legacy_cycles"
+    legacy = [
+        row for row in rows if row.get("phase_end") != "target_reached"
+    ]
+    if legacy:
+        return legacy, "legacy_cycles"
+    return clean, "clean_target_cycles_pending_usable_eta"
 
 
 def _recovery_duration_projection(row, error_c):
@@ -365,7 +394,7 @@ def _target_cycle_exists(cycles, action, ended_at):
         row.get("phase_end") == "target_reached"
         and row.get("action") == action
         and number(row.get("ended_at")) is not None
-        and abs(row["ended_at"] - ended_at) <= 120
+        and abs(number(row.get("ended_at")) - ended_at) <= 120
         for row in cycles
     )
 
