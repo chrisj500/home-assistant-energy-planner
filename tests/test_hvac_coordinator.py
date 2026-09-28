@@ -364,7 +364,7 @@ class HVACCoordinatorTests(unittest.TestCase):
             ",".join(self.c._room_prefixes()),
         )
 
-    def test_restart_waits_for_delayed_room_sensor_without_erasing_call(self):
+    def test_restart_waits_for_delayed_thermostat_without_erasing_call(self):
         identity = self.c._model_identity(self.c._room_prefixes())
         target_c = celsius(72, "°F")
         indoor_c = celsius(74, "°F")
@@ -415,8 +415,7 @@ class HVACCoordinatorTests(unittest.TestCase):
             "sensor.ecoflow_smart_home_panel_2_circuit_4_power"
         ].state = "300"
 
-        delayed_prefix = self.c._room_prefixes()[0]
-        self.states[delayed_prefix + "_temperature"].state = "unavailable"
+        self.states["climate.thermostat"].state = "unavailable"
 
         async def load_hvac():
             return persisted
@@ -439,6 +438,9 @@ class HVACCoordinatorTests(unittest.TestCase):
         )
 
         self.now += timedelta(minutes=1)
+        self.states["climate.thermostat"].state = "cool"
+        self.states["climate.thermostat"].last_updated = self.now
+        self.states["climate.thermostat"].last_reported = self.now
         for prefix in self.c._room_prefixes():
             temp = self.states[prefix + "_temperature"]
             temp.state = "74"
@@ -599,12 +601,24 @@ class HVACCoordinatorTests(unittest.TestCase):
             "unavailable",
         )
 
-    def test_stale_room_blocks_existing_advice(self):
+    def test_stale_room_falls_back_to_thermostat_without_hvac_hold(self):
         self.states["binary_sensor.homepod_indoor_climate_stale_readings"].state = "on"
         result = asyncio.run(self.c._async_update_data())
-        self.assertEqual(result["forecast_reliability_status"], "hvac_hold")
-        self.assertFalse(result["rolling_ev_auto_charge_eligible"])
-        self.assertEqual(self.saved["samples"], [])
+
+        self.assertNotEqual(
+            result.get("forecast_reliability_status"),
+            "hvac_hold",
+        )
+        self.assertTrue(result["rolling_ev_auto_charge_eligible"])
+        self.assertFalse(result["hvac_diagnostics"]["room_data_healthy"])
+        self.assertEqual(
+            result["hvac_diagnostics"]["temperature_precision_status"],
+            "thermostat_fallback",
+        )
+        self.assertEqual(
+            result["hvac_diagnostics"]["temperature_signal"]["source"],
+            "thermostat",
+        )
 
     def test_disabled_does_not_read_or_hold(self):
         self.c.cfg["hvac_learning_enabled"] = False
