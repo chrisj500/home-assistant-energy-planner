@@ -578,6 +578,11 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                 condenser_w,
                 blower_w,
             )
+            precision_indoor_c = (
+                rooms.get("precision_temperature_c")
+                if room_health
+                else None
+            )
             sample = {
                 "at": now.timestamp(),
                 "day": now.date().isoformat(),
@@ -585,6 +590,12 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                 "action": action,
                 "target_c": celsius(attrs.get("temperature"), temp_unit),
                 "indoor_c": celsius(attrs.get("current_temperature"), temp_unit),
+                "precision_indoor_c": precision_indoor_c,
+                "precision_temperature_source": (
+                    "homepod_physical_room_median"
+                    if precision_indoor_c is not None
+                    else None
+                ),
                 "humidity": number(attrs.get("current_humidity")),
                 "outdoor_c": (
                     celsius(

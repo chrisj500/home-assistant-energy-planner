@@ -73,6 +73,33 @@ class HVACCoordinatorTests(unittest.TestCase):
         self.assertIsNone(result["hvac_diagnostics"]["hourly_shadow"][0]["expected_w"])
         self.assertEqual(result["effective_reserve_floor"], 10)
 
+    def test_homepod_physical_room_median_feeds_precision_temperature_signal(self):
+        self.states["climate.thermostat"].attributes["current_temperature"] = 73
+        self.states["sensor.homepod_indoor_climate_living_room_temperature"].state = "74"
+        self.states["sensor.homepod_indoor_climate_guest_bedroom_temperature"].state = "70"
+        self.states["sensor.homepod_indoor_climate_main_bedroom_left_temperature"].state = "72"
+        self.states["sensor.homepod_indoor_climate_main_bedroom_right_temperature"].state = "72"
+
+        result = asyncio.run(self.c._async_update_data())
+        diagnostics = result["hvac_diagnostics"]
+
+        self.assertAlmostEqual(
+            diagnostics["rooms"]["precision_temperature_c"],
+            celsius(72, "°F"),
+        )
+        self.assertEqual(
+            diagnostics["temperature_signal"]["source"],
+            "homepod_physical_room_median",
+        )
+        self.assertAlmostEqual(
+            diagnostics["temperature_signal"]["temperature_c"],
+            celsius(72, "°F"),
+        )
+        self.assertAlmostEqual(
+            diagnostics["temperature_signal"]["thermostat_temperature_c"],
+            celsius(73, "°F"),
+        )
+
     def test_missing_hvac_action_uses_mode_and_power(self):
         self.states["climate.thermostat"].attributes.pop("hvac_action", None)
         result = asyncio.run(self.c._async_update_data())

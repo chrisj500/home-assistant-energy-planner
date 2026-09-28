@@ -59,8 +59,15 @@ class HVACTests(unittest.TestCase):
     def test_duplicate_bedroom_devices_are_one_room(self):
         summary = room_summary([24, 20, 22, 22], [50, 60, 70, 70])
         self.assertEqual(summary["temperature_c"], 22)
+        self.assertEqual(summary["precision_temperature_c"], 22)
+        self.assertEqual(summary["physical_temperatures_c"], [24, 20, 22])
         self.assertEqual(summary["humidity"], 60)
         self.assertEqual(summary["room_count"], 3)
+
+    def test_room_precision_signal_uses_physical_room_median(self):
+        summary = room_summary([30, 20, 22, 22], [50, 60, 70, 70])
+        self.assertEqual(summary["temperature_c"], 24)
+        self.assertEqual(summary["precision_temperature_c"], 22)
 
     def test_missing_blower_requires_sustained_unmet_demand(self):
         memory = {}
@@ -125,6 +132,78 @@ class HVACTests(unittest.TestCase):
         restored = deepcopy(memory)
         observe(restored, self.sample(1300))
         self.assertEqual(len(restored["samples"]), 1)
+
+    def test_live_recovery_uses_homepod_precision_while_thermostat_is_integer(self):
+        memory = {}
+        first = self.sample(1000)
+        first.update(
+            indoor_c=23,
+            precision_indoor_c=22.8,
+            precision_temperature_source="homepod_physical_room_median",
+            target_c=22,
+            outdoor_c=30,
+        )
+        observe(memory, first)
+
+        second = self.sample(1600)
+        second.update(
+            indoor_c=23,
+            precision_indoor_c=22.4,
+            precision_temperature_source="homepod_physical_room_median",
+            target_c=22,
+            outdoor_c=30,
+        )
+        recovery = observe(memory, second)["recovery"]
+
+        self.assertEqual(recovery["source"], "live_call")
+        self.assertAlmostEqual(recovery["rate_c_per_hour"], 2.4)
+        self.assertAlmostEqual(recovery["eta_raw_minutes"], 25.0)
+        self.assertEqual(
+            recovery["temperature_signal_source"],
+            "homepod_physical_room_median",
+        )
+        self.assertAlmostEqual(recovery["temperature_signal_c"], 22.4)
+        self.assertAlmostEqual(recovery["thermostat_temperature_c"], 23)
+
+    def test_completed_recovery_cycle_uses_precision_rate_but_thermostat_weather_delta(self):
+        memory = {}
+        first = self.sample(1000)
+        first.update(
+            indoor_c=23,
+            precision_indoor_c=22.8,
+            target_c=22,
+            outdoor_c=30,
+        )
+        observe(memory, first)
+
+        middle = self.sample(1600)
+        middle.update(
+            indoor_c=23,
+            precision_indoor_c=22.4,
+            target_c=22,
+            outdoor_c=30,
+        )
+        observe(memory, middle)
+
+        end = self.sample(2200)
+        end.update(
+            action="idle",
+            indoor_c=22,
+            precision_indoor_c=22.0,
+            target_c=22,
+            outdoor_c=30,
+            condenser_w=0,
+            blower_w=10,
+        )
+        observe(memory, end)
+
+        cycle = memory["recovery_cycles"][0]
+        self.assertAlmostEqual(cycle["rate_c_per_hour"], 2.4)
+        self.assertAlmostEqual(cycle["outdoor_delta_c"], 7.5)
+        self.assertEqual(
+            cycle["temperature_signal_source"],
+            "homepod_physical_room_median",
+        )
 
     def test_live_recovery_estimate_after_ten_minutes(self):
         memory = {}
@@ -268,6 +347,47 @@ class HVACTests(unittest.TestCase):
             memory["recovery_cycles"][0]["rate_c_per_hour"],
             3.0,
         )
+
+    def test_passive_thermal_learning_uses_homepod_precision_when_thermostat_is_flat(self):
+        memory = {}
+        for i in range(7):
+            at = 1000 + i * 300
+            sample = self.sample(at)
+            sample.update(
+                action="idle",
+                indoor_c=22.0,
+                precision_indoor_c=22.0 - 0.3 * (i / 6),
+                target_c=22,
+                outdoor_c=10,
+                condenser_w=0,
+                blower_w=10,
+            )
+            observe(memory, sample)
+
+        active = self.sample(3100)
+        active.update(
+            action="cooling",
+            indoor_c=22.0,
+            precision_indoor_c=21.7,
+            target_c=21,
+            outdoor_c=10,
+            condenser_w=2000,
+            blower_w=200,
+        )
+        thermal = observe(memory, active)["thermal"]
+
+        self.assertEqual(len(memory["thermal_samples"]), 1)
+        self.assertEqual(
+            thermal["temperature_signal_source"],
+            "homepod_physical_room_median",
+        )
+        self.assertIsNotNone(thermal["coefficient_per_hour"])
+        self.assertGreater(thermal["coefficient_per_hour"], 0)
+
+    def test_hvac_temperature_signal_falls_back_to_thermostat(self):
+        result = observe({}, self.sample(1000))
+        self.assertEqual(result["temperature_signal"]["source"], "thermostat")
+        self.assertEqual(result["temperature_signal"]["temperature_c"], 22)
 
     def test_passive_thermal_drift_becomes_provisional_after_long_idle_window(self):
         memory = {}
