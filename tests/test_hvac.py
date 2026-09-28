@@ -273,6 +273,150 @@ class HVACTests(unittest.TestCase):
             "insufficient_indoor_movement",
         )
 
+    def test_one_completed_recovery_cycle_seeds_provisional_eta(self):
+        memory = {}
+        first = self.sample(1000)
+        first.update(indoor_c=25, target_c=22, outdoor_c=30)
+        observe(memory, first)
+
+        end = self.sample(2200)
+        end.update(
+            action="idle",
+            indoor_c=24.5,
+            target_c=22,
+            outdoor_c=30,
+            condenser_w=0,
+            blower_w=10,
+        )
+        observe(memory, end)
+        self.assertEqual(len(memory["recovery_cycles"]), 1)
+
+        next_call = self.sample(2800)
+        next_call.update(indoor_c=25, target_c=22, outdoor_c=30)
+        result = observe(memory, next_call)
+        recovery = result["recovery"]
+
+        self.assertEqual(recovery["source"], "history")
+        self.assertEqual(recovery["status"], "provisional")
+        self.assertEqual(recovery["confidence"], "low")
+        self.assertIsNotNone(recovery["eta_minutes"])
+        self.assertEqual(recovery["matched_cycles"], 1)
+
+    def test_recovery_models_are_visible_while_idle(self):
+        memory = {
+            "recovery_cycles": [
+                {
+                    "ended_at": 1200,
+                    "action": "cooling",
+                    "rate_c_per_hour": 1.2,
+                    "outdoor_delta_c": 5,
+                    "duration_minutes": 30,
+                },
+                {
+                    "ended_at": 1800,
+                    "action": "cooling",
+                    "rate_c_per_hour": 1.4,
+                    "outdoor_delta_c": 6,
+                    "duration_minutes": 35,
+                },
+                {
+                    "ended_at": 2400,
+                    "action": "cooling",
+                    "rate_c_per_hour": 1.3,
+                    "outdoor_delta_c": 5,
+                    "duration_minutes": 32,
+                },
+            ]
+        }
+        idle = self.sample(3000)
+        idle.update(
+            action="idle",
+            indoor_c=22,
+            target_c=22,
+            outdoor_c=30,
+            condenser_w=0,
+            blower_w=10,
+        )
+        result = observe(memory, idle)
+        model = result["recovery"]["models"]["cooling"]
+
+        self.assertEqual(model["samples"], 3)
+        self.assertEqual(model["status"], "ready")
+        self.assertEqual(model["confidence"], "high")
+        self.assertAlmostEqual(model["rate_c_per_hour"], 1.3)
+
+    def test_one_completed_thermal_window_remains_provisional_history(self):
+        memory = {}
+        for i in range(7):
+            at = 1000 + i * 300
+            indoor = 22.0 - 0.3 * (i / 6)
+            sample = self.sample(at)
+            sample.update(
+                action="idle",
+                indoor_c=indoor,
+                target_c=22,
+                outdoor_c=10,
+                condenser_w=0,
+                blower_w=10,
+            )
+            observe(memory, sample)
+
+        active = self.sample(3100)
+        active.update(
+            action="cooling",
+            indoor_c=21.7,
+            target_c=21,
+            outdoor_c=10,
+            condenser_w=2000,
+            blower_w=200,
+        )
+        result = observe(memory, active)
+        thermal = result["thermal"]
+
+        self.assertEqual(len(memory["thermal_samples"]), 1)
+        self.assertEqual(thermal["source"], "history")
+        self.assertEqual(thermal["status"], "provisional")
+        self.assertEqual(thermal["confidence"], "low")
+        self.assertIsNotNone(thermal["coefficient_per_hour"])
+        self.assertIsNotNone(thermal["time_constant_hours"])
+        self.assertEqual(thermal["samples_required"], 1)
+        self.assertEqual(thermal["samples_required_for_ready"], 3)
+
+    def test_two_thermal_samples_raise_confidence_without_hiding_estimate(self):
+        memory = {
+            "thermal_samples": [
+                {
+                    "ended_at": 1000,
+                    "coefficient_per_hour": 0.05,
+                    "observed_drift_c_per_hour": -0.3,
+                    "duration_minutes": 60,
+                    "mean_outdoor_delta_c": 6,
+                },
+                {
+                    "ended_at": 2000,
+                    "coefficient_per_hour": 0.07,
+                    "observed_drift_c_per_hour": -0.35,
+                    "duration_minutes": 60,
+                    "mean_outdoor_delta_c": 5,
+                },
+            ]
+        }
+        sample = self.sample(3000)
+        sample.update(
+            action="cooling",
+            indoor_c=22,
+            target_c=21,
+            outdoor_c=10,
+            condenser_w=2000,
+            blower_w=200,
+        )
+        result = observe(memory, sample)
+        thermal = result["thermal"]
+
+        self.assertEqual(thermal["status"], "provisional")
+        self.assertEqual(thermal["confidence"], "medium")
+        self.assertAlmostEqual(thermal["coefficient_per_hour"], 0.06)
+
     def test_general_learning_has_explicit_completion_criteria(self):
         rows = []
         for day in range(HVAC_READY_DAYS):
