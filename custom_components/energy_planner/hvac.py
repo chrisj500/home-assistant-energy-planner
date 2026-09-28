@@ -248,34 +248,42 @@ def update_recovery(memory, sample, continuous):
             [row for row in cycles if row["action"] in ("cooling", "heating")]
         ),
         "matched_cycles": len(matched) if active else 0,
+        "restart_interrupted_cycles": int(memory.get("recovery_restart_interruptions", 0)),
     }
 
 
-def _thermal_candidate(window):
+def _thermal_candidate_detail(window):
     duration = window["last_at"] - window["at"]
-    if duration < 1800 or duration > 6 * 3600:
-        return None
+    if duration < 1800:
+        return None, "duration_too_short"
+    if duration > 6 * 3600:
+        return None, "duration_too_long"
     movement = window["last_indoor_c"] - window["indoor_c"]
     if abs(movement) < 0.15:
-        return None
+        return None, "insufficient_indoor_movement"
     hours = duration / 3600
     avg_outdoor = window["outdoor_sum"] / window["outdoor_count"]
     avg_indoor = (window["indoor_c"] + window["last_indoor_c"]) / 2
     delta = avg_indoor - avg_outdoor
     if abs(delta) < 2:
-        return None
+        return None, "small_indoor_outdoor_delta"
     drift = movement / hours
     if drift * delta >= 0:
-        return None
+        return None, "wrong_drift_direction"
     coefficient = -drift / delta
     if not 0.001 <= coefficient <= 1.5:
-        return None
+        return None, "coefficient_out_of_range"
     return {
         "coefficient_per_hour": coefficient,
         "observed_drift_c_per_hour": drift,
         "duration_minutes": duration / 60,
         "mean_outdoor_delta_c": abs(delta),
-    }
+    }, None
+
+
+def _thermal_candidate(window):
+    candidate, _ = _thermal_candidate_detail(window)
+    return candidate
 
 
 def update_thermal_model(memory, sample, continuous):
@@ -285,6 +293,10 @@ def update_thermal_model(memory, sample, continuous):
     memory["thermal_samples"] = history = [
         row for row in history if 0 <= now - row.get("ended_at", now) <= 30 * 86400
     ]
+    rejections = memory.setdefault("thermal_rejections", {})
+    if not isinstance(rejections, dict):
+        rejections = {}
+        memory["thermal_rejections"] = rejections
 
     passive = (
         sample["action"] in ("idle", "off")
@@ -294,9 +306,18 @@ def update_thermal_model(memory, sample, continuous):
     window = memory.get("thermal_window")
 
     if window is not None and (not continuous or not passive):
-        candidate = _thermal_candidate(window)
+        candidate, rejection = _thermal_candidate_detail(window)
         if candidate is not None:
             history.append({"ended_at": window["last_at"], **candidate})
+        elif rejection is not None:
+            rejections[rejection] = int(rejections.get(rejection, 0)) + 1
+            memory["thermal_last_rejection"] = {
+                "reason": rejection,
+                "at": window["last_at"],
+                "duration_minutes": max(
+                    0.0, (window["last_at"] - window["at"]) / 60
+                ),
+            }
         memory.pop("thermal_window", None)
         window = None
 
@@ -358,6 +379,10 @@ def update_thermal_model(memory, sample, continuous):
         "live_window_minutes": (
             (window["last_at"] - window["at"]) / 60 if window is not None else 0
         ),
+        "rejected_windows": sum(int(value) for value in rejections.values()),
+        "rejection_counts": dict(rejections),
+        "last_rejection": memory.get("thermal_last_rejection"),
+        "restart_interrupted_windows": int(rejections.get("restart_interrupted", 0)),
     }
 
 
