@@ -72,6 +72,22 @@ class SolarLearningTests(unittest.TestCase):
         return [dict(candidate(start=day*86400), actual_kwh=100, accepted=True,
                      trained=False, learned_kwh=2) for day in range(1, 10)]
 
+    def test_three_day_gate_enables_early_shadow_evaluation(self):
+        rows = self.training_rows()
+        memory = {"scored": rows[:2]}
+        value, trained, count = prediction(memory, candidate(start=5*86400))
+        self.assertFalse(trained)
+        self.assertEqual(count, 2)
+        self.assertEqual(value, 2.0)
+
+        memory["scored"] = rows[:3]
+        value, trained, count = prediction(memory, candidate(start=5*86400))
+        self.assertTrue(trained)
+        self.assertEqual(count, 3)
+        # Three observations are enough to evaluate, but the 20-sample
+        # regularizer still keeps the early correction deliberately small.
+        self.assertLessEqual(value, 2.5)
+
     def test_regularized_learning_is_bounded(self):
         memory = {'scored': self.training_rows()}
         value, trained, count = prediction(memory, candidate(start=12*86400))
