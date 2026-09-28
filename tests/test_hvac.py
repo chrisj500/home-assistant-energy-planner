@@ -294,6 +294,89 @@ class HVACTests(unittest.TestCase):
         self.assertEqual(recovery["eta_correction_reason"], "live_rate_correction")
         self.assertAlmostEqual(recovery["eta_target_at"], 2200.0)
 
+    def test_brief_restart_resumes_recovery_call_and_counts_elapsed_time(self):
+        memory = {}
+        first = self.sample(1000)
+        first.update(
+            indoor_c=23,
+            precision_indoor_c=22.8,
+            precision_temperature_source="homepod_physical_room_median",
+            target_c=22,
+            outdoor_c=30,
+        )
+        observe(memory, first)
+
+        # Simulate persisted state being loaded after a 60-second HA restart.
+        memory["_restart_pending"] = True
+        second = self.sample(1060)
+        second.update(
+            indoor_c=23,
+            precision_indoor_c=22.7,
+            precision_temperature_source="homepod_physical_room_median",
+            target_c=22,
+            outdoor_c=30,
+        )
+        result = observe(memory, second)
+
+        self.assertAlmostEqual(result["recovery"]["call_minutes"], 1.0)
+        self.assertEqual(
+            result["restart_resume"]["status"],
+            "resumed_full_continuity",
+        )
+        self.assertTrue(result["restart_resume"]["resumed_recovery_call"])
+        self.assertFalse(result["restart_resume"]["rate_learning_rebased"])
+
+    def test_long_restart_preserves_logical_call_but_rebases_rate_learning(self):
+        memory = {}
+        first = self.sample(1000)
+        first.update(
+            indoor_c=23,
+            precision_indoor_c=22.8,
+            precision_temperature_source="homepod_physical_room_median",
+            target_c=22,
+            outdoor_c=30,
+        )
+        observe(memory, first)
+
+        memory["_restart_pending"] = True
+        second = self.sample(2200)
+        second.update(
+            indoor_c=23,
+            precision_indoor_c=22.5,
+            precision_temperature_source="homepod_physical_room_median",
+            target_c=22,
+            outdoor_c=30,
+        )
+        result = observe(memory, second)
+
+        self.assertAlmostEqual(result["recovery"]["call_minutes"], 20.0)
+        self.assertAlmostEqual(result["recovery"]["rate_segment_minutes"], 0.0)
+        self.assertEqual(result["recovery"]["source"], "history" if result["recovery"]["matched_cycles"] else "learning")
+        self.assertEqual(
+            result["restart_resume"]["status"],
+            "resumed_logical_rebased_measurements",
+        )
+        self.assertTrue(result["restart_resume"]["resumed_recovery_call"])
+        self.assertTrue(result["restart_resume"]["rate_learning_rebased"])
+
+    def test_restart_with_changed_setpoint_does_not_resume_old_recovery_call(self):
+        memory = {}
+        first = self.sample(1000)
+        first.update(indoor_c=23, target_c=22, outdoor_c=30)
+        observe(memory, first)
+
+        memory["_restart_pending"] = True
+        changed = self.sample(1060)
+        changed.update(indoor_c=23, target_c=21, outdoor_c=30)
+        result = observe(memory, changed)
+
+        self.assertEqual(
+            result["restart_resume"]["status"],
+            "state_changed_or_missing_baseline",
+        )
+        self.assertAlmostEqual(result["recovery"]["call_minutes"], 0.0)
+        self.assertFalse(result["restart_resume"]["resumed_recovery_call"])
+
     def test_recovery_eta_survives_restart_without_bridging_temperature_rate(self):
         memory = {
             "recovery_cycles": [{
