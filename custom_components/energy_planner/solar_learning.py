@@ -117,6 +117,119 @@ def finalize(memory, now):
     memory["actual_hours"] = {k: v for k, v in actual.items() if int(k) >= cutoff}
 
 
+def _recovery_key(row):
+    issued = number(row.get("issued_at")) if isinstance(row, dict) else None
+    start = number(row.get("start")) if isinstance(row, dict) else None
+    end = number(row.get("end")) if isinstance(row, dict) else None
+    if None in (issued, start, end):
+        return None
+    return (round(issued, 6), round(start, 3), round(end, 3))
+
+
+def _normalize_recovery_row(row, now):
+    if not isinstance(row, dict):
+        return None, "row_not_object"
+    issued = number(row.get("issued_at"))
+    start = number(row.get("start"))
+    end = number(row.get("end"))
+    raw = number(row.get("raw_kwh"))
+    live = number(row.get("live_kwh"))
+    learned = number(row.get("learned_kwh"))
+    actual = number(row.get("actual_kwh"))
+    coverage = number(row.get("coverage"))
+    if None in (issued, start, end, raw, live, learned, coverage):
+        return None, "missing_numeric_field"
+    if not issued < start < end or end > now + 1:
+        return None, "invalid_time_order"
+    if min(raw, live, learned) < 0 or not 0 <= coverage <= 1.01:
+        return None, "invalid_energy_or_coverage"
+    day = row.get("day")
+    hour = row.get("hour")
+    sky = row.get("sky_bin")
+    if not isinstance(day, str) or not day or not isinstance(hour, int) or not 0 <= hour <= 23:
+        return None, "invalid_target_metadata"
+    if sky not in ("clear", "mixed", "cloudy", "unknown"):
+        return None, "invalid_sky_bin"
+    accepted = bool(row.get("accepted"))
+    if accepted and (actual is None or actual < 0 or coverage < 0.99):
+        return None, "invalid_accepted_outcome"
+    if actual is not None and actual < 0:
+        return None, "invalid_actual_energy"
+    normalized = dict(row)
+    normalized.update({
+        "issued_at": issued, "start": start, "end": end,
+        "raw_kwh": raw, "live_kwh": live, "learned_kwh": learned,
+        "actual_kwh": actual, "coverage": coverage,
+        "lead": lead_bucket((start - issued) / 3600),
+        "accepted": accepted, "model_version": MODEL_VERSION,
+        "trained": bool(row.get("trained")),
+        "training_samples": max(0, int(number(row.get("training_samples")) or 0)),
+    })
+    if not accepted and not normalized.get("exclusion"):
+        normalized["exclusion"] = "recovered_excluded"
+    return normalized, None
+
+
+def merge_recovery(memory, bundle, now):
+    """Merge scored recovery evidence without replacing live learner state."""
+    if not isinstance(memory, dict) or not isinstance(bundle, dict):
+        raise ValueError("Recovery state and bundle must be JSON objects")
+    current_identity = memory.get("identity")
+    bundle_identity = bundle.get("identity")
+    if not current_identity:
+        raise ValueError("Current solar source identity is not ready; retry after solar sources finish loading")
+    if not bundle_identity or bundle_identity != current_identity:
+        raise ValueError("Recovery bundle solar source identity does not match the current installation")
+    rows = bundle.get("scored")
+    if not isinstance(rows, list):
+        raise ValueError("Recovery bundle is missing its scored forecast rows")
+
+    before = scorecard(memory)
+    scored = memory.setdefault("scored", [])
+    existing_keys = {key for row in scored if (key := _recovery_key(row)) is not None}
+    imported = duplicates = rejected = accepted_imported = excluded_imported = 0
+    reasons = {}
+    for row in rows:
+        normalized, reason = _normalize_recovery_row(row, now)
+        if reason:
+            rejected += 1
+            reasons[reason] = reasons.get(reason, 0) + 1
+            continue
+        key = _recovery_key(normalized)
+        if key in existing_keys:
+            duplicates += 1
+            continue
+        scored.append(normalized)
+        existing_keys.add(key)
+        imported += 1
+        if normalized.get("accepted"):
+            accepted_imported += 1
+        else:
+            excluded_imported += 1
+
+    cutoff = now - RETENTION_DAYS * 86400
+    scored.sort(key=lambda row: (number(row.get("issued_at")) or 0, number(row.get("start")) or 0))
+    memory["scored"] = [row for row in scored if (number(row.get("end")) or 0) >= cutoff][-60000:]
+    after = scorecard(memory)
+    source = bundle.get("recovery") if isinstance(bundle.get("recovery"), dict) else {}
+    return {
+        "bundle_rows": len(rows),
+        "imported_rows": imported,
+        "duplicates_skipped": duplicates,
+        "rejected_rows": rejected,
+        "rejected_reasons": reasons,
+        "accepted_rows_imported": accepted_imported,
+        "excluded_rows_imported": excluded_imported,
+        "scorecard_samples_before": before["accepted_forecasts"],
+        "scorecard_samples_after": after["accepted_forecasts"],
+        "usable_days_before": before["usable_days"],
+        "usable_days_after": after["usable_days"],
+        "issued_rows_before": before["issued_forecast_rows"],
+        "issued_rows_after": after["issued_forecast_rows"],
+        "bundle_source": source.get("source", "external_recovery_bundle"),
+    }
+
+
 def scorecard(memory):
     rows = [r for r in memory.get("scored", []) if r.get("accepted") and r["raw_kwh"] >= 0.05]
     result = {}
