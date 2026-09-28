@@ -75,15 +75,47 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
         sources = {key: cfg.get(key, default) for key, default in DEFAULT_SOLAR_SOURCES.items()}
         source, _ = self._forecast_solar_source()
         signature = self._estimate_source_signature(source) if source else None
-        identity = sha256(json.dumps({"power": power_entity, "energy": energy_entity,
-                                     "weather": sources, "provider": signature}, sort_keys=True).encode()).hexdigest()
-        # Do not reset historical learning merely because provider setup is temporarily unavailable.
-        if source and memory.get("identity") not in (None, identity):
-            memory.clear()
-            memory["reset_reason"] = "production_or_forecast_source_changed"
-            memory["reset_at"] = now.isoformat()
-        if source:
+
+        # A Home Assistant restart can expose Forecast.Solar before Enphase has
+        # registered its lifetime-energy entity. Never turn that partial startup
+        # state into a new identity: doing so would erase valid learning and then
+        # erase it again when Enphase finishes loading.
+        identity_parts = {"power": power_entity, "energy": energy_entity,
+                          "weather": sources, "provider": signature}
+        missing_identity_parts = []
+        if not power_entity:
+            missing_identity_parts.append("power")
+        if not energy_entity:
+            missing_identity_parts.append("energy")
+        if any(not value for value in sources.values()):
+            missing_identity_parts.append("weather")
+        if source is None or signature is None:
+            missing_identity_parts.append("provider")
+
+        identity = None
+        if not missing_identity_parts:
+            identity = sha256(json.dumps(identity_parts, sort_keys=True).encode()).hexdigest()
+            component_fingerprints = {
+                key: sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()
+                for key, value in identity_parts.items()
+            }
+            previous_identity = memory.get("identity")
+            if previous_identity not in (None, identity):
+                previous_fingerprints = memory.get("identity_component_fingerprints")
+                changed_components = (
+                    sorted(
+                        key for key, fingerprint in component_fingerprints.items()
+                        if previous_fingerprints.get(key) != fingerprint
+                    )
+                    if isinstance(previous_fingerprints, dict)
+                    else None
+                )
+                memory.clear()
+                memory["reset_reason"] = "production_or_forecast_source_changed"
+                memory["reset_at"] = now.isoformat()
+                memory["reset_changed_components"] = changed_components
             memory["identity"] = identity
+            memory["identity_component_fingerprints"] = component_fingerprints
         stamp = now.timestamp()
         power = self._reading(power_entity, "power", now)
         energy = self._reading(energy_entity, "energy", now)
@@ -155,6 +187,9 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
             "scored_forecasts": stats["accepted_forecasts"],
             "scored_issue_rows": stats["issued_forecast_rows"], "metrics": stats,
             "last_issue": memory.get("last_issue"), "reset_reason": memory.get("reset_reason"), "reset_at": memory.get("reset_at"),
+            "reset_changed_components": memory.get("reset_changed_components"),
+            "source_identity_status": "complete" if identity is not None else "deferred",
+            "source_identity_missing": missing_identity_parts,
             "hourly_shadow": newest, "retention_days": 90,
             "training_policy": "8 distinct target hours across 7 days per local-hour/lead/cloud group; score latest issue per target and horizon; bounded to +/-25%; never applied"}
         if issued or self._solar_saved_at is None or stamp - self._solar_saved_at >= 300:
