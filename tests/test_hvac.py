@@ -143,6 +143,104 @@ class HVACTests(unittest.TestCase):
         self.assertAlmostEqual(recovery["rate_c_per_hour"], 3.0)
         self.assertAlmostEqual(recovery["eta_minutes"], 50.0)
 
+    def test_recovery_eta_counts_down_without_temperature_change(self):
+        memory = {
+            "recovery_cycles": [{
+                "ended_at": 900,
+                "action": "cooling",
+                "rate_c_per_hour": 1.0,
+                "outdoor_delta_c": 7,
+                "duration_minutes": 60,
+            }]
+        }
+        first = self.sample(1000)
+        first.update(indoor_c=23, target_c=22, outdoor_c=30)
+        first_result = observe(memory, first)["recovery"]
+
+        second = self.sample(1060)
+        second.update(indoor_c=23, target_c=22, outdoor_c=30)
+        second_result = observe(memory, second)["recovery"]
+
+        self.assertAlmostEqual(first_result["eta_minutes"], 60.0)
+        self.assertAlmostEqual(second_result["eta_minutes"], 59.0)
+        self.assertEqual(
+            first_result["eta_target_at"],
+            second_result["eta_target_at"],
+        )
+        self.assertEqual(second_result["eta_method"], "target_time_countdown")
+
+    def test_thermostat_rounding_does_not_double_eta(self):
+        memory = {
+            "recovery_cycles": [{
+                "ended_at": 900,
+                "action": "cooling",
+                "rate_c_per_hour": 1.0,
+                "outdoor_delta_c": 7,
+                "duration_minutes": 60,
+            }]
+        }
+        first = self.sample(1000)
+        first.update(indoor_c=23, target_c=22, outdoor_c=30)
+        observe(memory, first)
+
+        rounded_up = self.sample(1060)
+        rounded_up.update(indoor_c=23.5, target_c=22, outdoor_c=30)
+        recovery = observe(memory, rounded_up)["recovery"]
+
+        self.assertAlmostEqual(recovery["eta_minutes"], 59.0)
+        self.assertAlmostEqual(recovery["eta_raw_minutes"], 90.0)
+        self.assertEqual(recovery["eta_correction_reason"], "initial_estimate")
+
+    def test_live_rate_materially_corrects_target_time(self):
+        memory = {
+            "recovery_cycles": [{
+                "ended_at": 900,
+                "action": "cooling",
+                "rate_c_per_hour": 1.0,
+                "outdoor_delta_c": 7,
+                "duration_minutes": 60,
+            }]
+        }
+        first = self.sample(1000)
+        first.update(indoor_c=23, target_c=22, outdoor_c=30)
+        observe(memory, first)
+
+        second = self.sample(1600)
+        second.update(indoor_c=22.5, target_c=22, outdoor_c=30)
+        recovery = observe(memory, second)["recovery"]
+
+        self.assertAlmostEqual(recovery["rate_c_per_hour"], 3.0)
+        self.assertAlmostEqual(recovery["eta_raw_minutes"], 10.0)
+        self.assertAlmostEqual(recovery["eta_minutes"], 10.0)
+        self.assertEqual(recovery["eta_correction_reason"], "live_rate_correction")
+        self.assertAlmostEqual(recovery["eta_target_at"], 2200.0)
+
+    def test_recovery_eta_survives_restart_without_bridging_temperature_rate(self):
+        memory = {
+            "recovery_cycles": [{
+                "ended_at": 900,
+                "action": "cooling",
+                "rate_c_per_hour": 1.0,
+                "outdoor_delta_c": 7,
+                "duration_minutes": 60,
+            }]
+        }
+        first = self.sample(1000)
+        first.update(indoor_c=23, target_c=22, outdoor_c=30)
+        observe(memory, first)
+
+        restored = deepcopy(memory)
+        restored.pop("previous", None)
+        restored.pop("recovery_call", None)
+
+        after_restart = self.sample(1300)
+        after_restart.update(indoor_c=23, target_c=22, outdoor_c=30)
+        recovery = observe(restored, after_restart)["recovery"]
+
+        self.assertAlmostEqual(recovery["eta_minutes"], 55.0)
+        self.assertAlmostEqual(recovery["eta_target_at"], 4600.0)
+        self.assertAlmostEqual(recovery["eta_raw_minutes"], 60.0)
+
     def test_completed_recovery_cycle_is_retained(self):
         memory = {}
         first = self.sample(1000)

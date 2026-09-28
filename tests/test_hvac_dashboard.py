@@ -154,11 +154,17 @@ class HVACDashboardTests(unittest.TestCase):
         learnedEtaStates['climate.thermostat'].attributes.current_temperature = 73;
         learnedEtaStates['climate.thermostat'].attributes.temperature = 70;
         learnedEtaStates['sensor.energy_planner_hvac_model_status'].attributes.recovery.active = false;
-        learnedEtaStates['sensor.energy_planner_hvac_model_status'].attributes.recovery.eta_minutes = null;
+        learnedEtaStates['sensor.energy_planner_hvac_model_status'].attributes.recovery.eta_minutes = 17;
         learnedEtaStates['sensor.energy_planner_hvac_model_status'].attributes.recovery.rate_c_per_hour = null;
         const learnedEta = render(learnedEtaStates,hass);
-        if (!learnedEta.includes('≈ 1 hr 1 min to target')) {
-          throw Error('Setpoint change did not use learned cooling rate immediately');
+        if (!learnedEta.includes('≈ 17 min to target')) {
+          throw Error('Thermostat face did not prefer backend target-time countdown');
+        }
+
+        learnedEtaStates['sensor.energy_planner_hvac_model_status'].attributes.recovery.eta_minutes = null;
+        const fallbackEta = render(learnedEtaStates,hass);
+        if (!fallbackEta.includes('≈ 1 hr 1 min to target')) {
+          throw Error('Setpoint change did not fall back to learned cooling rate');
         }
 
         const atTargetStates = JSON.parse(JSON.stringify(learnedEtaStates));
