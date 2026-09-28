@@ -27,6 +27,10 @@ ROOM_PREFIXES = (
 )
 _LEGACY_HOMEPOD_PREFIX = "sensor.home_homepod_indoor_climate_"
 _CANONICAL_HOMEPOD_PREFIX = "sensor.homepod_indoor_climate_"
+WEATHER_REFRESH_SECONDS = 1800
+WEATHER_RETRY_SECONDS = 300
+WEATHER_CACHE_MAX_AGE_SECONDS = 6 * 3600
+
 
 
 class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
@@ -142,10 +146,21 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
         )
         current_identity = self._normalize_stored_identity(identity)
 
+        weather_cache = memory.get("weather_cache") if isinstance(memory.get("weather_cache"), dict) else {}
+        weather_hours = weather_cache.get("hours") if isinstance(weather_cache.get("hours"), list) else []
+        interrupted_recovery_call = "recovery_call" in memory
+        interrupted_thermal_window = "thermal_window" in memory
+        if interrupted_recovery_call:
+            memory["recovery_restart_interruptions"] = int(memory.get("recovery_restart_interruptions", 0)) + 1
+        if interrupted_thermal_window:
+            rejections = memory.setdefault("thermal_rejections", {})
+            rejections["restart_interrupted"] = int(rejections.get("restart_interrupted", 0)) + 1
+
         restored = {
             "samples": len(memory.get("samples", [])),
             "recovery_cycles": len(memory.get("recovery_cycles", [])),
             "thermal_samples": len(memory.get("thermal_samples", [])),
+            "weather_hours": len(weather_hours),
         }
 
         # Older stores may not have an identity marker. Adopt the current
@@ -179,6 +194,15 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
             ),
             "restored_thermal_samples": (
                 restored["thermal_samples"] if reset_reason is None else 0
+            ),
+            "restored_weather_hours": (
+                restored["weather_hours"] if reset_reason is None else 0
+            ),
+            "interrupted_recovery_call": (
+                interrupted_recovery_call if reset_reason is None else False
+            ),
+            "interrupted_thermal_window": (
+                interrupted_thermal_window if reset_reason is None else False
             ),
             "reset_reason": reset_reason,
         }
@@ -260,45 +284,135 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
         diagnostics.update(available=True, reason="numeric_available", power_w=value)
         return value, diagnostics
 
-    async def _hourly_weather(self, now):
+    @staticmethod
+    def _usable_weather_hours(cache, now):
+        """Return only a recent last-known-good forecast after restart/fetch failures."""
+        if not isinstance(cache, dict):
+            return []
+        last_success = number(cache.get("last_success"))
+        now_ts = now.timestamp()
         if (
-            self._weather_at is not None
-            and (now - self._weather_at).total_seconds() < 1800
+            last_success is None
+            or now_ts < last_success
+            or now_ts - last_success > WEATHER_CACHE_MAX_AGE_SECONDS
         ):
-            return self._weather_hours
-        self._weather_at = now
-        self._weather_hours = []
+            return []
+        rows = cache.get("hours")
+        if not isinstance(rows, list):
+            return []
+        usable = []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            at = number(row.get("at"))
+            if at is None or not now_ts <= at <= now_ts + 7 * 86400:
+                continue
+            usable.append(row)
+        return usable
+
+    def _weather_diagnostics(self, cache, now, source):
+        now_ts = now.timestamp()
+        last_success = number(cache.get("last_success")) if isinstance(cache, dict) else None
+        last_attempt = number(cache.get("last_attempt")) if isinstance(cache, dict) else None
+        age_minutes = (
+            round((now_ts - last_success) / 60, 1)
+            if last_success is not None and now_ts >= last_success
+            else None
+        )
+        rows = cache.get("hours") if isinstance(cache, dict) else []
+        return {
+            "source": source,
+            "last_success": last_success,
+            "last_attempt": last_attempt,
+            "last_error": cache.get("last_error") if isinstance(cache, dict) else None,
+            "last_error_at": cache.get("last_error_at") if isinstance(cache, dict) else None,
+            "cache_age_minutes": age_minutes,
+            "cached_hours": len(rows) if isinstance(rows, list) else 0,
+            "max_cache_age_minutes": WEATHER_CACHE_MAX_AGE_SECONDS / 60,
+            "retry_minutes": WEATHER_RETRY_SECONDS / 60,
+        }
+
+    async def _hourly_weather(self, now):
+        """Refresh hourly weather without destroying the last known good forecast."""
+        if self._hvac_memory is None:
+            return [], self._weather_diagnostics({}, now, "unavailable")
+        cache = self._hvac_memory.get("weather_cache")
+        if not isinstance(cache, dict):
+            cache = {}
+            self._hvac_memory["weather_cache"] = cache
+
+        now_ts = now.timestamp()
+        last_attempt = number(cache.get("last_attempt"))
+        retry_after = (
+            WEATHER_RETRY_SECONDS if cache.get("last_error") else WEATHER_REFRESH_SECONDS
+        )
+        if (
+            last_attempt is not None
+            and 0 <= now_ts - last_attempt < retry_after
+        ):
+            hours = self._usable_weather_hours(cache, now)
+            source = (
+                "cached_fallback"
+                if cache.get("last_error") and hours
+                else "cached"
+                if hours
+                else "unavailable"
+            )
+            return hours, self._weather_diagnostics(cache, now, source)
+
+        cache["last_attempt"] = now_ts
         entity = self._entity("hvac_weather")
         state = self.hass.states.get(entity)
+        refreshed = False
         if state is None or state.state in ("unknown", "unavailable"):
-            return []
-        try:
-            response = await self.hass.services.async_call(
-                "weather",
-                "get_forecasts",
-                {"entity_id": entity, "type": "hourly"},
-                blocking=True,
-                return_response=True,
-            )
-            for row in (response or {}).get(entity, {}).get("forecast", []):
-                at = dt_util.parse_datetime(row.get("datetime", ""))
-                if at is not None and at.tzinfo is not None:
-                    self._weather_hours.append(
-                        {
-                            "at": at.timestamp(),
-                            "temperature_c": celsius(
-                                row.get("temperature"),
-                                state.attributes.get("temperature_unit"),
-                            ),
-                            "humidity": number(row.get("humidity")),
-                        }
-                    )
-        except Exception:
-            _LOGGER.warning(
-                "HVAC hourly weather unavailable; retaining baseline forecast",
-                exc_info=True,
-            )
-        return self._weather_hours
+            cache["last_error"] = "weather_entity_unavailable"
+            cache["last_error_at"] = now_ts
+        else:
+            try:
+                response = await self.hass.services.async_call(
+                    "weather",
+                    "get_forecasts",
+                    {"entity_id": entity, "type": "hourly"},
+                    blocking=True,
+                    return_response=True,
+                )
+                candidate = []
+                for row in (response or {}).get(entity, {}).get("forecast", []):
+                    at = dt_util.parse_datetime(row.get("datetime", ""))
+                    if at is not None and at.tzinfo is not None:
+                        candidate.append(
+                            {
+                                "at": at.timestamp(),
+                                "temperature_c": celsius(
+                                    row.get("temperature"),
+                                    state.attributes.get("temperature_unit"),
+                                ),
+                                "humidity": number(row.get("humidity")),
+                            }
+                        )
+                if candidate:
+                    cache["hours"] = candidate
+                    cache["last_success"] = now_ts
+                    cache["last_error"] = None
+                    cache["last_error_at"] = None
+                    refreshed = True
+                else:
+                    cache["last_error"] = "empty_hourly_forecast"
+                    cache["last_error_at"] = now_ts
+            except Exception as err:
+                cache["last_error"] = f"weather_service_error:{type(err).__name__}"
+                cache["last_error_at"] = now_ts
+                _LOGGER.warning(
+                    "HVAC hourly weather refresh failed; retaining last known good forecast",
+                    exc_info=True,
+                )
+
+        hours = self._usable_weather_hours(cache, now)
+        source = "live_refresh" if refreshed else "cached_fallback" if hours else "unavailable"
+        # Weather is restart-sensitive and cheap to persist. Save immediately so a
+        # second HA restart cannot erase a successful refresh before the main cycle ends.
+        await self._hvac_store.async_save(self._hvac_memory)
+        return hours, self._weather_diagnostics(cache, now, source)
 
     async def _async_update_data(self):
         data = await super()._async_update_data()
@@ -396,6 +510,9 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                     "restored_samples": 0,
                     "restored_recovery_cycles": 0,
                     "restored_thermal_samples": 0,
+                    "restored_weather_hours": 0,
+                    "interrupted_recovery_call": False,
+                    "interrupted_thermal_window": False,
                     "reset_reason": {
                         "stored": previous_identity,
                         "current": self._normalize_stored_identity(identity),
@@ -489,7 +606,7 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                 sample["humidity"] = None
 
             diagnostics = observe(self._hvac_memory, sample)
-            hours = await self._hourly_weather(now)
+            hours, weather_diagnostics = await self._hourly_weather(now)
             shadow = hourly_forecast(
                 self._hvac_memory.get("samples", []),
                 hours,
@@ -515,6 +632,7 @@ class EnergyPlannerHVACCoordinator(EnergyPlannerV025Coordinator):
                 forecast_applied=False,
                 thermostat_control_enabled=False,
                 weather_available=bool(hours),
+                weather_forecast=weather_diagnostics,
                 entities={k: self._entity(k) for k in DEFAULT_ENTITIES},
                 input_states={key: self._input_state_details(self._entity(key), now)
                               for key in ("hvac_thermostat", "hvac_outdoor_temperature", "hvac_weather", "hvac_stale")},
