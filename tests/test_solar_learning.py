@@ -5,7 +5,7 @@ import sys
 import unittest
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "custom_components" / "energy_planner"))
-from solar_learning import finalize, issue, lead_bucket, observe, prediction, scorecard
+from solar_learning import finalize, issue, lead_bucket, merge_recovery, observe, prediction, scorecard
 
 
 def candidate(start=864000, issued_at=None, **overrides):
@@ -117,6 +117,54 @@ class SolarLearningTests(unittest.TestCase):
         self.assertEqual(lead_bucket(3), "3-12h")
         self.assertEqual(lead_bucket(11.99), "3-12h")
         self.assertEqual(lead_bucket(12), "12-24h")
+
+    def test_recovery_merges_scored_rows_without_touching_live_state(self):
+        existing = dict(candidate(start=10*86400, issued_at=10*86400-3600),
+                        learned_kwh=2.0, actual_kwh=1.8, coverage=1.0,
+                        accepted=True, trained=False)
+        recovered = dict(candidate(start=11*86400, issued_at=11*86400-3600),
+                         learned_kwh=2.0, actual_kwh=1.7, coverage=1.0,
+                         accepted=True, trained=False)
+        memory = {
+            "identity": "same-site",
+            "pending": [{"keep": "live"}],
+            "actual_hours": {"live": {"kwh": 1}},
+            "reset_at": "keep-me",
+            "scored": [deepcopy(existing)],
+        }
+        bundle = {
+            "identity": "same-site",
+            "pending": [{"do_not": "import"}],
+            "actual_hours": {"do_not": "import"},
+            "scored": [deepcopy(existing), recovered],
+            "recovery": {"source": "unit-test"},
+        }
+        audit = merge_recovery(memory, bundle, now=20*86400)
+        self.assertEqual(audit["imported_rows"], 1)
+        self.assertEqual(audit["duplicates_skipped"], 1)
+        self.assertEqual(audit["accepted_rows_imported"], 1)
+        self.assertEqual(memory["pending"], [{"keep": "live"}])
+        self.assertEqual(memory["actual_hours"], {"live": {"kwh": 1}})
+        self.assertEqual(memory["reset_at"], "keep-me")
+        self.assertEqual(memory["identity"], "same-site")
+        self.assertEqual(len(memory["scored"]), 2)
+
+    def test_recovery_rejects_wrong_source_and_future_rows(self):
+        memory = {"identity": "same-site", "scored": []}
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            merge_recovery(memory, {"identity": "other-site", "scored": []}, now=20*86400)
+
+        future = dict(candidate(start=21*86400, issued_at=21*86400-3600),
+                      learned_kwh=2.0, actual_kwh=1.8, coverage=1.0,
+                      accepted=True, trained=False)
+        audit = merge_recovery(
+            memory,
+            {"identity": "same-site", "scored": [future]},
+            now=20*86400,
+        )
+        self.assertEqual(audit["imported_rows"], 0)
+        self.assertEqual(audit["rejected_rows"], 1)
+        self.assertEqual(audit["rejected_reasons"]["invalid_time_order"], 1)
 
     def test_history_is_pruned_and_restart_gap_is_not_integrated(self):
         memory = {'scored': self.training_rows(), 'actual_hours': {'0': {}}}

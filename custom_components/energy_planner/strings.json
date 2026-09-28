@@ -85,5 +85,21 @@
         }
       }
     }
+  },
+  "services": {
+    "restore_solar_learning": {
+      "name": "Restore solar learning",
+      "description": "Safely merge historical scored solar-learning evidence from a recovery bundle into the live learner without replacing current pending forecasts or source state.",
+      "fields": {
+        "recovery_file": {
+          "name": "Recovery file",
+          "description": "JSON recovery bundle inside the Home Assistant config directory, for example solar_learning_recovery_bundle_complete.json."
+        },
+        "config_entry_id": {
+          "name": "Configuration entry ID",
+          "description": "Optional Energy Planner config-entry ID. Leave blank when only one Energy Planner entry is loaded."
+        }
+      }
+    }
   }
 }

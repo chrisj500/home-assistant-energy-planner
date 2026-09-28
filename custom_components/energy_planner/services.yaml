@@ -1,0 +1,10 @@
+restore_solar_learning:
+  fields:
+    recovery_file:
+      required: true
+      selector:
+        text:
+    config_entry_id:
+      required: false
+      selector:
+        text:
