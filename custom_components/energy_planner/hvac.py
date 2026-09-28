@@ -116,6 +116,17 @@ def _directional_progress(action, start_c, end_c):
     return 0.0
 
 
+def _evidence_confidence(samples):
+    """Consumer-style confidence: estimate early, strengthen with evidence."""
+    if samples <= 0:
+        return "none"
+    if samples == 1:
+        return "low"
+    if samples == 2:
+        return "medium"
+    return "high"
+
+
 def _recovery_cycle(call, sample):
     duration = sample["at"] - call["at"]
     if duration < 600 or duration > 4 * 3600:
@@ -196,6 +207,26 @@ def update_recovery(memory, sample, continuous):
                 if 0.05 <= candidate <= 10:
                     live_rate = candidate
 
+    models = {}
+    for recovery_action in ("cooling", "heating"):
+        action_cycles = [row for row in cycles if row["action"] == recovery_action]
+        count = len(action_cycles)
+        confidence = _evidence_confidence(count)
+        models[recovery_action] = {
+            "samples": count,
+            "rate_c_per_hour": (
+                median([row["rate_c_per_hour"] for row in action_cycles])
+                if action_cycles
+                else None
+            ),
+            "confidence": confidence,
+            "status": (
+                "ready" if confidence == "high"
+                else "provisional" if confidence in ("low", "medium")
+                else "learning"
+            ),
+        }
+
     current_delta = abs(sample["indoor_c"] - sample["outdoor_c"])
     matched = [
         row
@@ -203,13 +234,16 @@ def update_recovery(memory, sample, continuous):
         if row["action"] == action
         and abs(row["outdoor_delta_c"] - current_delta) <= 4
     ]
-    if len(matched) < 2:
+    # Prefer weather-similar cycles, but do not suppress an estimate merely
+    # because there is only one. Fall back to all cycles for this action.
+    if not matched:
         matched = [row for row in cycles if row["action"] == action]
     historical_rate = (
         median([row["rate_c_per_hour"] for row in matched])
-        if len(matched) >= 2
+        if matched
         else None
     )
+    historical_confidence = _evidence_confidence(len(matched))
 
     rate = live_rate if live_rate is not None else historical_rate
     source = (
@@ -227,19 +261,31 @@ def update_recovery(memory, sample, continuous):
         eta = min(360.0, error / rate * 60)
 
     recovery_source = source if active else "inactive"
-    recovery_status = (
-        "provisional"
-        if recovery_source == "live_call"
-        else "ready"
-        if recovery_source in ("history", "at_target")
-        else "learning"
-        if active
-        else "inactive"
-    )
+    if not active:
+        recovery_status = "inactive"
+        confidence = "none"
+    elif recovery_source == "at_target":
+        recovery_status = "ready"
+        confidence = historical_confidence
+    elif recovery_source == "live_call":
+        recovery_status = "provisional"
+        confidence = (
+            historical_confidence
+            if historical_confidence != "none"
+            else "low"
+        )
+    elif recovery_source == "history":
+        confidence = historical_confidence
+        recovery_status = "ready" if confidence == "high" else "provisional"
+    else:
+        recovery_status = "learning"
+        confidence = "none"
+
     return {
         "active": active,
         "action": action if active else None,
         "status": recovery_status,
+        "confidence": confidence,
         "eta_minutes": eta,
         "rate_c_per_hour": rate,
         "source": recovery_source,
@@ -248,6 +294,7 @@ def update_recovery(memory, sample, continuous):
             [row for row in cycles if row["action"] in ("cooling", "heating")]
         ),
         "matched_cycles": len(matched) if active else 0,
+        "models": models,
         "restart_interrupted_cycles": int(memory.get("recovery_restart_interruptions", 0)),
     }
 
@@ -344,16 +391,19 @@ def update_thermal_model(memory, sample, continuous):
         live["coefficient_per_hour"]
         if live is not None
         else median(coefficients)
-        if len(coefficients) >= 3
+        if coefficients
         else None
     )
     source = (
         "live_window"
         if live is not None
         else "history"
-        if len(coefficients) >= 3
+        if coefficients
         else "learning"
     )
+    confidence = _evidence_confidence(len(coefficients))
+    if live is not None and confidence == "none":
+        confidence = "low"
     drift = (
         -coefficient * (sample["indoor_c"] - sample["outdoor_c"])
         if coefficient is not None
@@ -361,15 +411,17 @@ def update_thermal_model(memory, sample, continuous):
     )
     return {
         "status": (
-            "provisional"
-            if source == "live_window"
-            else "ready"
-            if source == "history"
+            "ready"
+            if source == "history" and confidence == "high"
+            else "provisional"
+            if coefficient is not None
             else "learning"
         ),
+        "confidence": confidence,
         "source": source,
         "samples": len(history),
-        "samples_required": 3,
+        "samples_required": 1,
+        "samples_required_for_ready": 3,
         "coefficient_per_hour": coefficient,
         "time_constant_hours": 1 / coefficient if coefficient else None,
         "predicted_drift_c_per_hour": drift,
