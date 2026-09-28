@@ -568,6 +568,191 @@ class HVACTests(unittest.TestCase):
         )
         self.assertEqual(target_result["recovery"]["source"], "at_target")
 
+    def test_target_duration_is_retained_when_precision_rate_is_unusable(self):
+        memory = {}
+        start = self.sample(1000)
+        start.update(
+            indoor_c=23,
+            precision_indoor_c=22.1,
+            precision_temperature_source="homepod_physical_room_median",
+            target_c=22,
+            outdoor_c=30,
+        )
+        observe(memory, start)
+
+        middle = self.sample(1300)
+        middle.update(
+            indoor_c=23,
+            precision_indoor_c=22.05,
+            precision_temperature_source="homepod_physical_room_median",
+            target_c=22,
+            outdoor_c=30,
+        )
+        observe(memory, middle)
+
+        target = self.sample(1660)
+        target.update(
+            indoor_c=22,
+            precision_indoor_c=22.0,
+            precision_temperature_source="homepod_physical_room_median",
+            target_c=22,
+            outdoor_c=30,
+            condenser_w=1500,
+            blower_w=300,
+        )
+        result = observe(memory, target)
+
+        self.assertEqual(len(memory["recovery_cycles"]), 1)
+        cycle = memory["recovery_cycles"][0]
+        self.assertEqual(cycle["phase_end"], "target_reached")
+        self.assertAlmostEqual(cycle["logical_duration_minutes"], 11.0)
+        self.assertAlmostEqual(cycle["start_error_c"], 1.0)
+        self.assertIsNone(cycle["rate_c_per_hour"])
+        self.assertFalse(cycle["rate_sample_valid"])
+        self.assertEqual(
+            cycle["rate_rejection_reason"],
+            "insufficient_precision_movement",
+        )
+        model = result["recovery"]["models"]["cooling"]
+        self.assertEqual(model["clean_target_samples"], 1)
+        self.assertEqual(model["duration_samples"], 1)
+        self.assertEqual(model["rate_samples"], 0)
+        self.assertEqual(model["usable_eta_samples"], 1)
+        self.assertAlmostEqual(model["duration_minutes_per_c"], 11.0)
+        self.assertAlmostEqual(
+            result["recovery"]["overrun"]["recovery_duration_minutes"],
+            11.0,
+        )
+
+        stopped = self.sample(1720)
+        stopped.update(
+            action="idle",
+            indoor_c=22,
+            precision_indoor_c=22.0,
+            target_c=22,
+            outdoor_c=30,
+            condenser_w=0,
+            blower_w=10,
+        )
+        observe(memory, stopped)
+
+        next_call = self.sample(2000)
+        next_call.update(
+            indoor_c=23,
+            precision_indoor_c=22.1,
+            target_c=22,
+            outdoor_c=30,
+        )
+        recovery = observe(memory, next_call)["recovery"]
+
+        self.assertEqual(recovery["source"], "history_duration")
+        self.assertAlmostEqual(recovery["eta_raw_minutes"], 11.0)
+        self.assertAlmostEqual(recovery["eta_minutes"], 11.0)
+        self.assertEqual(recovery["matched_duration_cycles"], 1)
+        self.assertEqual(recovery["matched_rate_cycles"], 0)
+        self.assertIsNone(recovery["rate_c_per_hour"])
+
+    def test_v060_overrun_backfills_dropped_target_duration_once(self):
+        memory = {
+            "recovery_cycles": [],
+            "overrun_cycles": [],
+            "overrun_call": {
+                "at": 1660,
+                "last_at": 1660,
+                "action": "cooling",
+                "target_c": 22,
+                "call_started_at": 1000,
+                "recovery_duration_minutes": 11.0,
+                "recovery_rate_c_per_hour": None,
+                "started_mid_overrun": False,
+                "temperature_signal_source": "homepod_physical_room_median",
+            },
+        }
+        sample = self.sample(1720)
+        sample.update(
+            indoor_c=22,
+            precision_indoor_c=22.0,
+            target_c=22,
+            outdoor_c=30,
+        )
+
+        first = observe(memory, sample)
+        second_sample = self.sample(1780)
+        second_sample.update(
+            indoor_c=22,
+            precision_indoor_c=21.9,
+            target_c=22,
+            outdoor_c=30,
+        )
+        observe(memory, second_sample)
+
+        self.assertEqual(len(memory["recovery_cycles"]), 1)
+        cycle = memory["recovery_cycles"][0]
+        self.assertTrue(cycle["backfilled_from_overrun"])
+        self.assertEqual(cycle["phase_end"], "target_reached")
+        self.assertAlmostEqual(cycle["logical_duration_minutes"], 11.0)
+        self.assertIsNone(cycle["start_error_c"])
+        self.assertFalse(cycle["duration_sample_valid"])
+        self.assertEqual(first["recovery"]["clean_target_cycles"], 1)
+        self.assertEqual(
+            first["recovery"]["models"]["cooling"]["usable_eta_samples"],
+            0,
+        )
+
+    def test_v060_duration_only_backfill_keeps_legacy_eta_until_usable_clean_cycle(self):
+        memory = {
+            "recovery_cycles": [
+                {
+                    "ended_at": 900,
+                    "action": "cooling",
+                    "rate_c_per_hour": 1.0,
+                    "outdoor_delta_c": 7,
+                    "duration_minutes": 60,
+                }
+            ],
+            "overrun_cycles": [],
+            "overrun_call": {
+                "at": 1660,
+                "last_at": 1660,
+                "action": "cooling",
+                "target_c": 22,
+                "call_started_at": 1000,
+                "recovery_duration_minutes": 11.0,
+                "recovery_rate_c_per_hour": None,
+                "started_mid_overrun": False,
+                "temperature_signal_source": "homepod_physical_room_median",
+            },
+        }
+        active = self.sample(1720)
+        active.update(
+            indoor_c=22,
+            precision_indoor_c=22.0,
+            target_c=22,
+            outdoor_c=30,
+        )
+        observe(memory, active)
+
+        stopped = self.sample(1780)
+        stopped.update(
+            action="idle",
+            indoor_c=22,
+            precision_indoor_c=22.0,
+            target_c=22,
+            outdoor_c=30,
+            condenser_w=0,
+            blower_w=10,
+        )
+        observe(memory, stopped)
+
+        next_call = self.sample(2000)
+        next_call.update(indoor_c=23, target_c=22, outdoor_c=30)
+        recovery = observe(memory, next_call)["recovery"]
+
+        self.assertEqual(recovery["clean_target_cycles"], 1)
+        self.assertEqual(recovery["model_population"], "legacy_cycles")
+        self.assertEqual(recovery["source"], "history")
+        self.assertAlmostEqual(recovery["eta_minutes"], 60.0)
+
     def test_equipment_stop_finalizes_overrun_model(self):
         memory = {}
         start = self.sample(1000)
@@ -882,7 +1067,7 @@ class HVACTests(unittest.TestCase):
         result = observe(memory, next_call)
         recovery = result["recovery"]
 
-        self.assertEqual(recovery["source"], "history")
+        self.assertEqual(recovery["source"], "history_duration")
         self.assertEqual(recovery["status"], "provisional")
         self.assertEqual(recovery["confidence"], "low")
         self.assertIsNotNone(recovery["eta_minutes"])
