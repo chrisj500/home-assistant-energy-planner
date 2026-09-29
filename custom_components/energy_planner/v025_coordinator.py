@@ -338,6 +338,18 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         reserve = number(data.get("effective_reserve_floor"))
         if any(number(v) is None for v in (*socs, limit, load, reserve)) or capacity <= 0:
             raise ValueError("Missing physical inputs")
+
+        load_profile_w = {}
+        for item in data.get("rolling_planning_load_profile_w") or []:
+            if not isinstance(item, dict):
+                continue
+            day = dt_util.parse_date(str(item.get("date", "")))
+            value = number(item.get("load_w"))
+            if day is not None and value is not None and value >= 0:
+                load_profile_w[day] = value
+        load_profile_kw = {
+            day: value / 1000.0 for day, value in load_profile_w.items()
+        }
         windows = []
         for row in rows:
             day = dt_util.parse_date(row["date"])
@@ -409,6 +421,7 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             points=points,
             average_load_kw=load / 1000,
             overnight_drop_kw=median_drop,
+            load_profile_kw=load_profile_kw,
             **common,
         )
 
@@ -421,6 +434,7 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         export_defense = []
         for mid in nominal:
             window = window_by_date[mid.day]
+            day_load_kw = load_profile_kw.get(mid.day, load / 1000.0)
             stress_common = dict(
                 reference=mid.start,
                 daylight_windows=[window],
@@ -434,13 +448,13 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             )
             low_day = simulate_rolling_days(
                 points=lower_points,
-                average_load_kw=load / 1000 * 1.30,
+                average_load_kw=day_load_kw * 1.30,
                 overnight_drop_kw=0.0,
                 **stress_common,
             )
             high_day = simulate_rolling_days(
                 points=upper_points,
-                average_load_kw=load / 1000 * .70,
+                average_load_kw=day_load_kw * .70,
                 overnight_drop_kw=0.0,
                 **stress_common,
             )
@@ -462,6 +476,7 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 points=points,
                 average_load_kw=load / 1000,
                 overnight_drop_kw=median_drop,
+                load_profile_kw=load_profile_kw,
                 **{**common, "initial_bank_socs_pct": counterfactual_socs},
             )
 
@@ -558,6 +573,10 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 # Human-facing point estimate. Unlike the safety envelope above,
                 # this follows the live-anchored interval curve for the current day.
                 "display_sunset_soc_pct": round(mid.end_soc_pct, 2),
+                "planning_load_w": round(
+                    load_profile_w.get(mid.day, load),
+                    1,
+                ),
                 "display_uncertainty_pct": display_uncertainty,
                 "display_forecast_source": display_source,
                 "display_confidence": profile["confidence"],
