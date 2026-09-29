@@ -149,6 +149,19 @@ class EnergyPlannerV018Coordinator(EnergyPlannerV017Coordinator):
                 "No solar daylight windows are available for the forecast horizon"
             )
 
+        load_profile_rows = output.get("rolling_planning_load_profile_w") or []
+        load_profile_kw = {}
+        for item in load_profile_rows:
+            if not isinstance(item, dict):
+                continue
+            day = dt_util.parse_date(str(item.get("date", "")))
+            try:
+                load_w = float(item.get("load_w"))
+            except (TypeError, ValueError):
+                continue
+            if day is not None and load_w >= 0:
+                load_profile_kw[day] = load_w / 1000.0
+
         plans = simulate_rolling_days(
             points=points,
             reference=now,
@@ -161,6 +174,7 @@ class EnergyPlannerV018Coordinator(EnergyPlannerV017Coordinator):
             controller=controller,
             average_load_kw=planning_load_w / 1000.0,
             overnight_drop_kw=overnight_drop_kw,
+            load_profile_kw=load_profile_kw,
             step_minutes=5,
         )
         rows = serialize_dynamic_load_days(
@@ -195,6 +209,10 @@ class EnergyPlannerV018Coordinator(EnergyPlannerV017Coordinator):
                     "interval_source": getattr(self, "_estimate_origin", "unknown"),
                     "forecast_points": len(points),
                     "planning_load_w": planning_load_w,
+                    "planning_load_profile_w": load_profile_rows,
+                    "planning_load_profile_source": output.get(
+                        "rolling_planning_load_profile_source"
+                    ),
                     "charge_limit_pct": float(charge_limit),
                     "battery_soc_pct": list(bank_socs),
                     "battery_capacity_kwh": capacity,
