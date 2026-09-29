@@ -9,10 +9,16 @@ from homeassistant.const import SUN_EVENT_SUNRISE, SUN_EVENT_SUNSET
 from homeassistant.core import HomeAssistant, State
 from homeassistant.helpers.storage import Store
 from homeassistant.helpers.sun import get_astral_event_date
-from homeassistant.helpers.update_coordinator import DataUpdateCoordinator
+from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 from homeassistant.util import dt as dt_util
 
-from .battery_topology import BatteryTopology, resolve_battery_topology
+from .battery_topology import (
+    BatteryTopology,
+    deserialize_battery_topology,
+    resolve_battery_topology,
+    same_physical_topology,
+    serialize_battery_topology,
+)
 from .calibration import (
     CalibrationProfile,
     HeadroomDecision,
@@ -72,6 +78,7 @@ from .strategy import (
 _LOGGER = logging.getLogger(__name__)
 INVALID_STATES = {"unknown", "unavailable", "none", ""}
 _CALIBRATION_STORE_VERSION = 1
+_BATTERY_TOPOLOGY_STORE_VERSION = 1
 
 _CONTROLLER_DEFAULTS: dict[str, float | str] = {
     "operating_mode": "observe",
@@ -354,11 +361,34 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             f"energy_planner.{entry.entry_id}.calibration",
         )
         self._calibration_data: dict[str, Any] | None = None
+        self._battery_topology_store: Store[dict[str, Any]] = Store(
+            hass,
+            _BATTERY_TOPOLOGY_STORE_VERSION,
+            f"energy_planner.{entry.entry_id}.battery_topology",
+        )
         self._battery_topology: BatteryTopology | None = None
+        self._battery_topology_loaded = False
 
     @property
     def cfg(self) -> dict[str, Any]:
         return {**self.entry.data, **self.entry.options}
+
+    async def _ensure_battery_topology(self) -> BatteryTopology | None:
+        """Load the last confirmed physical topology before live discovery."""
+        if not self._battery_topology_loaded:
+            loaded = await self._battery_topology_store.async_load()
+            self._battery_topology = deserialize_battery_topology(loaded)
+            self._battery_topology_loaded = True
+        return self._battery_topology
+
+    async def _save_battery_topology(
+        self,
+        topology: BatteryTopology,
+    ) -> None:
+        """Persist stable physical topology only after live EcoFlow confirmation."""
+        await self._battery_topology_store.async_save(
+            serialize_battery_topology(topology)
+        )
 
     async def _ensure_calibration_data(self) -> dict[str, Any]:
         if self._calibration_data is None:
@@ -523,24 +553,32 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             and today_sunrise <= now < today_sunset
         )
 
-        previous_topology = self._battery_topology
+        previous_topology = await self._ensure_battery_topology()
         topology = resolve_battery_topology(
             self.hass,
             cfg,
             previous=previous_topology,
         )
-        topology_changed = False
-        if topology.auto_detected:
-            if previous_topology is not None and previous_topology.auto_detected:
-                topology_changed = (
-                    previous_topology.pack_counts != topology.pack_counts
-                    or abs(previous_topology.capacity_kwh - topology.capacity_kwh) > 0.01
-                )
-            elif abs(
-                topology.capacity_kwh - topology.configured_capacity_kwh
-            ) > 0.01:
-                topology_changed = True
-            self._battery_topology = topology
+        if topology is None:
+            raise UpdateFailed(
+                "Battery topology unavailable: waiting for EcoFlow IoT to "
+                "report all three Delta Pro Ultra pack counts"
+            )
+
+        topology_changed = (
+            topology.source == "ecoflow_iot"
+            and previous_topology is not None
+            and not same_physical_topology(previous_topology, topology)
+        )
+        if topology.source == "ecoflow_iot":
+            should_persist = (
+                previous_topology is None
+                or not same_physical_topology(previous_topology, topology)
+                or previous_topology.bank_ids != topology.bank_ids
+            )
+            if should_persist:
+                await self._save_battery_topology(topology)
+        self._battery_topology = topology
 
         bank_socs = topology.bank_socs_pct
         capacity = topology.capacity_kwh
@@ -1107,7 +1145,6 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "stored_energy": stored,
             "battery_headroom": headroom,
             "battery_capacity_kwh": capacity,
-            "battery_configured_capacity_kwh": topology.configured_capacity_kwh,
             "battery_bank_socs_pct": list(bank_socs) if bank_socs else None,
             "battery_bank_capacities_kwh": list(bank_capacities),
             "battery_topology_source": topology.source,
