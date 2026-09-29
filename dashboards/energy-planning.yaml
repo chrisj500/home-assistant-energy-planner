@@ -1087,19 +1087,24 @@ views:
                       row?.display_sunset_soc_pct != null
                         ? Number(row.display_sunset_soc_pct)
                         : Number(value);
-                    const uncertainty =
-                      row?.display_uncertainty_pct != null &&
-                      Number.isFinite(Number(row.display_uncertainty_pct))
-                        ? Number(row.display_uncertainty_pct)
+                    const scenarioLow =
+                      row?.sunset_soc_low_pct != null &&
+                      Number.isFinite(Number(row.sunset_soc_low_pct))
+                        ? clamp(row.sunset_soc_low_pct)
+                        : null;
+                    const scenarioHigh =
+                      row?.sunset_soc_high_pct != null &&
+                      Number.isFinite(Number(row.sunset_soc_high_pct))
+                        ? clamp(row.sunset_soc_high_pct)
                         : null;
                     const confidence =
                       row?.display_confidence
                         ? String(row.display_confidence).replaceAll('_',' ')
                         : '';
                     const confidenceText =
-                      uncertainty === null
-                        ? (confidence || 'forecast')
-                        : `±${uncertainty.toFixed(uncertainty >= 10 ? 0 : 1)}%${confidence ? ` · ${confidence}` : ''}`;
+                      scenarioLow !== null && scenarioHigh !== null
+                        ? `${scenarioLow.toFixed(0)}–${scenarioHigh.toFixed(0)}% · ${confidence || 'scenario'}`
+                        : (confidence || 'forecast');
 
                     return `
                     <div style="
