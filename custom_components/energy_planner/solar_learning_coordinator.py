@@ -293,7 +293,7 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
                     "short_horizon_live_pv_power",
                     "prior_out_of_sample_v4_1_performance",
                 ],
-                "training_policy": "tuned continuous weather residual; hard lead locality (1.5h/3h/4h by horizon), target-midpoint solar geometry, >=6 unique target hours across 3 days with >=3 effective neighbors; correction cap grows with evidence and prior out-of-sample performance; absolute ceiling +/-30%; shadow only",
+                "training_policy": "tuned continuous weather residual; hard lead locality (1.5h/3h/4h by horizon), target-midpoint solar geometry, >=6 unique target hours across 3 days with >=3 effective neighbors; correction cap grows with evidence and prior out-of-sample performance, with additional horizon authority 100%/65%/40% for 0-3h/3-12h/12-24h; absolute ceiling +/-20%; shadow only",
             },
             "last_issue": memory.get("last_issue"), "reset_reason": memory.get("reset_reason"), "reset_at": memory.get("reset_at"),
             "reset_changed_components": memory.get("reset_changed_components"),
