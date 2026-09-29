@@ -21,6 +21,13 @@ from .solar_learning_v4 import (
     ensure_shadow as ensure_v4_shadow,
     scorecard as v4_scorecard,
 )
+from .solar_learning_v41 import (
+    MODEL_NAME as V41_MODEL_NAME,
+    MODEL_VERSION as V41_MODEL_VERSION,
+    annotate_latest as annotate_v41_latest,
+    ensure_shadow as ensure_v41_shadow,
+    scorecard as v41_scorecard,
+)
 
 _LOGGER = logging.getLogger(__name__)
 DEFAULT_SOLAR_SOURCES = {
@@ -152,6 +159,13 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
         observe(memory, sample)
         finalize(memory, stamp)
         v4_backfill = ensure_v4_shadow(memory)
+        site_latitude = number(self.hass.config.latitude)
+        site_longitude = number(self.hass.config.longitude)
+        v41_backfill = ensure_v41_shadow(
+            memory,
+            site_latitude,
+            site_longitude,
+        )
         points = interval_points_from_payload(self._estimate_payload, now, assume_utc=True)
         points = [p for p in points if number(p.watts) is not None]
         success = self._estimate_last_success
@@ -194,15 +208,25 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
                     "observed_at_issue": sample})
             issue(memory, candidates)
             annotate_v4_latest(memory, stamp)
+            annotate_v41_latest(
+                memory,
+                stamp,
+                site_latitude,
+                site_longitude,
+            )
             issued = bool(candidates)
         pending = memory.get("pending", [])
         newest = [r for r in pending if r["issued_at"] == memory.get("last_issue")]
         stats = scorecard(memory)
         v4_stats = v4_scorecard(memory)
+        v41_stats = v41_scorecard(memory)
         state = "collecting" if valid else "production_unavailable"
         if not forecast_fresh:
             state = "forecast_unavailable"
-        elif any(r.get("trained") or r.get("v4_trained") for r in newest):
+        elif any(
+            r.get("trained") or r.get("v4_trained") or r.get("v41_trained")
+            for r in newest
+        ):
             state = "shadow" if valid else state
         v4_state = (
             "forecast_unavailable"
@@ -211,6 +235,15 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
             if not valid
             else "shadow"
             if v4_stats["trained_forecasts"] > 0
+            else "collecting"
+        )
+        v41_state = (
+            "forecast_unavailable"
+            if not forecast_fresh
+            else "production_unavailable"
+            if not valid
+            else "shadow"
+            if v41_stats["trained_forecasts"] > 0
             else "collecting"
         )
         diagnostic = {"forecast_applied": False, "model": "hour_lead_cloud_residual_v3", "model_version": 3,
@@ -240,6 +273,28 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
                 ],
                 "training_policy": "distance-weighted continuous weather residual; at least 6 unique target hours across 3 days with >=3 effective neighbors; latest comparable forecast per historical target; regularized toward Forecast.Solar; bounded to +/-40%; shadow only",
             },
+            "v4_1": {
+                "forecast_applied": False,
+                "model": V41_MODEL_NAME,
+                "model_version": V41_MODEL_VERSION,
+                "status": v41_state,
+                "trained_forecasts": v41_stats["trained_forecasts"],
+                "metrics": v41_stats,
+                "backfill": v41_backfill,
+                "features": [
+                    "forecast_sky_continuous",
+                    "target_sun_elevation_deg",
+                    "target_sun_azimuth_deg",
+                    "local_hour",
+                    "continuous_lead_hours_tight_window",
+                    "raw_forecast_kwh",
+                    "forecast_temperature_c",
+                    "short_horizon_ecowitt_radiation",
+                    "short_horizon_live_pv_power",
+                    "prior_out_of_sample_v4_1_performance",
+                ],
+                "training_policy": "tuned continuous weather residual; hard lead locality (1.5h/3h/4h by horizon), target-midpoint solar geometry, >=6 unique target hours across 3 days with >=3 effective neighbors; correction cap grows with evidence and prior out-of-sample performance, with additional horizon authority 100%/65%/40% for 0-3h/3-12h/12-24h; absolute ceiling +/-20%; shadow only",
+            },
             "last_issue": memory.get("last_issue"), "reset_reason": memory.get("reset_reason"), "reset_at": memory.get("reset_at"),
             "reset_changed_components": memory.get("reset_changed_components"),
             "source_identity_status": "complete" if identity is not None else "deferred",
@@ -254,7 +309,9 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
                 "solar_learning_usable_days": stats["usable_days"],
                 "solar_learning_scored_forecasts": stats["accepted_forecasts"],
                 "solar_learning_v4_status": v4_state,
-                "solar_learning_v4_trained_forecasts": v4_stats["trained_forecasts"]}
+                "solar_learning_v4_trained_forecasts": v4_stats["trained_forecasts"],
+                "solar_learning_v41_status": v41_state,
+                "solar_learning_v41_trained_forecasts": v41_stats["trained_forecasts"]}
 
     async def _async_update_data(self):
         data = await super()._async_update_data()

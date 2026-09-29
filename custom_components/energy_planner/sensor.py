@@ -88,6 +88,18 @@ SENSORS = (
         state_class=SensorStateClass.MEASUREMENT,
         suggested_display_precision=0,
     ),
+    EnergyPlannerSensorDescription(
+        key="solar_learning_v41_status",
+        data_key="solar_learning_v41_status",
+        name="Solar Learning v4.1 Status",
+    ),
+    EnergyPlannerSensorDescription(
+        key="solar_learning_v41_trained_forecasts",
+        data_key="solar_learning_v41_trained_forecasts",
+        name="Solar Learning v4.1 Trained Forecasts",
+        state_class=SensorStateClass.MEASUREMENT,
+        suggested_display_precision=0,
+    ),
     EnergyPlannerSensorDescription(key="hvac_daily_electricity", data_key="hvac_daily_electricity_kwh", name="HVAC Daily Electricity", native_unit_of_measurement=UnitOfEnergy.KILO_WATT_HOUR, device_class=SensorDeviceClass.ENERGY, state_class=SensorStateClass.TOTAL_INCREASING),
     EnergyPlannerSensorDescription(key="hvac_status", data_key="hvac_status", name="HVAC Model Status"),
     EnergyPlannerSensorDescription(key="hvac_electrical_power", data_key="hvac_electrical_power_w", name="HVAC Electrical Power", native_unit_of_measurement=UnitOfPower.WATT, device_class=SensorDeviceClass.POWER, state_class=SensorStateClass.MEASUREMENT),
