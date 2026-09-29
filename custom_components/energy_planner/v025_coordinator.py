@@ -744,12 +744,9 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             # Snapshot BEFORE migration so schema upgrades are guaranteed to be
             # persisted even when this refresh does not otherwise change state.
             previous_trust = deepcopy(self._trust)
-            legacy_capacity = number(self.cfg.get(CONF_CAPACITY_KWH))
-            if legacy_capacity is None:
-                legacy_capacity = (
-                    number(data.get("battery_capacity_kwh"))
-                    or DEFAULT_CAPACITY_KWH
-                )
+            legacy_capacity = number(
+                self.cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH)
+            )
             migrated_records, migration = migrate_records(
                 self._trust["records"],
                 fallback_capacity_kwh=legacy_capacity,
