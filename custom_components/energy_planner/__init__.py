@@ -13,6 +13,10 @@ from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers.typing import ConfigType
 
 from .const import DOMAIN, PLATFORMS
+from .config_migration import (
+    CONFIG_ENTRY_VERSION,
+    remove_legacy_topology_keys,
+)
 from .solar_policy import migrated_solar_options
 from .solar_learning_coordinator import EnergyPlannerSolarLearningCoordinator
 
@@ -74,6 +78,33 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         async_restore_solar_learning,
         schema=RESTORE_SCHEMA,
     )
+    return True
+
+
+async def async_migrate_entry(
+    hass: HomeAssistant,
+    entry: EnergyPlannerConfigEntry,
+) -> bool:
+    """Migrate legacy Energy Planner config entries before setup."""
+    if entry.version > CONFIG_ENTRY_VERSION:
+        _LOGGER.error(
+            "Cannot migrate Energy Planner config entry from version %s to %s",
+            entry.version,
+            CONFIG_ENTRY_VERSION,
+        )
+        return False
+
+    data, options, changed = remove_legacy_topology_keys(
+        dict(entry.data),
+        dict(entry.options),
+    )
+    if changed or entry.version != CONFIG_ENTRY_VERSION:
+        hass.config_entries.async_update_entry(
+            entry,
+            data=data,
+            options=options,
+            version=CONFIG_ENTRY_VERSION,
+        )
     return True
 
 
