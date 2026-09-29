@@ -9,8 +9,8 @@ from homeassistant.util import dt as dt_util
 
 from .const import (
     CONF_ACTUAL_SOLAR_POWER, CONF_BASE_LOAD_POWER, CONF_CAPACITY_KWH,
-    CONF_CHARGE_LIMIT, CONF_SOC_1, CONF_SOC_2, CONF_SOC_3, CONF_SOC_WEIGHTS,
-    CONF_SOLAR_REMAINING, CONF_EV_HOME, DEFAULT_CAPACITY_KWH, DEFAULT_WEIGHTS,
+    CONF_CHARGE_LIMIT, CONF_SOC_1, CONF_SOC_2, CONF_SOC_3,
+    CONF_SOLAR_REMAINING, CONF_EV_HOME, DEFAULT_CAPACITY_KWH,
     DEFAULT_CHARGE_EFFICIENCY, OPT_CHARGE_EFFICIENCY,
     OPT_EV_SOLAR_ADVISORY_ENABLED, DEFAULT_EV_SOLAR_ADVISORY_ENABLED,
 )
@@ -780,26 +780,17 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 "capacity_kwh": previous_signature.get("capacity_kwh"),
                 "pack_counts": previous_signature.get("pack_counts"),
             }
-        first_dynamic_change = (
-            previous_signature is None
-            and data.get("battery_topology_source") in {
-                "ecoflow_iot",
-                "ecoflow_iot_cached",
-            }
-            and abs(
-                (number(data.get("battery_capacity_kwh")) or 0.0)
-                - (number(data.get("battery_configured_capacity_kwh")) or 0.0)
-            )
-            > 0.01
-        )
         signature_changed = (
             previous_signature is not None
             and previous_signature != topology_signature
         )
-        if first_dynamic_change or signature_changed:
-            # Completed forecast evidence is stored in physical kWh and remains
-            # valid across capacity changes. Only transient state that spans the
-            # hardware change is invalidated.
+        confirmed_physical_change = bool(
+            data.get("battery_topology_changed")
+        )
+        if confirmed_physical_change:
+            # The base coordinator compares live EcoFlow topology against its
+            # persisted last-known-good topology. Only that confirmed physical
+            # change may invalidate cross-topology transient reliability state.
             preserved_samples = len(self._trust.get("records", []))
             discarded_pending = len(self._trust.get("pending", {}))
             self._trust["pending"] = {}
@@ -819,9 +810,21 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 "from": previous_signature,
                 "to": topology_signature,
             }
+        elif signature_changed:
+            # A reliability-store signature can lag the independently persisted
+            # physical topology after upgrades or an interrupted write. Resync it
+            # without pretending the hardware changed and without clearing
+            # pending learning state.
+            self._trust["battery_topology_resync"] = {
+                "reason": "signature_resynced_to_confirmed_topology",
+                "at": now.isoformat(),
+                "from": previous_signature,
+                "to": topology_signature,
+            }
         self._trust["battery_topology_signature"] = topology_signature
         migration_info = self._trust.get("reliability_record_migration") or {}
         rebase_info = self._trust.get("battery_topology_rebase") or {}
+        resync_info = self._trust.get("battery_topology_resync") or {}
         data.update(
             forecast_reliability_record_schema=self._trust.get(
                 "reliability_record_schema",
@@ -843,6 +846,10 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             ),
             forecast_learning_discarded_pending=rebase_info.get(
                 "discarded_pending"
+            ),
+            forecast_learning_topology_resynced_at=resync_info.get("at"),
+            forecast_learning_topology_resync_reason=resync_info.get(
+                "reason"
             ),
         )
 

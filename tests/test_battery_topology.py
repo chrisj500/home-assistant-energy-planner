@@ -77,14 +77,11 @@ def hass_with(dpus, socs=(31, 30, 41)):
     )
 
 
-def cfg(auto=True):
+def cfg():
     return {
         const.CONF_SOC_1: "s1",
         const.CONF_SOC_2: "s2",
         const.CONF_SOC_3: "s3",
-        const.CONF_SOC_WEIGHTS: "3,2,3",
-        const.CONF_CAPACITY_KWH: 49.152,
-        const.OPT_AUTO_BATTERY_TOPOLOGY: auto,
     }
 
 
@@ -185,26 +182,113 @@ class BatteryTopologyTests(unittest.TestCase):
         self.assertAlmostEqual(cached.capacity_kwh, 55.296, places=3)
         self.assertEqual(cached.bank_socs_pct, (32.0, 31.0, 42.0))
 
-    def test_manual_configuration_remains_available_as_fallback(self):
+    def test_first_boot_waits_for_ecoflow_instead_of_using_manual_fallback(self):
         hass = SimpleNamespace(
             states=States({"s1": 31, "s2": 30, "s3": 41}),
             config_entries=ConfigEntries([]),
         )
         result = topology.resolve_battery_topology(hass, cfg())
-        self.assertEqual(result.source, "configured")
-        self.assertAlmostEqual(result.capacity_kwh, 49.152, places=3)
+        self.assertIsNone(result)
 
-    def test_auto_detection_can_be_disabled(self):
+    def test_persisted_last_known_good_topology_bridges_startup(self):
+        live_hass = hass_with(
+            [
+                dpu("dpu-a", 3, 31),
+                dpu("dpu-b", 3, 30),
+                dpu("dpu-c", 3, 41),
+            ]
+        )
+        confirmed = topology.resolve_battery_topology(live_hass, cfg())
+        stored = topology.serialize_battery_topology(confirmed)
+        restored = topology.deserialize_battery_topology(stored)
+
+        startup_hass = SimpleNamespace(
+            states=States({"s1": 32, "s2": 31, "s3": 42}),
+            config_entries=ConfigEntries([]),
+        )
+        cached = topology.resolve_battery_topology(
+            startup_hass,
+            cfg(),
+            previous=restored,
+        )
+
+        self.assertEqual(cached.source, "ecoflow_iot_cached")
+        self.assertEqual(cached.pack_counts, (3, 3, 3))
+        self.assertEqual(cached.bank_socs_pct, (32.0, 31.0, 42.0))
+        self.assertAlmostEqual(cached.capacity_kwh, 55.296, places=3)
+        self.assertEqual(cached.discovered_dpu_count, 0)
+
+    def test_persistence_round_trip_does_not_store_stale_soc(self):
         hass = hass_with(
             [
                 dpu("dpu-a", 3, 31),
-                dpu("dpu-b", 2, 30),
-                dpu("dpu-c", 4, 41),
+                dpu("dpu-b", 3, 30),
+                dpu("dpu-c", 3, 41),
             ]
         )
-        result = topology.resolve_battery_topology(hass, cfg(auto=False))
-        self.assertEqual(result.source, "configured")
-        self.assertAlmostEqual(result.capacity_kwh, 49.152, places=3)
+        confirmed = topology.resolve_battery_topology(hass, cfg())
+        stored = topology.serialize_battery_topology(confirmed)
+        self.assertNotIn("bank_socs_pct", stored)
+
+        restored = topology.deserialize_battery_topology(stored)
+        self.assertIsNone(restored.bank_socs_pct)
+        self.assertEqual(restored.bank_ids, confirmed.bank_ids)
+        self.assertTrue(topology.same_physical_topology(confirmed, restored))
+
+    def test_persisted_bank_order_is_used_when_soc_entities_are_late(self):
+        confirmed_hass = hass_with(
+            [
+                dpu("dpu-c", 4, 41),
+                dpu("dpu-a", 3, 31),
+                dpu("dpu-b", 2, 30),
+            ],
+            socs=(31, 30, 41),
+        )
+        confirmed = topology.resolve_battery_topology(confirmed_hass, cfg())
+        restored = topology.deserialize_battery_topology(
+            topology.serialize_battery_topology(confirmed)
+        )
+
+        devices = {}
+        data = {}
+        for serial, device, state in [
+            dpu("dpu-c", 4, 42),
+            dpu("dpu-b", 2, 31),
+            dpu("dpu-a", 3, 32),
+        ]:
+            devices[serial] = device
+            data[serial] = state
+        startup = SimpleNamespace(
+            states=States({}),
+            config_entries=ConfigEntries(
+                [SimpleNamespace(runtime_data=SimpleNamespace(
+                    devices=devices,
+                    data=data,
+                ))]
+            ),
+        )
+
+        live = topology.resolve_battery_topology(
+            startup,
+            cfg(),
+            previous=restored,
+        )
+        self.assertEqual(live.source, "ecoflow_iot")
+        self.assertEqual(live.bank_ids, ("dpu-a", "dpu-b", "dpu-c"))
+        self.assertEqual(live.pack_counts, (3, 2, 4))
+
+    def test_manual_topology_inputs_are_not_exposed_in_config_flow(self):
+        source = (ROOT / "config_flow.py").read_text()
+        self.assertNotIn("CONF_SOC_WEIGHTS", source)
+        self.assertNotIn("CONF_CAPACITY_KWH", source)
+        self.assertNotIn("OPT_AUTO_BATTERY_TOPOLOGY", source)
+
+    def test_invalid_persisted_topology_is_rejected(self):
+        self.assertIsNone(
+            topology.deserialize_battery_topology(
+                {"pack_counts": [3, 3], "bank_ids": ["a", "b"]}
+            )
+        )
 
 
 if __name__ == "__main__":

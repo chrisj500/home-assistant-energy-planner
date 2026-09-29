@@ -1,5 +1,18 @@
 # Home Assistant Energy Planner
 
+## v0.1.62 persisted EcoFlow battery topology
+
+Energy Planner now treats live EcoFlow DPU pack discovery as authoritative and
+persists the last-known-good physical topology for Home Assistant startup.
+Temporary EcoFlow startup gaps reuse that confirmed topology instead of falling
+back to manually entered capacity/weights, so a restart cannot manufacture a
+false battery-topology change or repeatedly rebase forecast learning.
+
+Manual battery capacity, SOC-weight, and auto-topology controls have been
+removed from setup/options. Before the first successful EcoFlow discovery,
+Energy Planner waits for the three DPU pack-count records rather than inventing
+a battery model. See [release notes](RELEASE_NOTES_0.1.62.md).
+
 ## v0.1.50 topology-invariant forecast learning
 
 Completed sunset reliability evidence is now stored in physical kWh with battery
@@ -19,10 +32,11 @@ Ultra's reported battery-pack count and automatically rebuilds total and per-ban
 capacity. The optional EcoFlow IoT **Battery pack count** entity does not need to
 be enabled, and no additional EcoFlow API call is made.
 
-Manual capacity and SOC weights remain a fallback. A confirmed physical bank
-change invalidates capacity-dependent in-progress calibration/forecast evidence,
-and the Battery Bank dashboard now shows the detected pack count and effective
-capacity. See [release notes](RELEASE_NOTES_0.1.49.md).
+A confirmed physical bank change invalidates capacity-dependent in-progress
+calibration/forecast evidence, and the Battery Bank dashboard shows the detected
+pack count and effective capacity. v0.1.62 removed the legacy manual topology
+fallback so temporary startup ordering cannot masquerade as a hardware change.
+See [release notes](RELEASE_NOTES_0.1.49.md).
 
 ## v0.1.41 AC solar learning foundation
 
@@ -349,7 +363,7 @@ Until this repository is added to the default HACS store, add it as a custom rep
 
 ## Configuration
 
-Core setup includes the three battery SOC sensors, capacity/weights, charge limit, backup reserve, storm warning, solar forecasts, live projection inputs, representative house load, and optional Forecast.Solar API key.
+Core setup includes the three battery SOC sensors, charge limit, backup reserve, storm warning, solar forecasts, live projection inputs, representative house load, and optional Forecast.Solar API key. Battery pack counts and effective capacity are discovered automatically from EcoFlow IoT and persisted as the last-known-good startup topology.
 
 For the v0.1.12 rolling EV advisory, optionally configure:
 

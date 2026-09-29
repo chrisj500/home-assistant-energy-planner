@@ -360,11 +360,11 @@ class CoordinatorTests(unittest.TestCase):
         baseline = deepcopy(self.data)
         baseline.update(
             battery_capacity_kwh=55.296,
-            battery_configured_capacity_kwh=49.152,
             battery_bank_capacities_kwh=[18.432, 12.288, 24.576],
             battery_bank_socs_pct=[80.0, 80.0, 80.0],
             battery_pack_counts=[3, 2, 4],
             battery_topology_source="ecoflow_iot",
+            battery_topology_changed=True,
             stored_energy=44.2368,
         )
         self.c.baseline = baseline
@@ -384,6 +384,53 @@ class CoordinatorTests(unittest.TestCase):
             "battery_topology_changed",
         )
         self.assertEqual(result["forecast_learning_sunset_samples"], 3)
+
+    def test_stale_reliability_signature_resyncs_without_false_rebase(self):
+        self.c._trust["records"] = [
+            {
+                "lead": 0,
+                "error_soc": 5.0,
+                "error_kwh": 2.4576,
+                "capacity_kwh": 49.152,
+                "record_schema": RELIABILITY_RECORD_SCHEMA_VERSION,
+            }
+        ] * 3
+        self.c._trust["pending"] = {
+            "keep/me": {
+                "date": "2026-09-18",
+                "lead": 0,
+                "predicted_soc": 80.0,
+            }
+        }
+        self.c._trust["battery_topology_signature"] = {
+            "capacity_kwh": 49.152,
+            "pack_counts": [3, 2, 3],
+        }
+        baseline = deepcopy(self.data)
+        baseline.update(
+            battery_capacity_kwh=55.296,
+            battery_bank_capacities_kwh=[18.432, 18.432, 18.432],
+            battery_bank_socs_pct=[80.0, 80.0, 80.0],
+            battery_pack_counts=[3, 3, 3],
+            battery_topology_source="ecoflow_iot_cached",
+            battery_topology_changed=False,
+            stored_energy=44.2368,
+        )
+        self.c.baseline = baseline
+
+        result = asyncio.run(self.c._async_update_data())
+
+        self.assertIn("keep/me", self.c._trust["pending"])
+        self.assertIsNone(result["forecast_learning_rebased_reason"])
+        self.assertIsNone(result["forecast_learning_rebased_at"])
+        self.assertEqual(
+            result["forecast_learning_topology_resync_reason"],
+            "signature_resynced_to_confirmed_topology",
+        )
+        self.assertEqual(
+            self.c._trust["battery_topology_signature"],
+            {"capacity_kwh": 55.296, "pack_counts": [3, 3, 3]},
+        )
 
     def test_legacy_records_migrate_on_load_without_losing_samples(self):
         legacy = {
@@ -412,7 +459,6 @@ class CoordinatorTests(unittest.TestCase):
         baseline = deepcopy(self.data)
         baseline.update(
             battery_capacity_kwh=55.296,
-            battery_configured_capacity_kwh=49.152,
             battery_bank_capacities_kwh=[18.432, 12.288, 24.576],
             battery_bank_socs_pct=[80.0, 80.0, 80.0],
             battery_pack_counts=[3, 2, 4],
@@ -429,7 +475,12 @@ class CoordinatorTests(unittest.TestCase):
             self.assertAlmostEqual(row["capacity_kwh"], 49.152)
             self.assertTrue(row["capacity_inferred"])
         self.assertEqual(result["forecast_learning_sunset_samples"], 3)
-        self.assertEqual(result["forecast_learning_preserved_samples"], 3)
+        self.assertIsNone(result["forecast_learning_preserved_samples"])
+        self.assertIsNone(result["forecast_learning_rebased_reason"])
+        self.assertEqual(
+            self.c._trust["battery_topology_signature"],
+            {"capacity_kwh": 55.296, "pack_counts": [3, 2, 4]},
+        )
         self.assertEqual(
             self.c._trust["reliability_record_schema"],
             RELIABILITY_RECORD_SCHEMA_VERSION,

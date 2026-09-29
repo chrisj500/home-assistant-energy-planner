@@ -893,9 +893,6 @@ class EnergyPlannerSensor(CoordinatorEntity[EnergyPlannerCoordinator], SensorEnt
             return {
                 "reason": data.get("battery_topology_reason"),
                 "effective_capacity_kwh": data.get("battery_capacity_kwh"),
-                "configured_capacity_kwh": data.get(
-                    "battery_configured_capacity_kwh"
-                ),
                 "pack_counts": data.get("battery_pack_counts"),
                 "pack_count_total": data.get("battery_pack_count_total"),
                 "bank_socs_pct": data.get("battery_bank_socs_pct"),
@@ -954,6 +951,12 @@ class EnergyPlannerSensor(CoordinatorEntity[EnergyPlannerCoordinator], SensorEnt
             ),
             "topology_rebase_discarded_pending": data.get(
                 "forecast_learning_discarded_pending"
+            ),
+            "topology_resynced_at": data.get(
+                "forecast_learning_topology_resynced_at"
+            ),
+            "topology_resync_reason": data.get(
+                "forecast_learning_topology_resync_reason"
             ),
             "error_samples": data.get("forecast_error_samples", 0),
             "confirmed_refreshes": data.get("forecast_confirmation_count", 0),
