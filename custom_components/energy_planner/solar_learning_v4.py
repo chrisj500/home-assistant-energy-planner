@@ -17,6 +17,7 @@ MIN_EFFECTIVE_SAMPLES = 3.0
 MAX_NEIGHBORS = 24
 MAX_CORRECTION_FRACTION = 0.40
 BACKFILL_MAX_SCORED_ROWS = 2500
+TRAINING_SCAN_MAX_ROWS = 5000
 
 
 def number(value):
@@ -131,7 +132,7 @@ def _weighted_median(values):
     return ordered[-1][0]
 
 
-def prediction(memory, candidate):
+def prediction(memory, candidate, training_rows=None):
     """Predict with a continuous, distance-weighted residual neighborhood.
 
     Each historical target hour contributes at most one observation: the issued
@@ -148,7 +149,12 @@ def prediction(memory, candidate):
         }
 
     best_by_target = {}
-    for row in memory.get("scored", []):
+    source_rows = (
+        list(training_rows)
+        if training_rows is not None
+        else memory.get("scored", [])[-TRAINING_SCAN_MAX_ROWS:]
+    )
+    for row in source_rows:
         if not isinstance(row, dict) or not row.get("accepted"):
             continue
         end = number(row.get("end"))
@@ -220,7 +226,7 @@ def prediction(memory, candidate):
     return max(0.0, baseline * (1.0 + correction)), True, metadata
 
 
-def annotate_row(memory, row):
+def annotate_row(memory, row, training_rows=None):
     """Freeze a v4 prediction onto one issued row if it has not been frozen."""
     if (
         row.get("v4_model_version") == MODEL_VERSION
@@ -228,7 +234,7 @@ def annotate_row(memory, row):
         and "v4_trained" in row
     ):
         return False
-    value, trained, metadata = prediction(memory, row)
+    value, trained, metadata = prediction(memory, row, training_rows=training_rows)
     row.update(
         {
             "v4_learned_kwh": value,
@@ -263,9 +269,29 @@ def ensure_shadow(memory):
         if isinstance(row, dict) and row.get("v4_model_version") != MODEL_VERSION
     )
     candidates.sort(key=lambda row: (number(row.get("issued_at")) or 0, number(row.get("start")) or 0))
+    history_by_end = sorted(
+        (row for row in scored if isinstance(row, dict)),
+        key=lambda row: number(row.get("end")) or 0,
+    )
+    eligible = []
+    history_index = 0
     changed = 0
     for row in candidates:
-        changed += int(annotate_row(memory, row))
+        issued_at = number(row.get("issued_at")) or 0
+        while (
+            history_index < len(history_by_end)
+            and (number(history_by_end[history_index].get("end")) or float("inf"))
+            <= issued_at
+        ):
+            eligible.append(history_by_end[history_index])
+            history_index += 1
+        changed += int(
+            annotate_row(
+                memory,
+                row,
+                training_rows=eligible[-TRAINING_SCAN_MAX_ROWS:],
+            )
+        )
     return {
         "rows_backfilled": changed,
         "backfill_limit": BACKFILL_MAX_SCORED_ROWS,
