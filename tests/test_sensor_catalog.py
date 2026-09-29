@@ -91,10 +91,9 @@ class SensorCatalogTests(unittest.TestCase):
             / "config_flow.py"
         )
         config_source = config_flow_path.read_text(encoding="utf-8")
-        self.assertGreaterEqual(
-            config_source.count("OPT_AUTO_BATTERY_TOPOLOGY"),
-            3,
-        )
+        self.assertNotIn("OPT_AUTO_BATTERY_TOPOLOGY", config_source)
+        self.assertNotIn("CONF_CAPACITY_KWH", config_source)
+        self.assertNotIn("CONF_SOC_WEIGHTS", config_source)
 
     def test_export_first_forecast_entities_are_registered(self) -> None:
         source = SENSOR_PATH.read_text(encoding="utf-8")
