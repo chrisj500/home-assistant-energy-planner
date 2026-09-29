@@ -56,6 +56,7 @@ from .rolling_ev import (
     first_headroom_risk,
     learned_charge_power_w,
     planning_base_load_w,
+    planning_load_profile_w,
     simulate_rolling_days,
 )
 from .simulation import simulate_energy_flow
@@ -328,6 +329,8 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
             "rolling_ev_status": reason,
             "rolling_planning_base_load_w": planning_load_w,
             "rolling_planning_base_load_source": planning_source,
+            "rolling_planning_load_profile_w": load_profile_rows,
+            "rolling_planning_load_profile_source": profile_source,
             "rolling_headroom_risk_date": "none",
             "rolling_headroom_shortfall_kwh": 0.0,
             "rolling_risk_projected_soc": None,
@@ -759,6 +762,30 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
             daylight_windows.append(
                 DaylightWindow(day=target_date, sunrise=sunrise, sunset=sunset)
             )
+        profile_values_w, profile_source = planning_load_profile_w(
+            recent_3h,
+            recent_24h,
+            fallback_load,
+            horizon_days=len(daylight_windows),
+        )
+        if profile_values_w is None:
+            return self._rolling_ev_fallback(
+                "planning_load_unavailable",
+                planning_load_w=planning_load_w,
+                planning_source=planning_source,
+            )
+        load_profile_w = {
+            window.day: profile_values_w[index]
+            for index, window in enumerate(daylight_windows)
+        }
+        load_profile_rows = [
+            {
+                "date": window.day.isoformat(),
+                "load_w": round(load_profile_w[window.day], 1),
+            }
+            for window in daylight_windows
+        ]
+
         plans = simulate_rolling_days(
             points=points,
             reference=now,
@@ -771,6 +798,9 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
             controller=controller,
             average_load_kw=planning_load_w / 1000.0,
             overnight_drop_kw=overnight_drop_kw,
+            load_profile_kw={
+                day: value / 1000.0 for day, value in load_profile_w.items()
+            },
             step_minutes=5,
         )
         risk = first_headroom_risk(plans)
@@ -871,7 +901,7 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
             daylight_windows=daylight_windows,
             earliest=now,
             latest=risk.end,
-            base_load_kw=planning_load_w / 1000.0,
+            base_load_kw=load_profile_w.get(risk.day, planning_load_w) / 1000.0,
             charge_power_w=ev_charge_power_w,
             energy_kwh=recommended_wall_kwh,
             charge_efficiency=charge_efficiency,
