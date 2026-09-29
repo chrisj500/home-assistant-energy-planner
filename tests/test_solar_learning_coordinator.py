@@ -16,6 +16,12 @@ sys.path.insert(0, str(ROOT))
 from forecast_solar_shadow import interval_points_from_payload, integrate_interval_energy_kwh, weather_rows
 from headroom import correct_current_day_points
 from solar_learning import finalize, issue, lead_bucket, number, observe, scorecard, sky_bucket
+from solar_learning_v4 import (  # noqa: E402
+    MODEL_NAME as V4_MODEL_NAME,
+    annotate_latest as annotate_v4_latest,
+    ensure_shadow as ensure_v4_shadow,
+    scorecard as v4_scorecard,
+)
 
 
 class Parent:
@@ -70,6 +76,8 @@ class SolarCoordinatorTests(unittest.TestCase):
         self.assertEqual(d['current_observation']['energy_kwh'], 5000)
         self.assertEqual(d['current_observation']['temperature_c'], 25)
         self.assertFalse(d['forecast_applied'])
+        self.assertFalse(d['v4']['forecast_applied'])
+        self.assertEqual(d['v4']['model'], 'continuous_weather_residual_v4')
         self.assertFalse(d['weather_forecast_available'])
         self.assertEqual(len(d['hourly_shadow']), 24)
         self.assertTrue(all(r['start'] > r['issued_at'] for r in self.saved['pending']))
@@ -162,5 +170,7 @@ class SolarCoordinatorTests(unittest.TestCase):
         row = self.saved['pending'][0]
         self.assertEqual(row['sky_bin'], 'cloudy')
         self.assertEqual(row['forecast_temperature_c'], 20)
+        self.assertEqual(row['v4_model_version'], 4)
+        self.assertIn('v4_trained', row)
         self.c._professional_cache['weather']['result'][0]['sky'] = .1
         self.assertEqual(self.saved['pending'][0]['forecast_sky'], .9)

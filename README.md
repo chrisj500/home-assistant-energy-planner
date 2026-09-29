@@ -38,17 +38,29 @@ pack count and effective capacity. v0.1.62 removed the legacy manual topology
 fallback so temporary startup ordering cannot masquerade as a hardware change.
 See [release notes](RELEASE_NOTES_0.1.49.md).
 
-## v0.1.41 AC solar learning foundation
+## AC solar learning — v3 control + v4 continuous shadow
 
-Energy Planner now collects and evaluates AC production forecasts locally, without
+Energy Planner collects and evaluates AC production forecasts locally without
 changing the operational forecast or controlling equipment. It uses the existing
 Enphase production mapping, optional Ecowitt observations, and existing paid
 Forecast.Solar interval/weather responses. It makes no additional API calls.
 
-**Solar Learning Status**, **Solar Learning Usable Days**, and **Solar Learning
-Scored Forecasts** expose collection progress. The status attributes show input
-health, frozen hourly predictions, and separate raw/live/learned scorecards.
-Download integration diagnostics to export the retained learning dataset.
+The original **v3** learner remains the categorical control model: local hour ×
+lead bucket × clear/mixed/cloudy forecast category. **v4** now runs beside it in
+shadow mode using continuous forecast cloud fraction, local hour, continuous lead
+time, raw provider energy, forecast temperature, seasonal timing, and—for
+sub-3-hour forecasts only—issuance-time Ecowitt radiation/live PV context. Nearby
+mixed and cloudy observations can therefore inform one another instead of waiting
+for an exact bucket match.
+
+Existing scored history is replayed out-of-sample on upgrade so v4 can begin
+shadow evaluation immediately without using future observations. Both v3 and v4
+remain advisory-only and `forecast_applied` stays false.
+
+**Solar Learning Status**, **Solar Learning Usable Days**, **Solar Learning Scored
+Forecasts**, **Solar Learning v4 Status**, and **Solar Learning v4 Trained
+Forecasts** expose progress. Download integration diagnostics to compare raw,
+live-adjusted, v3, and v4 MAE/bias on the same frozen target hours.
 
 Settings are in the integration options and implementation is in this repository;
 no YAML helpers are required for learning. See [solar learning](docs/solar-learning.md)

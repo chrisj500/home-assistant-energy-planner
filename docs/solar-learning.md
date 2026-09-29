@@ -1,11 +1,21 @@
-# AC solar learning — v0.1.41
+# AC solar learning — v3 + v4 shadow evaluation
 
 ## What is implemented
 
-A local, lightweight statistical residual learner runs in shadow mode. It learns
-hourly Forecast.Solar errors for comparable local hours, forecast lead times, and
-forecast cloud categories. This is a first-stage learning baseline, not a standalone
-weather-to-solar model or a transformer. It cannot influence planner decisions.
+Two local residual learners run in parallel shadow mode and cannot influence
+planner decisions.
+
+- **v3 control model** groups Forecast.Solar error by local hour, lead-time bucket,
+  and categorical cloud bin (clear/mixed/cloudy/unknown).
+- **v4 continuous model** learns from nearby historical conditions using continuous
+  cloud fraction, local hour, continuous lead time, raw Forecast.Solar energy,
+  forecast temperature, seasonal day, and—only for sub-3-hour targets—issuance-time
+  Ecowitt radiation and live PV power.
+
+v4 is deliberately a small, inspectable statistical model rather than a neural
+network. Its purpose is to learn how this installation behaves under changing
+cloud conditions without fragmenting evidence into dozens of tiny categorical
+buckets.
 
 Every hour, freeze predictions for the next 24 complete UTC hours, along with the
 local date/hour, issuance time, provider retrieval time, and available weather.
@@ -18,11 +28,19 @@ Because target windows start at the next full hour, most of the live adjustment
 has already decayed for these comparisons. This release does not yet score the
 current partial hour, whole remaining-day energy, or battery SOC as ML outcomes.
 
-The learner requires eight distinct target hours across at least seven days within
-each hour/lead/cloud group. It shrinks the median residual by n/(n+20), bounds the
-adjustment to +/-25% of provider energy, and produces nonnegative energy. Until
-then, the learned prediction equals the paid prediction and is explicitly marked
-untrained. Warm-up rows are excluded from the trained-only comparison.
+The v3 learner requires three distinct target hours across at least three days
+within each hour/lead/cloud group. It shrinks the median residual by n/(n+20),
+bounds the adjustment to +/-25% of provider energy, and produces nonnegative
+energy. Until then, the v3 learned prediction equals the paid prediction and is
+explicitly marked untrained.
+
+The v4 learner does not require an exact hour/cloud-bin match. For every candidate
+it selects at most one comparable forecast from each historical target hour, ranks
+those observations by continuous feature distance, and uses up to 24 nearest
+neighbors. It begins shadow evaluation with at least six unique target hours across
+three days and at least three effective weighted neighbors. A robust weighted
+median of relative Forecast.Solar residuals is regularized toward zero and bounded
+to +/-40%. Warm-up rows are excluded from v4 trained-only comparisons.
 
 ## Inputs and configuration
 
@@ -48,8 +66,11 @@ The paid interval forecast is the required forecast baseline. Existing paid weat
 responses provide cloud fraction and forecast temperature when available. No extra
 API requests, API key, or weather subscription is added. Observed Ecowitt conditions
 are archived as observations at issuance, never substituted for tomorrow's weather.
-These observations are collected for later models; the first residual model uses
-hour, lead, and forecast cloud category only.
+v3 uses hour, lead bucket, and forecast cloud category. v4 uses the numerical
+forecast cloud fraction directly together with the other continuous features listed
+above. Observed Ecowitt radiation/live PV are only used as issuance-time context
+for targets less than three hours away; they are never treated as knowledge of
+future weather.
 
 ## Data quality and persistence
 
@@ -77,19 +98,33 @@ privately in Home Assistant, not in the public repository. No training data is u
 
 ## Evaluation and limits
 
-Status attributes include raw, live-adjusted and learned MAE and signed bias by lead
-bucket, both all-row and trained-only comparisons, sample counts, unique target
-hours, usable days, and exclusions. Compare trained models on the same frozen target
-rows; many predictions on one day are not independent days of evidence.
+Status attributes include raw, live-adjusted, v3 and v4 MAE/signed bias by lead
+bucket, trained-only comparisons, sample counts, unique target hours, usable days,
+and exclusions. Compare models on the same frozen target rows; many predictions on
+one day are not independent days of evidence. The v4 scorecard is separate so its
+continuous-neighbor training gate can be evaluated directly against raw Forecast.Solar
+and the v3 control model.
 
-No confidence intervals or automatic model promotion are implemented. Shadows
-always remain advisory diagnostics. Clipping, curtailment, snow, and sensor problems
-cannot always be distinguished from aggregate AC readings alone. The first seven
-days is a minimum evidence gate, not an accuracy guarantee; comparable groups can
-take weeks to populate. Ninety-day history cannot establish annual seasonal accuracy.
+No confidence intervals or automatic model promotion are implemented. Both models
+remain advisory diagnostics. Clipping, curtailment, snow, and sensor problems cannot
+always be distinguished from aggregate AC readings alone. v4 reduces categorical
+fragmentation but still depends on the quality of the underlying future weather
+forecast. Ninety-day history cannot establish annual seasonal accuracy.
 
 For a later independent model we still need verified roof-group capacity/orientation/
 tilt, inverter AC limits, and an archived numerical weather forecast with future
 irradiance and clouds. Existing Forecast.Solar site settings can supply geometry
 where correctly configured. Ecowitt cannot supply future weather by itself. Evaluate
 that expansion only after the baseline collection and scoring are working reliably.
+
+
+## v4 historical shadow bootstrap
+
+On the first v4-capable release, existing scored v3 history is replayed to freeze
+v4 predictions for recent historical rows. This is an out-of-sample replay: a
+historical candidate may only use target hours whose observations had already
+finished before that candidate's original issuance timestamp. Future observations
+are never backfilled into an earlier prediction. Backfill is capped at the most
+recent 2,500 scored rows to avoid an expensive first-upgrade replay on very large
+90-day datasets; all new forecasts are frozen with both v3 and v4 predictions at
+issuance.
