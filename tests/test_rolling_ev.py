@@ -16,6 +16,7 @@ from rolling_ev import (  # noqa: E402
     first_headroom_risk,
     learned_charge_power_w,
     planning_base_load_w,
+    planning_load_profile_w,
     simulate_rolling_days,
 )
 from simulation import ControllerSettings  # noqa: E402
@@ -31,6 +32,41 @@ class RollingEvTests(unittest.TestCase):
         value, source = planning_base_load_w(0.0, 3109.0, 0.0)
         self.assertEqual(source, "recent_24h")
         self.assertEqual(value, 3109.0)
+
+    def test_multiday_load_profile_decays_recent_behavior_to_24h_baseline(self) -> None:
+        values, source = planning_load_profile_w(
+            3000.0,
+            2000.0,
+            0.0,
+            horizon_days=4,
+        )
+        self.assertEqual(source, "decay_3h_to_24h")
+        self.assertIsNotNone(values)
+        assert values is not None
+        self.assertAlmostEqual(values[0], 2450.0, places=1)
+        self.assertAlmostEqual(values[1], 2157.5, places=1)
+        self.assertAlmostEqual(values[2], 2055.1, places=1)
+        self.assertAlmostEqual(values[3], 2019.3, places=1)
+
+    def test_distant_load_forecast_is_insensitive_to_transient_3h_swing(self) -> None:
+        low, _ = planning_load_profile_w(
+            2500.0,
+            2000.0,
+            None,
+            horizon_days=4,
+        )
+        high, _ = planning_load_profile_w(
+            3500.0,
+            2000.0,
+            None,
+            horizon_days=4,
+        )
+        assert low is not None and high is not None
+        deltas = [high[i] - low[i] for i in range(4)]
+        self.assertAlmostEqual(deltas[0], 450.0, places=1)
+        self.assertLess(deltas[1], 160.0)
+        self.assertLess(deltas[2], 60.0)
+        self.assertLess(deltas[3], 20.0)
 
     def test_ev_wall_energy_to_target(self) -> None:
         energy = ev_wall_energy_to_target_kwh(
@@ -79,6 +115,43 @@ class RollingEvTests(unittest.TestCase):
         assert risk is not None
         self.assertGreater(risk.headroom_shortfall_kwh, 0.0)
         self.assertGreater(risk.capacity_export_kwh, 0.0)
+
+    def test_rolling_days_use_per_day_load_profile(self) -> None:
+        start = datetime(2026, 9, 14, 6, 0, tzinfo=timezone.utc)
+        day2 = start + timedelta(days=1)
+        windows = [
+            DaylightWindow(start.date(), start, start + timedelta(hours=12)),
+            DaylightWindow(day2.date(), day2, day2 + timedelta(hours=12)),
+        ]
+        points = [
+            IntervalPoint(start, 0.0),
+            IntervalPoint(start + timedelta(hours=6), 8000.0),
+            IntervalPoint(start + timedelta(hours=12), 0.0),
+            IntervalPoint(day2, 0.0),
+            IntervalPoint(day2 + timedelta(hours=6), 8000.0),
+            IntervalPoint(day2 + timedelta(hours=12), 0.0),
+        ]
+        plans = simulate_rolling_days(
+            points=points,
+            reference=start,
+            daylight_windows=windows,
+            initial_bank_socs_pct=(20.0, 20.0, 20.0),
+            bank_capacities_kwh=(18.432, 18.432, 18.432),
+            charge_limit_pct=100.0,
+            reserve_pct=10.0,
+            charge_efficiency=0.90,
+            controller=ControllerSettings(enabled=True, maximum_rate_w=3900.0),
+            average_load_kw=3.0,
+            overnight_drop_kw=0.0,
+            load_profile_kw={
+                start.date(): 3.0,
+                day2.date(): 2.0,
+            },
+            step_minutes=5,
+        )
+        self.assertEqual(len(plans), 2)
+        self.assertEqual(plans[0].average_load_kw, 3.0)
+        self.assertEqual(plans[1].average_load_kw, 2.0)
 
     def test_ev_window_prefers_solar_rich_period(self) -> None:
         start = datetime(2026, 9, 14, 6, 0, tzinfo=timezone.utc)
