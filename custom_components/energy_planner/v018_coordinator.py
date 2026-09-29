@@ -209,6 +209,12 @@ class EnergyPlannerV018Coordinator(EnergyPlannerV017Coordinator):
                     "interval_source": getattr(self, "_estimate_origin", "unknown"),
                     "forecast_points": len(points),
                     "planning_load_w": planning_load_w,
+                    "planning_recent_3h_w": output.get(
+                        "rolling_planning_recent_3h_w"
+                    ),
+                    "planning_recent_24h_w": output.get(
+                        "rolling_planning_recent_24h_w"
+                    ),
                     "planning_load_profile_w": load_profile_rows,
                     "planning_load_profile_source": output.get(
                         "rolling_planning_load_profile_source"
