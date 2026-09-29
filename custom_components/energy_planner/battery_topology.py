@@ -5,16 +5,10 @@ from itertools import permutations
 from typing import Any, Iterable
 
 from .const import (
-    CONF_CAPACITY_KWH,
     CONF_SOC_1,
     CONF_SOC_2,
     CONF_SOC_3,
-    CONF_SOC_WEIGHTS,
-    DEFAULT_AUTO_BATTERY_TOPOLOGY,
-    DEFAULT_CAPACITY_KWH,
-    DEFAULT_WEIGHTS,
     DPU_BATTERY_PACK_CAPACITY_KWH,
-    OPT_AUTO_BATTERY_TOPOLOGY,
 )
 
 ECOFLOW_IOT_DOMAIN = "ecoflow_iot"
@@ -22,26 +16,25 @@ _DPU_MODEL = "EcoFlow Delta Pro Ultra"
 _DPU_PACK_COUNT_KEY = "hs_yj751_pd_appshow_addr.bpNum"
 _DPU_SOC_KEY = "hs_yj751_pd_appshow_addr.soc"
 _INVALID_STATES = {"unknown", "unavailable", "none", ""}
+TOPOLOGY_STORAGE_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
 class BatteryTopology:
-    """Resolved battery model used by the planner."""
+    """Confirmed physical battery topology used by the planner."""
 
     source: str
     reason: str
     capacity_kwh: float
     bank_socs_pct: tuple[float, float, float] | None
     bank_capacities_kwh: tuple[float, float, float]
-    pack_counts: tuple[int, int, int] | None
-    bank_ids: tuple[str, str, str] | None
+    pack_counts: tuple[int, int, int]
+    bank_ids: tuple[str, str, str]
     discovered_dpu_count: int
-    configured_capacity_kwh: float
-    configured_weights: tuple[float, float, float]
 
     @property
-    def total_pack_count(self) -> int | None:
-        return None if self.pack_counts is None else sum(self.pack_counts)
+    def total_pack_count(self) -> int:
+        return sum(self.pack_counts)
 
     @property
     def auto_detected(self) -> bool:
@@ -63,17 +56,10 @@ def _float(value: Any) -> float | None:
     return result
 
 
-def _parse_weights(raw: Any) -> tuple[float, float, float]:
-    try:
-        values = tuple(float(part.strip()) for part in str(raw).split(","))
-    except (TypeError, ValueError):
-        values = tuple(float(part) for part in DEFAULT_WEIGHTS.split(","))
-    if len(values) != 3 or sum(values) <= 0 or any(value <= 0 for value in values):
-        values = tuple(float(part) for part in DEFAULT_WEIGHTS.split(","))
-    return values  # type: ignore[return-value]
-
-
-def _configured_socs(hass, cfg: dict[str, Any]) -> tuple[float, float, float] | None:
+def _configured_socs(
+    hass,
+    cfg: dict[str, Any],
+) -> tuple[float, float, float] | None:
     values: list[float] = []
     for key in (CONF_SOC_1, CONF_SOC_2, CONF_SOC_3):
         entity_id = cfg.get(key)
@@ -87,42 +73,8 @@ def _configured_socs(hass, cfg: dict[str, Any]) -> tuple[float, float, float] | 
     return values[0], values[1], values[2]
 
 
-def _manual_topology(
-    hass,
-    cfg: dict[str, Any],
-    *,
-    reason: str,
-    discovered_dpu_count: int = 0,
-) -> BatteryTopology:
-    configured_capacity = _float(cfg.get(CONF_CAPACITY_KWH, DEFAULT_CAPACITY_KWH))
-    if configured_capacity is None or configured_capacity <= 0:
-        configured_capacity = DEFAULT_CAPACITY_KWH
-    weights = _parse_weights(cfg.get(CONF_SOC_WEIGHTS, DEFAULT_WEIGHTS))
-    total_weight = sum(weights)
-    capacities = tuple(
-        configured_capacity * weight / total_weight for weight in weights
-    )
-    return BatteryTopology(
-        source="configured",
-        reason=reason,
-        capacity_kwh=configured_capacity,
-        bank_socs_pct=_configured_socs(hass, cfg),
-        bank_capacities_kwh=capacities,  # type: ignore[arg-type]
-        pack_counts=None,
-        bank_ids=None,
-        discovered_dpu_count=discovered_dpu_count,
-        configured_capacity_kwh=configured_capacity,
-        configured_weights=weights,
-    )
-
-
 def _coordinator_dpu_samples(hass) -> list[_DpuSample]:
-    """Read DPU topology directly from EcoFlow IoT's refreshed quota cache.
-
-    This does not depend on the optional Home Assistant Battery pack count
-    entity being enabled. EcoFlow IoT keeps bpNum in its coordinator quota even
-    though the entity is diagnostic and disabled by default.
-    """
+    """Read DPU pack topology directly from EcoFlow IoT's quota cache."""
     samples: list[_DpuSample] = []
     try:
         entries = hass.config_entries.async_entries(ECOFLOW_IOT_DOMAIN)
@@ -217,6 +169,79 @@ def _select_three(
     return best
 
 
+def _capacities(
+    pack_counts: tuple[int, int, int],
+) -> tuple[float, float, float]:
+    return tuple(
+        count * DPU_BATTERY_PACK_CAPACITY_KWH for count in pack_counts
+    )  # type: ignore[return-value]
+
+
+def serialize_battery_topology(topology: BatteryTopology) -> dict[str, Any]:
+    """Serialize only stable physical topology, never transient SOC values."""
+    return {
+        "version": TOPOLOGY_STORAGE_VERSION,
+        "pack_counts": list(topology.pack_counts),
+        "bank_ids": list(topology.bank_ids),
+    }
+
+
+def deserialize_battery_topology(
+    raw: Any,
+) -> BatteryTopology | None:
+    """Restore the last confirmed EcoFlow topology for startup continuity."""
+    if not isinstance(raw, dict):
+        return None
+    counts_raw = raw.get("pack_counts")
+    ids_raw = raw.get("bank_ids")
+    if (
+        not isinstance(counts_raw, (list, tuple))
+        or len(counts_raw) != 3
+        or not isinstance(ids_raw, (list, tuple))
+        or len(ids_raw) != 3
+    ):
+        return None
+
+    counts: list[int] = []
+    for value in counts_raw:
+        numeric = _float(value)
+        if numeric is None:
+            return None
+        count = int(round(numeric))
+        if abs(numeric - count) > 0.01 or not 1 <= count <= 10:
+            return None
+        counts.append(count)
+
+    ids = tuple(str(value) for value in ids_raw)
+    if any(not value for value in ids):
+        return None
+
+    pack_counts = counts[0], counts[1], counts[2]
+    bank_capacities = _capacities(pack_counts)
+    return BatteryTopology(
+        source="ecoflow_iot_cached",
+        reason="Persisted last-known-good EcoFlow DPU topology",
+        capacity_kwh=sum(bank_capacities),
+        bank_socs_pct=None,
+        bank_capacities_kwh=bank_capacities,
+        pack_counts=pack_counts,
+        bank_ids=(ids[0], ids[1], ids[2]),
+        discovered_dpu_count=0,
+    )
+
+
+def same_physical_topology(
+    left: BatteryTopology | None,
+    right: BatteryTopology | None,
+) -> bool:
+    if left is None or right is None:
+        return False
+    return (
+        left.pack_counts == right.pack_counts
+        and abs(left.capacity_kwh - right.capacity_kwh) <= 0.01
+    )
+
+
 def _cached_topology(
     hass,
     cfg: dict[str, Any],
@@ -225,19 +250,15 @@ def _cached_topology(
     reason: str,
     discovered_dpu_count: int,
 ) -> BatteryTopology:
-    configured_socs = _configured_socs(hass, cfg)
-    bank_socs = configured_socs or previous.bank_socs_pct
     return BatteryTopology(
         source="ecoflow_iot_cached",
         reason=reason,
         capacity_kwh=previous.capacity_kwh,
-        bank_socs_pct=bank_socs,
+        bank_socs_pct=_configured_socs(hass, cfg),
         bank_capacities_kwh=previous.bank_capacities_kwh,
         pack_counts=previous.pack_counts,
         bank_ids=previous.bank_ids,
         discovered_dpu_count=discovered_dpu_count,
-        configured_capacity_kwh=previous.configured_capacity_kwh,
-        configured_weights=previous.configured_weights,
     )
 
 
@@ -246,71 +267,43 @@ def resolve_battery_topology(
     cfg: dict[str, Any],
     *,
     previous: BatteryTopology | None = None,
-) -> BatteryTopology:
-    """Resolve live battery capacity and per-bank SOC/capacity.
+) -> BatteryTopology | None:
+    """Resolve current topology or use only a persisted/confirmed EcoFlow topology.
 
-    EcoFlow IoT exposes each Delta Pro Ultra's bpNum in its coordinator quota.
-    The planner queries that cache every refresh. Manual capacity and weights
-    remain a compatibility fallback and can be forced by disabling
-    auto_battery_topology.
+    Manual capacity and SOC-weight fallbacks are intentionally not used. Before
+    the first successful EcoFlow discovery, callers should wait rather than
+    fabricate a physical battery model. After discovery, the last-known-good
+    topology bridges Home Assistant startup ordering and temporary EcoFlow gaps.
     """
-    configured = _manual_topology(hass, cfg, reason="manual_configuration")
-    auto = bool(
-        cfg.get(
-            OPT_AUTO_BATTERY_TOPOLOGY,
-            DEFAULT_AUTO_BATTERY_TOPOLOGY,
-        )
-    )
-    if not auto:
-        return configured
-
     samples = _coordinator_dpu_samples(hass)
-    configured_socs = configured.bank_socs_pct
+    configured_socs = _configured_socs(hass, cfg)
     mapping = _select_three(samples, configured_socs, previous)
 
     if mapping is None:
-        if (
-            previous is not None
-            and previous.auto_detected
-            and previous.pack_counts is not None
-            and previous.bank_ids is not None
-        ):
-            return _cached_topology(
-                hass,
-                cfg,
-                previous,
-                reason=(
-                    "EcoFlow IoT DPU topology temporarily incomplete; "
-                    "using last confirmed pack counts"
-                ),
-                discovered_dpu_count=len(samples),
-            )
-        return _manual_topology(
+        if previous is None:
+            return None
+        return _cached_topology(
             hass,
             cfg,
+            previous,
             reason=(
-                "EcoFlow IoT did not provide three matchable Delta Pro Ultra "
-                "pack-count/SOC records"
+                "EcoFlow IoT DPU topology temporarily incomplete; "
+                "using persisted last-known-good pack counts"
             ),
             discovered_dpu_count=len(samples),
         )
 
     pack_counts = tuple(sample.pack_count for sample in mapping)
-    capacities = tuple(
-        count * DPU_BATTERY_PACK_CAPACITY_KWH for count in pack_counts
-    )
-    capacity = sum(capacities)
+    bank_capacities = _capacities(pack_counts)  # type: ignore[arg-type]
     bank_socs = configured_socs or tuple(sample.soc_pct for sample in mapping)
 
     return BatteryTopology(
         source="ecoflow_iot",
         reason="Delta Pro Ultra bpNum queried from EcoFlow IoT coordinator",
-        capacity_kwh=capacity,
+        capacity_kwh=sum(bank_capacities),
         bank_socs_pct=bank_socs,  # type: ignore[arg-type]
-        bank_capacities_kwh=capacities,  # type: ignore[arg-type]
+        bank_capacities_kwh=bank_capacities,
         pack_counts=pack_counts,  # type: ignore[arg-type]
         bank_ids=tuple(sample.serial for sample in mapping),  # type: ignore[arg-type]
         discovered_dpu_count=len(samples),
-        configured_capacity_kwh=configured.configured_capacity_kwh,
-        configured_weights=configured.configured_weights,
     )
