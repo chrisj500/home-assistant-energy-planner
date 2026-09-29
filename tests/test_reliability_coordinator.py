@@ -459,7 +459,6 @@ class CoordinatorTests(unittest.TestCase):
         baseline = deepcopy(self.data)
         baseline.update(
             battery_capacity_kwh=55.296,
-            battery_configured_capacity_kwh=49.152,
             battery_bank_capacities_kwh=[18.432, 12.288, 24.576],
             battery_bank_socs_pct=[80.0, 80.0, 80.0],
             battery_pack_counts=[3, 2, 4],
