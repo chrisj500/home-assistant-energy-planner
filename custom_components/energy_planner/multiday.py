@@ -41,11 +41,16 @@ def serialize_dynamic_load_days(
 ) -> list[dict[str, object]]:
     """Convert sequential rolling plans into dashboard-safe per-day decisions."""
     threshold = max(float(risk_threshold_kwh), 0.0)
-    load_kw = max(float(average_load_kw), 0.0)
+    fallback_load_kw = max(float(average_load_kw), 0.0)
     rows: list[dict[str, object]] = []
 
     for plan in plans:
         duration_h = max((plan.end - plan.start).total_seconds() / 3600.0, 0.0)
+        load_kw = (
+            max(float(plan.average_load_kw), 0.0)
+            if plan.average_load_kw is not None
+            else fallback_load_kw
+        )
         solar_after_house_load = max(float(plan.solar_kwh) - load_kw * duration_h, 0.0)
         dynamic_load = dynamic_load_required_kwh(
             plan,
@@ -63,6 +68,7 @@ def serialize_dynamic_load_days(
                 "sunset_soc_pct": round(float(plan.end_soc_pct), 2),
                 "solar_kwh": round(float(plan.solar_kwh), 2),
                 "solar_after_house_load_kwh": round(solar_after_house_load, 2),
+                "planning_load_w": round(load_kw * 1000.0, 1),
                 "battery_gain_kwh": round(float(plan.stored_charge_kwh), 2),
                 "grid_import_kwh": round(float(plan.grid_import_kwh), 2),
                 "export_kwh": round(float(plan.export_kwh), 2),
