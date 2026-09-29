@@ -329,6 +329,8 @@ class EnhancedEnergyPlannerCoordinator(EnergyPlannerCoordinator):
             "rolling_ev_status": reason,
             "rolling_planning_base_load_w": planning_load_w,
             "rolling_planning_base_load_source": planning_source,
+            "rolling_planning_recent_3h_w": recent_3h,
+            "rolling_planning_recent_24h_w": recent_24h,
             "rolling_planning_load_profile_w": load_profile_rows,
             "rolling_planning_load_profile_source": profile_source,
             "rolling_headroom_risk_date": "none",
