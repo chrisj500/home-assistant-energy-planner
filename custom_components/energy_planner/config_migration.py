@@ -4,6 +4,8 @@ from typing import Any
 
 # Literal legacy keys keep this pure migration helper independent of Home
 # Assistant/package imports and document exactly what is removed.
+CONFIG_ENTRY_VERSION = 2
+
 LEGACY_TOPOLOGY_KEYS = (
     "capacity_kwh",
     "soc_weights",
