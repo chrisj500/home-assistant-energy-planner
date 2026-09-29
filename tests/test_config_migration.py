@@ -1,6 +1,10 @@
-from custom_components.energy_planner.config_migration import (
-    remove_legacy_topology_keys,
-)
+from pathlib import Path
+import sys
+
+MODULE_DIR = Path(__file__).resolve().parents[1] / "custom_components" / "energy_planner"
+sys.path.insert(0, str(MODULE_DIR))
+
+from config_migration import remove_legacy_topology_keys  # noqa: E402
 
 
 def test_legacy_topology_keys_are_removed_without_touching_other_settings():
