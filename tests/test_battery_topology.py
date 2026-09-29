@@ -235,6 +235,54 @@ class BatteryTopologyTests(unittest.TestCase):
         self.assertEqual(restored.bank_ids, confirmed.bank_ids)
         self.assertTrue(topology.same_physical_topology(confirmed, restored))
 
+    def test_persisted_bank_order_is_used_when_soc_entities_are_late(self):
+        confirmed_hass = hass_with(
+            [
+                dpu("dpu-c", 4, 41),
+                dpu("dpu-a", 3, 31),
+                dpu("dpu-b", 2, 30),
+            ],
+            socs=(31, 30, 41),
+        )
+        confirmed = topology.resolve_battery_topology(confirmed_hass, cfg())
+        restored = topology.deserialize_battery_topology(
+            topology.serialize_battery_topology(confirmed)
+        )
+
+        devices = {}
+        data = {}
+        for serial, device, state in [
+            dpu("dpu-c", 4, 42),
+            dpu("dpu-b", 2, 31),
+            dpu("dpu-a", 3, 32),
+        ]:
+            devices[serial] = device
+            data[serial] = state
+        startup = SimpleNamespace(
+            states=States({}),
+            config_entries=ConfigEntries(
+                [SimpleNamespace(runtime_data=SimpleNamespace(
+                    devices=devices,
+                    data=data,
+                ))]
+            ),
+        )
+
+        live = topology.resolve_battery_topology(
+            startup,
+            cfg(),
+            previous=restored,
+        )
+        self.assertEqual(live.source, "ecoflow_iot")
+        self.assertEqual(live.bank_ids, ("dpu-a", "dpu-b", "dpu-c"))
+        self.assertEqual(live.pack_counts, (3, 2, 4))
+
+    def test_manual_topology_inputs_are_not_exposed_in_config_flow(self):
+        source = (ROOT / "config_flow.py").read_text()
+        self.assertNotIn("CONF_SOC_WEIGHTS", source)
+        self.assertNotIn("CONF_CAPACITY_KWH", source)
+        self.assertNotIn("OPT_AUTO_BATTERY_TOPOLOGY", source)
+
     def test_invalid_persisted_topology_is_rejected(self):
         self.assertIsNone(
             topology.deserialize_battery_topology(
