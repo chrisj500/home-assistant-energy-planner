@@ -38,7 +38,7 @@ pack count and effective capacity. v0.1.62 removed the legacy manual topology
 fallback so temporary startup ordering cannot masquerade as a hardware change.
 See [release notes](RELEASE_NOTES_0.1.49.md).
 
-## AC solar learning — v3 control + v4 continuous shadow
+## AC solar learning — v3 control + v4/v4.1 continuous shadows
 
 Energy Planner collects and evaluates AC production forecasts locally without
 changing the operational forecast or controlling equipment. It uses the existing
@@ -46,21 +46,26 @@ Enphase production mapping, optional Ecowitt observations, and existing paid
 Forecast.Solar interval/weather responses. It makes no additional API calls.
 
 The original **v3** learner remains the categorical control model: local hour ×
-lead bucket × clear/mixed/cloudy forecast category. **v4** now runs beside it in
-shadow mode using continuous forecast cloud fraction, local hour, continuous lead
-time, raw provider energy, forecast temperature, seasonal timing, and—for
-sub-3-hour forecasts only—issuance-time Ecowitt radiation/live PV context. Nearby
-mixed and cloudy observations can therefore inform one another instead of waiting
-for an exact bucket match.
+lead bucket × clear/mixed/cloudy forecast category. **v4** is the first continuous
+weather-aware shadow using numerical cloud fraction and nearby historical target
+hours. **v4.1** runs beside both as the tuned experiment after v4's first historical
+replay showed overly aggressive positive corrections at medium/long lead times.
 
-Existing scored history is replayed out-of-sample on upgrade so v4 can begin
-shadow evaluation immediately without using future observations. Both v3 and v4
+v4.1 keeps continuous cloudy/mixed generalization but adds target-hour solar
+elevation/azimuth, tighter lead-time neighborhoods, and evidence/performance-scaled
+correction authority. Correction authority is deliberately horizon-sensitive:
+0–3h can learn fastest, 3–12h ramps more slowly, and 12–24h remains conservative
+until its own frozen out-of-sample history demonstrates improvement.
+
+Existing scored history is replayed chronologically on upgrade so v4 and v4.1 can
+begin shadow evaluation without using future observations. v3, v4 and v4.1 all
 remain advisory-only and `forecast_applied` stays false.
 
 **Solar Learning Status**, **Solar Learning Usable Days**, **Solar Learning Scored
-Forecasts**, **Solar Learning v4 Status**, and **Solar Learning v4 Trained
-Forecasts** expose progress. Download integration diagnostics to compare raw,
-live-adjusted, v3, and v4 MAE/bias on the same frozen target hours.
+Forecasts**, **Solar Learning v4 Status/Trained Forecasts**, and **Solar Learning
+v4.1 Status/Trained Forecasts** expose progress. Download integration diagnostics
+to compare raw, live-adjusted, v3, v4 and v4.1 MAE/bias on the same frozen target
+hours.
 
 Settings are in the integration options and implementation is in this repository;
 no YAML helpers are required for learning. See [solar learning](docs/solar-learning.md)
