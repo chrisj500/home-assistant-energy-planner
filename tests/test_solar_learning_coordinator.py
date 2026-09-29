@@ -22,6 +22,13 @@ from solar_learning_v4 import (  # noqa: E402
     ensure_shadow as ensure_v4_shadow,
     scorecard as v4_scorecard,
 )
+from solar_learning_v41 import (  # noqa: E402
+    MODEL_NAME as V41_MODEL_NAME,
+    MODEL_VERSION as V41_MODEL_VERSION,
+    annotate_latest as annotate_v41_latest,
+    ensure_shadow as ensure_v41_shadow,
+    scorecard as v41_scorecard,
+)
 
 
 class Parent:
@@ -52,7 +59,13 @@ class SolarCoordinatorTests(unittest.TestCase):
         state('sensor.gw3000b_solar_radiation', 500, 'W/m²')
         state('sensor.gw3000b_outdoor_temperature', 77, '°F')
         state('sensor.envoy_test_lifetime_energy_production', 5, 'MWh')
-        self.c.hass = SimpleNamespace(states=SimpleNamespace(get=self.states.get, async_all=lambda: list(self.states.values())))
+        self.c.hass = SimpleNamespace(
+            states=SimpleNamespace(
+                get=self.states.get,
+                async_all=lambda: list(self.states.values()),
+            ),
+            config=SimpleNamespace(latitude=38.9, longitude=-77.0),
+        )
         self.c._forecast_solar_source = lambda: (object(), None)
         self.c._estimate_source_signature = lambda source: {'site': 'test'}
         self.c._estimate_last_success = self.now
@@ -78,6 +91,9 @@ class SolarCoordinatorTests(unittest.TestCase):
         self.assertFalse(d['forecast_applied'])
         self.assertFalse(d['v4']['forecast_applied'])
         self.assertEqual(d['v4']['model'], 'continuous_weather_residual_v4')
+        self.assertFalse(d['v4_1']['forecast_applied'])
+        self.assertEqual(d['v4_1']['model'], 'continuous_weather_residual_v4_1')
+        self.assertEqual(d['v4_1']['model_version'], '4.1')
         self.assertFalse(d['weather_forecast_available'])
         self.assertEqual(len(d['hourly_shadow']), 24)
         self.assertTrue(all(r['start'] > r['issued_at'] for r in self.saved['pending']))
@@ -172,5 +188,9 @@ class SolarCoordinatorTests(unittest.TestCase):
         self.assertEqual(row['forecast_temperature_c'], 20)
         self.assertEqual(row['v4_model_version'], 4)
         self.assertIn('v4_trained', row)
+        self.assertEqual(row['v41_model_version'], '4.1')
+        self.assertIn('v41_trained', row)
+        self.assertIn('target_sun_elevation_deg', row)
+        self.assertIn('target_sun_azimuth_deg', row)
         self.c._professional_cache['weather']['result'][0]['sky'] = .1
         self.assertEqual(self.saved['pending'][0]['forecast_sky'], .9)
