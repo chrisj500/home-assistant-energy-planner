@@ -952,6 +952,12 @@ class EnergyPlannerSensor(CoordinatorEntity[EnergyPlannerCoordinator], SensorEnt
             "topology_rebase_discarded_pending": data.get(
                 "forecast_learning_discarded_pending"
             ),
+            "topology_resynced_at": data.get(
+                "forecast_learning_topology_resynced_at"
+            ),
+            "topology_resync_reason": data.get(
+                "forecast_learning_topology_resync_reason"
+            ),
             "error_samples": data.get("forecast_error_samples", 0),
             "confirmed_refreshes": data.get("forecast_confirmation_count", 0),
             "provider_refreshed_at": data.get("forecast_revision_at"),
