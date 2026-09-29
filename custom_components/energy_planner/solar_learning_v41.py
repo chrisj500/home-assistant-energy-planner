@@ -15,7 +15,13 @@ MIN_SAMPLES = 6
 MIN_DAYS = 3
 MIN_EFFECTIVE_SAMPLES = 3.0
 MAX_NEIGHBORS = 24
-MAX_CORRECTION_FRACTION = 0.30
+MAX_CORRECTION_FRACTION = 0.20
+BASE_CORRECTION_CAP_FRACTION = 0.025
+CORRECTION_CAP_PER_EFFECTIVE_SAMPLE = 0.006
+REGULARIZATION_DENOMINATOR = 16.0
+PERFORMANCE_EXPONENT = 3.0
+EARLY_PERFORMANCE_SCALE = 0.25
+WARM_PERFORMANCE_SCALE = 0.35
 BACKFILL_MAX_SCORED_ROWS = 2500
 TRAINING_SCAN_MAX_ROWS = 5000
 PERFORMANCE_WINDOW = 24
@@ -288,9 +294,9 @@ def _performance_scale(training_rows, candidate):
     rows = _latest_scored_by_target(training_rows, lead)
     samples = len(rows)
     if samples < 4:
-        return 0.35, samples, None, None
+        return EARLY_PERFORMANCE_SCALE, samples, None, None
     if samples < 8:
-        base = 0.50
+        base = WARM_PERFORMANCE_SCALE
     else:
         base = 1.0
 
@@ -305,18 +311,39 @@ def _performance_scale(training_rows, candidate):
     raw_mae = sum(raw_errors) / samples
     learned_mae = sum(learned_errors) / samples
     ratio = raw_mae / max(learned_mae, 0.05)
-    performance = min(1.0, max(0.20, ratio * ratio))
+    performance = min(
+        1.0,
+        max(0.15, ratio ** PERFORMANCE_EXPONENT),
+    )
     return min(base, performance), samples, raw_mae, learned_mae
 
 
-def _evidence_cap(effective_samples, training_days, performance_scale):
+def _horizon_scale(candidate):
+    """Longer horizons earn correction authority more slowly."""
+    lead = _lead_hours(candidate)
+    if lead is None:
+        return 0.0
+    if lead < 3.0:
+        return 1.0
+    if lead < 12.0:
+        return 0.65
+    return 0.40
+
+
+def _evidence_cap(
+    effective_samples,
+    training_days,
+    performance_scale,
+    horizon_scale,
+):
     """Maximum correction grows with evidence and demonstrated performance."""
     evidence_cap = min(
         MAX_CORRECTION_FRACTION,
-        0.05 + 0.01 * max(0.0, effective_samples),
+        BASE_CORRECTION_CAP_FRACTION
+        + CORRECTION_CAP_PER_EFFECTIVE_SAMPLE * max(0.0, effective_samples),
     )
     day_factor = min(1.0, 0.75 + 0.05 * max(0, training_days - MIN_DAYS))
-    return evidence_cap * day_factor * performance_scale
+    return evidence_cap * day_factor * performance_scale * horizon_scale
 
 
 def prediction(memory, candidate, training_rows=None):
@@ -402,12 +429,18 @@ def prediction(memory, candidate, training_rows=None):
         residual_fractions.append(((actual - raw) / max(raw, 0.25), weight))
 
     residual_fraction = _weighted_median(residual_fractions)
-    regularizer = effective / (effective + 12.0)
+    regularizer = effective / (effective + REGULARIZATION_DENOMINATOR)
     performance_scale, performance_samples, raw_mae, learned_mae = _performance_scale(
         source_rows,
         candidate,
     )
-    cap = _evidence_cap(effective, len(days), performance_scale)
+    horizon_scale = _horizon_scale(candidate)
+    cap = _evidence_cap(
+        effective,
+        len(days),
+        performance_scale,
+        horizon_scale,
+    )
     correction = residual_fraction * regularizer
     correction = max(-cap, min(cap, correction))
 
@@ -417,6 +450,7 @@ def prediction(memory, candidate, training_rows=None):
             "regularizer": round(regularizer, 4),
             "performance_scale": round(performance_scale, 4),
             "performance_samples": performance_samples,
+            "horizon_scale": round(horizon_scale, 4),
             "performance_raw_mae_kwh": round(raw_mae, 4) if raw_mae is not None else None,
             "performance_v41_mae_kwh": round(learned_mae, 4) if learned_mae is not None else None,
             "correction_cap_fraction": round(cap, 4),
@@ -445,6 +479,7 @@ def annotate_row(memory, row, training_rows=None):
             "v41_lead_window_hours": metadata.get("lead_window_hours"),
             "v41_performance_scale": metadata.get("performance_scale"),
             "v41_performance_samples": metadata.get("performance_samples"),
+            "v41_horizon_scale": metadata.get("horizon_scale"),
             "v41_performance_raw_mae_kwh": metadata.get("performance_raw_mae_kwh"),
             "v41_performance_mae_kwh": metadata.get("performance_v41_mae_kwh"),
             "v41_correction_cap_fraction": metadata.get("correction_cap_fraction"),
