@@ -2,16 +2,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from .const import (
-    CONF_CAPACITY_KWH,
-    CONF_SOC_WEIGHTS,
-    OPT_AUTO_BATTERY_TOPOLOGY,
-)
-
+# Literal legacy keys keep this pure migration helper independent of Home
+# Assistant/package imports and document exactly what is removed.
 LEGACY_TOPOLOGY_KEYS = (
-    CONF_CAPACITY_KWH,
-    CONF_SOC_WEIGHTS,
-    OPT_AUTO_BATTERY_TOPOLOGY,
+    "capacity_kwh",
+    "soc_weights",
+    "auto_battery_topology",
 )
 
 
