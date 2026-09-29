@@ -893,9 +893,6 @@ class EnergyPlannerSensor(CoordinatorEntity[EnergyPlannerCoordinator], SensorEnt
             return {
                 "reason": data.get("battery_topology_reason"),
                 "effective_capacity_kwh": data.get("battery_capacity_kwh"),
-                "configured_capacity_kwh": data.get(
-                    "battery_configured_capacity_kwh"
-                ),
                 "pack_counts": data.get("battery_pack_counts"),
                 "pack_count_total": data.get("battery_pack_count_total"),
                 "bank_socs_pct": data.get("battery_bank_socs_pct"),
