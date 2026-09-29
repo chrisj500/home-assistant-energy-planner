@@ -41,6 +41,7 @@ class RollingDayPlan:
     headroom_shortfall_kwh: float
     starting_bank_socs_pct: tuple[float, float, float]
     ending_bank_socs_pct: tuple[float, float, float]
+    average_load_kw: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +75,57 @@ def planning_base_load_w(
         return daily, "recent_24h"
     if fallback is not None:
         return fallback, "instantaneous_fallback"
+    return None, "unavailable"
+
+
+def planning_load_profile_w(
+    recent_3h_w: float | None,
+    recent_24h_w: float | None,
+    fallback_w: float | None,
+    *,
+    horizon_days: int,
+    recent_weight: float = 0.45,
+    decay_per_day: float = 0.35,
+) -> tuple[list[float] | None, str]:
+    """Return a horizon-stable daily planning-load profile.
+
+    The current day remains responsive to the recent 3-hour average. Short-term
+    influence then decays rapidly toward the 24-hour baseline so a transient
+    evening load spike cannot rewrite several future battery days.
+    """
+    days = max(int(horizon_days), 1)
+    recent = (
+        float(recent_3h_w)
+        if recent_3h_w is not None and float(recent_3h_w) > 0
+        else None
+    )
+    daily = (
+        float(recent_24h_w)
+        if recent_24h_w is not None and float(recent_24h_w) > 0
+        else None
+    )
+    fallback = (
+        float(fallback_w)
+        if fallback_w is not None and float(fallback_w) >= 0
+        else None
+    )
+
+    if recent is not None and daily is not None:
+        weight0 = min(max(float(recent_weight), 0.0), 1.0)
+        decay = min(max(float(decay_per_day), 0.0), 1.0)
+        values = [
+            (weight0 * (decay ** offset)) * recent
+            + (1.0 - weight0 * (decay ** offset)) * daily
+            for offset in range(days)
+        ]
+        return values, "decay_3h_to_24h"
+
+    if daily is not None:
+        return [daily] * days, "recent_24h"
+    if recent is not None:
+        return [recent] * days, "recent_3h_no_stable_anchor"
+    if fallback is not None:
+        return [fallback] * days, "instantaneous_fallback"
     return None, "unavailable"
 
 
@@ -132,6 +184,7 @@ def simulate_rolling_days(
     controller: ControllerSettings,
     average_load_kw: float,
     overnight_drop_kw: float,
+    load_profile_kw: dict[date, float] | None = None,
     step_minutes: int = 5,
 ) -> list[RollingDayPlan]:
     """Simulate sequential solar days using the paid interval curve when present.
@@ -149,6 +202,7 @@ def simulate_rolling_days(
     reserve = min(max(float(reserve_pct), 0.0), 100.0)
     efficiency = min(max(float(charge_efficiency), 0.0), 1.0)
     load_kw = max(float(average_load_kw), 0.0)
+    profile = load_profile_kw or {}
     drop_kw = max(float(overnight_drop_kw), 0.0)
     cursor = reference
     results: list[RollingDayPlan] = []
@@ -171,6 +225,7 @@ def simulate_rolling_days(
             cursor = max(cursor, window.sunset)
             continue
         duration_h = (window.sunset - start).total_seconds() / 3600.0
+        day_load_kw = max(float(profile.get(window.day, load_kw)), 0.0)
 
         start_socs = socs
         start_stored = _stored_kwh(start_socs, capacities)
@@ -184,7 +239,7 @@ def simulate_rolling_days(
         simulation = simulate_energy_flow(
             duration_h=duration_h,
             solar_power_kw=solar_curve,
-            average_load_kw=load_kw,
+            average_load_kw=day_load_kw,
             bank_socs_pct=start_socs,
             bank_capacities_kwh=capacities,
             charge_limit_pct=charge_limit,
@@ -195,7 +250,7 @@ def simulate_rolling_days(
         unlimited = simulate_energy_flow(
             duration_h=duration_h,
             solar_power_kw=solar_curve,
-            average_load_kw=load_kw,
+            average_load_kw=day_load_kw,
             bank_socs_pct=start_socs,
             bank_capacities_kwh=capacities,
             charge_limit_pct=charge_limit,
@@ -235,6 +290,7 @@ def simulate_rolling_days(
                 headroom_shortfall_kwh=shortfall,
                 starting_bank_socs_pct=start_socs,
                 ending_bank_socs_pct=socs,
+                average_load_kw=day_load_kw,
             )
         )
         cursor = window.sunset

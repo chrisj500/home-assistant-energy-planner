@@ -145,6 +145,45 @@ class DashboardLayoutTests(unittest.TestCase):
         subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
 
     @unittest.skipUnless(shutil.which("node"), "Node required for Lovelace JS validation")
+    def test_battery_outlook_shows_asymmetric_scenario_range_not_plus_minus(self):
+        section = next(
+            section for section in self.sections
+            if self._heading(section) == "Battery Outlook — Next 4 Days"
+        )
+        card = next(
+            card for card in section["cards"]
+            if card.get("entity") == "binary_sensor.energy_planner_dynamic_load_forecast"
+        )
+        code = card["custom_fields"]["content"].strip()[3:-3]
+        script = "const render = new Function('states','hass'," + json.dumps(code) + ");" + r'''
+        const days = [
+          {
+            date:'2026-09-30',
+            start_soc_pct:20,
+            sunset_soc_pct:58.57,
+            display_sunset_soc_pct:58.57,
+            sunset_soc_low_pct:30.6,
+            sunset_soc_high_pct:93.4,
+            display_uncertainty_pct:14.7,
+            display_confidence:'low'
+          }
+        ];
+        const states = {
+          'binary_sensor.energy_planner_dynamic_load_forecast':{state:'off',attributes:{days}},
+          'sensor.energy_planner_effective_reserve_floor':{state:'20',attributes:{}},
+          'sun.sun':{state:'below_horizon',attributes:{}}
+        };
+        const html = render(states,{});
+        if (!html.includes('31–93% · low')) {
+          throw Error('Scenario envelope is not visible in Battery Outlook');
+        }
+        if (html.includes('±')) {
+          throw Error('Symmetric uncertainty notation still shown');
+        }
+        '''
+        subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+
+    @unittest.skipUnless(shutil.which("node"), "Node required for Lovelace JS validation")
     def test_battery_outlook_shows_explicit_unavailable_reason(self):
         section = next(
             section for section in self.sections
