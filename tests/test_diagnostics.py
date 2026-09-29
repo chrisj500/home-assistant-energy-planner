@@ -4,6 +4,25 @@ import unittest
 
 
 class DiagnosticsTests(unittest.TestCase):
+    def test_multiday_load_profile_is_preserved_in_success_output(self):
+        path = (
+            Path(__file__).resolve().parents[1]
+            / "custom_components"
+            / "energy_planner"
+            / "enhanced_coordinator.py"
+        )
+        raw = path.read_text()
+        # Each key must exist in both fallback defaults and the normal success
+        # output. v0.1.64 computed the profile but omitted it from success output,
+        # causing downstream re-simulation to reuse one flat load for every day.
+        for key in (
+            '"rolling_planning_recent_3h_w"',
+            '"rolling_planning_recent_24h_w"',
+            '"rolling_planning_load_profile_w"',
+            '"rolling_planning_load_profile_source"',
+        ):
+            self.assertGreaterEqual(raw.count(key), 2, key)
+
     def test_downloadable_diagnostics_exposes_live_planner_context(self):
         path = (
             Path(__file__).resolve().parents[1]
