@@ -9,7 +9,13 @@ from multiday import dynamic_load_required_kwh, serialize_dynamic_load_days  # n
 from rolling_ev import RollingDayPlan  # noqa: E402
 
 
-def _plan(*, day: date, shortfall: float, capacity_export: float) -> RollingDayPlan:
+def _plan(
+    *,
+    day: date,
+    shortfall: float,
+    capacity_export: float,
+    average_load_kw: float | None = None,
+) -> RollingDayPlan:
     start = datetime(day.year, day.month, day.day, 8, tzinfo=timezone.utc)
     end = datetime(day.year, day.month, day.day, 18, tzinfo=timezone.utc)
     return RollingDayPlan(
@@ -29,7 +35,27 @@ def _plan(*, day: date, shortfall: float, capacity_export: float) -> RollingDayP
         headroom_margin_kwh=-shortfall,
         headroom_shortfall_kwh=shortfall,
         ending_bank_socs_pct=(98.0, 98.0, 98.0),
+        average_load_kw=average_load_kw,
     )
+
+
+def test_serialization_uses_each_days_planning_load() -> None:
+    plan = _plan(
+        day=date(2026, 9, 16),
+        shortfall=0.0,
+        capacity_export=0.0,
+        average_load_kw=1.5,
+    )
+    rows = serialize_dynamic_load_days(
+        [plan],
+        average_load_kw=3.0,
+        charge_efficiency=0.9,
+        current_day=date(2026, 9, 16),
+        current_day_source="raw",
+        current_day_scale_factor=1.0,
+    )
+    assert rows[0]["planning_load_w"] == 1500.0
+    assert rows[0]["solar_after_house_load_kwh"] == 45.0
 
 
 def test_dynamic_load_uses_larger_ac_requirement() -> None:
