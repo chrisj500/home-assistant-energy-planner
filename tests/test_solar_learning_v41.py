@@ -12,6 +12,7 @@ sys.path.insert(
 from solar_learning_v41 import (  # noqa: E402
     MODEL_NAME,
     MODEL_VERSION,
+    _horizon_scale,
     ensure_shadow,
     ensure_target_geometry,
     prediction,
@@ -178,6 +179,15 @@ class SolarLearningV41Tests(unittest.TestCase):
         self.assertLess(metadata["performance_scale"], 0.5)
         self.assertLess(metadata["correction_cap_fraction"], 0.08)
         self.assertLess((value / candidate["raw_kwh"]) - 1.0, 0.08)
+
+    def test_longer_horizons_gain_correction_authority_more_slowly(self):
+        near = forecast_row(4, 10, sky=0.5, lead_hours=2.0)
+        medium = forecast_row(4, 10, sky=0.5, lead_hours=8.0)
+        long = forecast_row(4, 10, sky=0.5, lead_hours=18.0)
+
+        self.assertEqual(_horizon_scale(near), 1.0)
+        self.assertEqual(_horizon_scale(medium), 0.65)
+        self.assertEqual(_horizon_scale(long), 0.40)
 
     def test_early_evidence_never_gets_original_v4_forty_percent_cap(self):
         rows = local_history(actual=3.5)
