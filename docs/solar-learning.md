@@ -1,8 +1,8 @@
-# AC solar learning — v3 + v4 shadow evaluation
+# AC solar learning — v3 + v4 + v4.1 shadow evaluation
 
 ## What is implemented
 
-Two local residual learners run in parallel shadow mode and cannot influence
+Three local residual learners run in parallel shadow mode and cannot influence
 planner decisions.
 
 - **v3 control model** groups Forecast.Solar error by local hour, lead-time bucket,
@@ -11,11 +11,15 @@ planner decisions.
   cloud fraction, local hour, continuous lead time, raw Forecast.Solar energy,
   forecast temperature, seasonal day, and—only for sub-3-hour targets—issuance-time
   Ecowitt radiation and live PV power.
+- **v4.1 tuned continuous model** preserves continuous cloud generalization while
+  adding target-hour solar elevation/azimuth, tighter lead-time locality and
+  correction authority that grows only with evidence and demonstrated prior
+  out-of-sample performance.
 
-v4 is deliberately a small, inspectable statistical model rather than a neural
-network. Its purpose is to learn how this installation behaves under changing
-cloud conditions without fragmenting evidence into dozens of tiny categorical
-buckets.
+v4 and v4.1 are deliberately small, inspectable statistical models rather than
+neural networks. Their purpose is to learn how this installation behaves under
+changing cloud conditions without fragmenting evidence into dozens of tiny
+categorical buckets.
 
 Every hour, freeze predictions for the next 24 complete UTC hours, along with the
 local date/hour, issuance time, provider retrieval time, and available weather.
@@ -41,6 +45,25 @@ neighbors. It begins shadow evaluation with at least six unique target hours acr
 three days and at least three effective weighted neighbors. A robust weighted
 median of relative Forecast.Solar residuals is regularized toward zero and bounded
 to +/-40%. Warm-up rows are excluded from v4 trained-only comparisons.
+
+The v4.1 learner keeps the same minimum evidence gate but changes how similarity
+and correction authority work:
+
+- lead-time neighbors must fall within +/-1.5 hours for 0–3h targets, +/-3 hours
+  for 3–12h targets, or +/-4 hours for 12–24h targets;
+- target-midpoint solar elevation and azimuth are frozen for every forecast row
+  and weighted more strongly than wall-clock hour;
+- continuous cloud fraction remains the dominant weather feature;
+- early residuals are regularized more strongly toward Forecast.Solar;
+- the maximum correction starts small and grows with effective-neighbor count,
+  number of represented days, and the model's own prior frozen out-of-sample
+  performance for that horizon;
+- medium-horizon correction authority is multiplied by 0.65 and 12–24h authority
+  by 0.40, while 0–3h retains full earned authority;
+- even fully mature v4.1 corrections are hard-capped at +/-20%.
+
+The original v4 output remains frozen as a separate comparator. v4.1 never
+rewrites v4 historical predictions.
 
 ## Inputs and configuration
 
@@ -68,9 +91,11 @@ API requests, API key, or weather subscription is added. Observed Ecowitt condit
 are archived as observations at issuance, never substituted for tomorrow's weather.
 v3 uses hour, lead bucket, and forecast cloud category. v4 uses the numerical
 forecast cloud fraction directly together with the other continuous features listed
-above. Observed Ecowitt radiation/live PV are only used as issuance-time context
-for targets less than three hours away; they are never treated as knowledge of
-future weather.
+above. v4.1 additionally derives target-midpoint solar geometry locally from the
+Home Assistant site latitude/longitude and target timestamp; the site coordinates
+are not added to diagnostics or the forecast rows. Observed Ecowitt radiation/live
+PV are only used as issuance-time context for targets less than three hours away;
+they are never treated as knowledge of future weather.
 
 ## Data quality and persistence
 
@@ -98,18 +123,18 @@ privately in Home Assistant, not in the public repository. No training data is u
 
 ## Evaluation and limits
 
-Status attributes include raw, live-adjusted, v3 and v4 MAE/signed bias by lead
-bucket, trained-only comparisons, sample counts, unique target hours, usable days,
-and exclusions. Compare models on the same frozen target rows; many predictions on
-one day are not independent days of evidence. The v4 scorecard is separate so its
-continuous-neighbor training gate can be evaluated directly against raw Forecast.Solar
-and the v3 control model.
+Status attributes include raw, live-adjusted, v3, v4 and v4.1 MAE/signed bias by
+lead bucket, trained-only comparisons, sample counts, unique target hours, usable
+days, and exclusions. Compare models on the same frozen target rows; many
+predictions on one day are not independent days of evidence. v4 and v4.1 have
+separate scorecards so their continuous-neighbor behavior can be compared directly
+against Forecast.Solar and the v3 control.
 
-No confidence intervals or automatic model promotion are implemented. Both models
-remain advisory diagnostics. Clipping, curtailment, snow, and sensor problems cannot
-always be distinguished from aggregate AC readings alone. v4 reduces categorical
-fragmentation but still depends on the quality of the underlying future weather
-forecast. Ninety-day history cannot establish annual seasonal accuracy.
+No confidence intervals or automatic model promotion are implemented. All three
+models remain advisory diagnostics. Clipping, curtailment, snow, and sensor problems
+cannot always be distinguished from aggregate AC readings alone. v4/v4.1 reduce
+categorical fragmentation but still depend on the quality of the underlying future
+weather forecast. Ninety-day history cannot establish annual seasonal accuracy.
 
 For a later independent model we still need verified roof-group capacity/orientation/
 tilt, inverter AC limits, and an archived numerical weather forecast with future
@@ -128,3 +153,23 @@ are never backfilled into an earlier prediction. Backfill is capped at the most
 recent 2,500 scored rows to avoid an expensive first-upgrade replay on very large
 90-day datasets; all new forecasts are frozen with both v3 and v4 predictions at
 issuance.
+
+
+## v4.1 historical replay and performance gating
+
+v4.1 receives its own chronological backfill. Historical target solar geometry is
+derived from the fixed site location and target midpoint, then each v4.1 prediction
+is frozen using only outcomes that had completed before that prediction's original
+issuance time.
+
+The correction cap is intentionally self-limiting. Before four prior trained
+v4.1 targets exist in a horizon, only 25% of otherwise earned correction authority
+is available. With four to seven prior trained targets the provisional authority
+is 35%. Once at least eight exist, the model compares its own prior MAE with raw
+Forecast.Solar for up to the most recent 24 frozen targets in that horizon. If
+v4.1 has been worse than raw, correction authority is reduced by the cube of the
+raw/v4.1 MAE ratio, with a 15% floor. If v4.1 is beating raw, it can earn the full
+evidence- and horizon-limited cap.
+
+This performance gate is evaluated from prior outcomes only. The target currently
+being predicted never contributes to its own trust multiplier.
