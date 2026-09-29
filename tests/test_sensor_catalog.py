@@ -75,6 +75,14 @@ class SensorCatalogTests(unittest.TestCase):
             ("storm_safety_status", "Storm Safety Status"),
         )
 
+    def test_solar_v41_shadow_entities_are_registered(self) -> None:
+        source = SENSOR_PATH.read_text(encoding="utf-8")
+        for key in (
+            "solar_learning_v41_status",
+            "solar_learning_v41_trained_forecasts",
+        ):
+            self.assertIn(key, source)
+
     def test_auto_battery_topology_entities_are_registered(self) -> None:
         source = SENSOR_PATH.read_text(encoding="utf-8")
         for key in (
