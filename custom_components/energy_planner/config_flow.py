@@ -7,7 +7,7 @@ from homeassistant.const import CONF_NAME
 from homeassistant.helpers import selector
 
 from .hvac_coordinator import DEFAULT_ENTITIES, ROOM_PREFIXES
-from .config_migration import remove_legacy_topology_keys
+from .config_migration import CONFIG_ENTRY_VERSION
 
 from .const import (
     CONF_ACTUAL_SOLAR_POWER,
@@ -65,21 +65,7 @@ API_KEY_SELECTOR = selector.TextSelector(
 
 
 class EnergyPlannerConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
-    VERSION = 2
-
-    async def async_migrate_entry(self, config_entry) -> bool:
-        data, options, changed = remove_legacy_topology_keys(
-            dict(config_entry.data),
-            dict(config_entry.options),
-        )
-        if changed or config_entry.version != self.VERSION:
-            self.hass.config_entries.async_update_entry(
-                config_entry,
-                data=data,
-                options=options,
-                version=self.VERSION,
-            )
-        return True
+    VERSION = CONFIG_ENTRY_VERSION
 
     async def async_step_user(self, user_input=None):
         if user_input is not None:
