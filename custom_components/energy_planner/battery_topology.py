@@ -154,6 +154,12 @@ def _select_three(
     if len(values) < 3:
         return None
 
+    if configured_socs is None and previous is not None:
+        by_serial = {sample.serial: sample for sample in values}
+        if all(serial in by_serial for serial in previous.bank_ids):
+            ordered = tuple(by_serial[serial] for serial in previous.bank_ids)
+            return ordered[0], ordered[1], ordered[2]
+
     if len(values) == 3 and configured_socs is None:
         ordered = tuple(sorted(values, key=lambda item: item.serial))
         return ordered[0], ordered[1], ordered[2]
