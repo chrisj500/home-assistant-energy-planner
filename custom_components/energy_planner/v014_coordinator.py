@@ -21,6 +21,7 @@ from .enhanced_coordinator import (
 from .ev_advisory import (
     auto_charge_eligibility,
     classify_ev_charging_outlook,
+    ev_soc_age_minutes,
     ev_soc_data_status,
 )
 from .ev_learning import infer_wall_energy_full_kwh
@@ -57,7 +58,11 @@ class EnergyPlannerV014Coordinator(EnhancedEnergyPlannerCoordinator):
         state = self.hass.states.get(entity_id)
         if state is None:
             return None
-        return max((dt_util.now() - state.last_updated).total_seconds() / 60.0, 0.0)
+        return ev_soc_age_minutes(
+            now=dt_util.now(),
+            last_updated=state.last_updated,
+            last_reported=getattr(state, "last_reported", None),
+        )
 
     async def _update_ev_learning(self) -> None:
         """Learn EV power immediately and wait for delayed vehicle SOC telemetry."""

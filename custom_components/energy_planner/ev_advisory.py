@@ -106,6 +106,23 @@ def ev_soc_data_status(age_minutes: float | None, *, charging: bool) -> str:
     return "stale"
 
 
+def ev_soc_age_minutes(
+    *,
+    now: datetime,
+    last_updated: datetime,
+    last_reported: datetime | None = None,
+) -> float:
+    """Measure SOC freshness from the latest entity report, even if unchanged.
+
+    Home Assistant only changes ``last_updated`` when the state or attributes
+    change. Integrations can report a fresh, unchanged SOC value for hours, so
+    use ``last_reported`` when available and retain ``last_updated`` for older
+    HA versions or simple test doubles.
+    """
+    observed_at = last_reported or last_updated
+    return max((now - observed_at).total_seconds() / 60.0, 0.0)
+
+
 def auto_charge_eligibility(
     *,
     outlook_status: str,

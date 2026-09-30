@@ -586,20 +586,22 @@ views:
                     <div>
 
                       <div style="
-                        display:flex;
-                        justify-content:
-                          space-between;
-                        align-items:flex-start;
-                        gap:10px;
+                        display:grid;
+                        grid-template-columns:
+                          minmax(0,1fr) auto;
+                        align-items:start;
+                        column-gap:10px;
                         margin-bottom:17px;
                       ">
 
-                        <div>
+                        <div style="min-width:0;text-align:left;">
 
                           <div style="
                             font-size:20px;
                             font-weight:650;
                             color:#fff;
+                            text-align:left;
+                            white-space:nowrap;
                           ">
                             Battery Bank
                           </div>
@@ -609,6 +611,7 @@ views:
                             font-size:11px;
                             color:
                               rgba(255,255,255,.55);
+                            text-align:left;
                           ">
                             ${bankSubtitle}
                           </div>
@@ -618,6 +621,9 @@ views:
                         <div style="
                           display:flex;
                           align-items:center;
+                          justify-content:center;
+                          flex-shrink:0;
+                          white-space:nowrap;
                           gap:5px;
                           padding:6px 9px;
                           border-radius:999px;
@@ -688,7 +694,7 @@ views:
                               charging
                                 ? 'CHARGE RATE'
                                 : discharging
-                                  ? 'OUTPUT'
+                                  ? 'DISCHARGE RATE'
                                   : 'POWER FLOW'
                             }
                           </div>
@@ -1676,4 +1682,3 @@ views:
               action: navigate
               navigation_path: >-
                 /history?entity_id=sensor.envoy_482538078562_current_net_power_consumption%2Csensor.envoy_482538078562_current_power_production%2Csensor.ecoflow_smart_home_panel_2_grid_power%2Csensor.ecoflow_smart_home_panel_2_home_power%2Csensor.ecoflow_smart_home_panel_2_ac1_battery%2Csensor.ecoflow_smart_home_panel_2_ac2_battery%2Csensor.ecoflow_smart_home_panel_2_ac3_battery%2Cnumber.ecoflow_smart_home_panel_2_charging_power%2Cnumber.ecoflow_smart_home_panel_2_backup_reserve_level%2Csensor.solar_actual_power%2Csensor.solar_forecast_power_now%2Csensor.energy_production_today%2Csensor.energy_production_today_remaining%2Csensor.energy_production_tomorrow%2Csensor.house_end_use_power%2Csensor.forecast_base_load_3h_average%2Csensor.forecast_base_load_24h_average%2Csensor.energy_planner_whole_bank_soc%2Csensor.energy_planner_battery_headroom%2Csensor.energy_planner_rolling_headroom_shortfall%2Csensor.energy_planner_rolling_risk_day_capacity_export%2Csensor.energy_planner_rolling_headroom_risk_date%2Cbinary_sensor.energy_planner_headroom_risk_today%2Cbinary_sensor.energy_planner_dynamic_load_forecast%2Csensor.energy_planner_ev_soc%2Csensor.car_charger_power%2Csensor.hot_tub_power%2Csensor.hvac_power%2Csensor.networking_servers_power%2Csensor.rear_patio_power
-
