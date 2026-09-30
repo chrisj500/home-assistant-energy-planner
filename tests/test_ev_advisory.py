@@ -11,6 +11,7 @@ sys.path.insert(0, str(MODULE_DIR))
 from ev_advisory import (  # noqa: E402
     auto_charge_eligibility,
     classify_ev_charging_outlook,
+    ev_soc_age_minutes,
     ev_soc_data_status,
 )
 
@@ -57,6 +58,27 @@ class EvAdvisoryTests(unittest.TestCase):
     def test_soc_status_marks_stale_telemetry_while_charging(self) -> None:
         self.assertEqual(ev_soc_data_status(45.0, charging=True), "charging_soc_stale")
         self.assertEqual(ev_soc_data_status(10.0, charging=True), "fresh")
+
+    def test_soc_heartbeat_is_fresh_even_when_value_has_not_changed(self) -> None:
+        now = datetime(2026, 9, 30, 14, 52, tzinfo=timezone.utc)
+        unchanged_since = now - timedelta(hours=14)
+        reported = now - timedelta(minutes=6)
+        age = ev_soc_age_minutes(
+            now=now,
+            last_updated=unchanged_since,
+            last_reported=reported,
+        )
+        self.assertEqual(age, 6.0)
+        self.assertEqual(ev_soc_data_status(age, charging=False), "fresh")
+
+    def test_soc_freshness_falls_back_to_last_updated(self) -> None:
+        now = datetime(2026, 9, 30, 14, 52, tzinfo=timezone.utc)
+        age = ev_soc_age_minutes(
+            now=now,
+            last_updated=now - timedelta(minutes=40),
+        )
+        self.assertEqual(age, 40.0)
+        self.assertEqual(ev_soc_data_status(age, charging=False), "aging")
 
     def test_auto_charge_requires_green_active_solar_window(self) -> None:
         now = datetime(2026, 9, 14, 16, 45, tzinfo=timezone.utc)

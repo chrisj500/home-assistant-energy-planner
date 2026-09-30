@@ -72,6 +72,34 @@ class DashboardLayoutTests(unittest.TestCase):
         self.assertIn("kWh", content)
         self.assertIn("packs", content)
 
+    @unittest.skipUnless(shutil.which("node"), "Node required for Lovelace JS validation")
+    def test_battery_card_shows_discharge_rate_and_home_supply(self):
+        card = self.sections[1]["cards"][1]
+        code = card["custom_fields"]["content"].strip()[3:-3]
+        script = "const render = new Function('states','hass'," + json.dumps(code) + ");" + r'''
+        const states = {
+          'sensor.energy_planner_whole_bank_soc':{state:'68'},
+          'sensor.energy_planner_effective_battery_capacity':{state:'55.3'},
+          'sensor.energy_planner_battery_pack_count':{state:'9'},
+          'sensor.energy_planner_battery_topology_source':{state:'panel'},
+          'sensor.ecoflow_smart_home_panel_2_ac1_battery':{state:'67'},
+          'sensor.ecoflow_smart_home_panel_2_ac2_battery':{state:'67'},
+          'sensor.ecoflow_smart_home_panel_2_ac3_battery':{state:'69'},
+          'sensor.ecoflow_smart_home_panel_2_ac1_power':{state:'-1325'},
+          'sensor.ecoflow_smart_home_panel_2_ac2_power':{state:'-1325'},
+          'sensor.ecoflow_smart_home_panel_2_ac3_power':{state:'0'},
+          'sensor.patio_ecoflow_smart_home_panel_2_backup_charge_time_remaining':{state:'unknown'}
+        };
+        const html = render(states,{});
+        for (const text of ['DISCHARGING','DISCHARGE RATE','2.65 kW','Supplying the home']) {
+          if (!html.includes(text)) throw Error(`Missing discharge display: ${text}`);
+        }
+        if (!html.includes('grid-template-columns:') || !html.includes('minmax(0,1fr) auto')) {
+          throw Error('Battery heading does not reserve space for the status indicator');
+        }
+        '''
+        subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+
     def test_diagnostics_exposes_battery_topology(self):
         raw = yaml.safe_dump(self.diagnostics)
         self.assertIn("sensor.energy_planner_effective_battery_capacity", raw)
