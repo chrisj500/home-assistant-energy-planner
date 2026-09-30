@@ -148,6 +148,19 @@ class SensorCatalogTests(unittest.TestCase):
         self.assertIn("EnergyPlannerCounterfactualHeadroomRisk", binary_source)
         self.assertIn("EnergyPlannerLiveSolarCaptureOpportunity", binary_source)
 
+    def test_ev_controls_can_resolve_selected_toyota_device_and_lock(self) -> None:
+        binary_path = (
+            Path(__file__).resolve().parents[1]
+            / "custom_components"
+            / "energy_planner"
+            / "binary_sensor.py"
+        )
+        binary_source = binary_path.read_text(encoding="utf-8")
+        self.assertIn("er.async_get(self.hass)", binary_source)
+        self.assertIn("er.async_entries_for_device", binary_source)
+        self.assertIn('"ev_device_id": ev_device_id', binary_source)
+        self.assertIn('"ev_lock_entity": ev_lock_entity', binary_source)
+
     def test_existing_entries_can_configure_battery_power_entities(self) -> None:
         config_flow_path = (
             Path(__file__).resolve().parents[1]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
 from .const import CONF_EV_HOME, CONF_EV_SOC
@@ -121,9 +122,31 @@ class EnergyPlannerAutoChargeEligible(
     @property
     def extra_state_attributes(self) -> dict[str, object]:
         data = self.coordinator.data or {}
+        ev_soc_entity = self.coordinator.cfg.get(CONF_EV_SOC)
+        ev_device_id = None
+        ev_lock_entity = None
+        if ev_soc_entity:
+            entity_registry = er.async_get(self.hass)
+            soc_entry = entity_registry.async_get(ev_soc_entity)
+            if soc_entry and soc_entry.device_id:
+                ev_device_id = soc_entry.device_id
+                ev_lock_entity = next(
+                    (
+                        entry.entity_id
+                        for entry in er.async_entries_for_device(
+                            entity_registry,
+                            ev_device_id,
+                            include_disabled_entities=True,
+                        )
+                        if entry.domain == "lock" and entry.platform == "toyota_na"
+                    ),
+                    None,
+                )
         return {
-            "ev_soc_entity": self.coordinator.cfg.get(CONF_EV_SOC),
+            "ev_soc_entity": ev_soc_entity,
             "ev_home_entity": self.coordinator.cfg.get(CONF_EV_HOME),
+            "ev_device_id": ev_device_id,
+            "ev_lock_entity": ev_lock_entity,
             "reason": data.get("rolling_ev_auto_charge_reason"),
             "charging_status": data.get("rolling_ev_status"),
             "advisory_detail": data.get("rolling_ev_advisory_detail"),
