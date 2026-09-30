@@ -67,9 +67,31 @@ class DashboardLayoutTests(unittest.TestCase):
             "CHARGE RATE",
             "CURRENT CHARGE",
             "FULL CHARGE ENERGY",
-            "advisory only",
+            "Toyota Connected Services",
         ]:
             self.assertIn(label, content)
+
+    def test_ev_card_has_confirmed_remote_start_and_stop_controls(self):
+        card = self.sections[2]["cards"][2]
+        controls = card["custom_fields"]["controls"]["card"]["cards"]
+        by_service = {item["tap_action"]["service"]: item for item in controls}
+        self.assertEqual(
+            set(by_service),
+            {
+                "toyota_na.door_lock",
+                "toyota_na.door_unlock",
+                "toyota_na.engine_start",
+                "toyota_na.engine_stop",
+                "toyota_na.refresh",
+            },
+        )
+        for service in ("toyota_na.engine_start", "toyota_na.engine_stop"):
+            self.assertIn("confirmation", by_service[service]["tap_action"])
+        for service in ("toyota_na.door_lock", "toyota_na.door_unlock", "toyota_na.refresh"):
+            self.assertNotIn("confirmation", by_service[service]["tap_action"])
+        for item in controls:
+            self.assertIn("ev_device_id", item["tap_action"]["service_data"]["vehicle"])
+            self.assertTrue(item.get("icon", "").startswith("mdi:"))
 
     @unittest.skipUnless(shutil.which("node"), "Node required for Lovelace JS validation")
     def test_ev_card_uses_selected_vehicle_range_and_handles_missing_range(self):
@@ -80,6 +102,7 @@ class DashboardLayoutTests(unittest.TestCase):
           'binary_sensor.energy_planner_ev_auto_charge_eligible':{
             state:'off',attributes:{
               ev_soc_entity:'sensor.selected_ev_soc',ev_home_entity:'device_tracker.ev',
+              ev_lock_entity:'lock.selected_vehicle',ev_device_id:'device_123',
               ev_current_power_w:0,learned_charge_power_w:3150,
               learned_charge_power_source:'learned'
             }
@@ -89,12 +112,13 @@ class DashboardLayoutTests(unittest.TestCase):
           'sensor.energy_planner_ev_available_energy_to_target':{state:'5.1'},
           'sensor.energy_planner_ev_learned_full_range_wall_energy':{state:'14.2'},
           'device_tracker.ev':{state:'home'},
+          'lock.selected_vehicle':{state:'locked',attributes:{friendly_name:'Model Vehicle'}},
           'sensor.ev_range':{state:'42',attributes:{friendly_name:'Model EV Range Model',unit_of_measurement:'mi'}},
           'sensor.ev_range_ac':{state:'38',attributes:{friendly_name:'Model EV Range AC Model',unit_of_measurement:'mi'}},
           'sensor.other_range':{state:'999',attributes:{friendly_name:'Other EV Range Other',unit_of_measurement:'mi'}}
         };
         let html = render(states,{});
-        for (const text of ['64%','42 mi','38 mi','5.1 kWh','3.15 kW','14.2 kWh','AT HOME']) {
+        for (const text of ['64%','42 mi','38 mi','5.1 kWh','3.15 kW','14.2 kWh','AT HOME','LOCKED']) {
           if (!html.includes(text)) throw Error(`EV card is missing ${text}`);
         }
         if (html.includes('999 mi')) throw Error('Card selected another vehicle range');

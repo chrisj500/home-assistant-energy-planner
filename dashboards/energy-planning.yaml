@@ -1470,6 +1470,9 @@ views:
                   const range = findRange('Range');
                   const rangeAc = findRange('Range AC');
                   const rangeLabel = entity => entity ? `${display(entity.state, 0)} ${entity.attributes.unit_of_measurement || ''}`.trim() : 'Unavailable';
+                  const lockState = states[attrs.ev_lock_entity]?.state;
+                  const lockStatus = lockState === 'locked' ? 'LOCKED' : lockState === 'unlocked' ? 'UNLOCKED' : 'LOCK STATUS UNAVAILABLE';
+                  const lockIcon = lockState === 'locked' ? 'mdi:lock' : lockState === 'unlocked' ? 'mdi:lock-open-variant' : 'mdi:lock-question';
                   const homeEntity = states[attrs.ev_home_entity];
                   const status = currentPower !== null && currentPower >= 50 ? 'CHARGING' :
                     homeEntity?.state === 'home' ? 'AT HOME' : homeEntity?.state === 'not_home' ? 'AWAY' : 'STATUS UNKNOWN';
@@ -1490,6 +1493,10 @@ views:
                         </div>
                         <div style="font-size:9px;letter-spacing:.08em;color:#64d2ff;border:1px solid rgba(100,210,255,.25);background:rgba(100,210,255,.08);border-radius:20px;padding:5px 8px;white-space:nowrap">${status}</div>
                       </div>
+                      <div style="display:flex;align-items:center;gap:6px;margin-top:9px;color:#b8bbc1;font-size:11px">
+                        <ha-icon icon="${lockIcon}" style="width:15px;height:15px;color:${lockState === 'locked' ? '#30d158' : lockState === 'unlocked' ? '#ff9f0a' : '#8e9298'}"></ha-icon>
+                        <span>${lockStatus}</span>
+                      </div>
                       <div style="margin-top:15px;display:flex;align-items:baseline;justify-content:space-between">
                         <div style="font-size:11px;letter-spacing:.09em;color:#a1a1aa;font-weight:700">STATE OF CHARGE</div>
                         <div style="font-size:23px;font-weight:800">${soc === null ? '—' : `${display(soc)}%`}</div>
@@ -1505,10 +1512,110 @@ views:
                         ${stat('CURRENT CHARGE', currentPower === null ? '—' : `${display(currentPower / 1000,2)} kW`)}
                         ${stat('FULL CHARGE ENERGY', fullEnergy === null ? '—' : `${display(fullEnergy,1)} kWh`)}
                       </div>
-                      <div style="font-size:10px;color:#777c84;margin-top:11px;text-align:right">Vehicle telemetry · advisory only</div>
+                      <div style="font-size:10px;color:#777c84;margin-top:11px;text-align:right">Vehicle data · Toyota Connected Services</div>
                     </div>
                   `;
                 ]]]
+              controls:
+                card:
+                  type: horizontal-stack
+                  cards:
+                    - type: custom:button-card
+                      entity: binary_sensor.energy_planner_ev_auto_charge_eligible
+                      triggers_update:
+                        - binary_sensor.energy_planner_ev_auto_charge_eligible
+                      icon: mdi:lock
+                      name: Lock
+                      show_name: true
+                      show_state: false
+                      tap_action:
+                        action: call-service
+                        service: toyota_na.door_lock
+                        service_data:
+                          vehicle: '[[[[ return states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id || ""; ]]]]'
+                      hidden: '[[[[ return !states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id; ]]]]'
+                      styles: &ev_control_styles
+                        card:
+                          - padding: 8px 2px
+                          - border-radius: 13px
+                          - background: rgba(255,255,255,0.045)
+                          - border: 1px solid rgba(255,255,255,0.06)
+                          - box-shadow: none
+                        grid:
+                          - grid-template-areas: '"i" "n"'
+                          - grid-template-columns: 1fr
+                          - grid-template-rows: 20px min-content
+                        icon:
+                          - width: 17px
+                          - color: '#64d2ff'
+                        name:
+                          - font-size: 9px
+                          - color: '#d4d4d8'
+                          - padding-top: 3px
+                    - type: custom:button-card
+                      entity: binary_sensor.energy_planner_ev_auto_charge_eligible
+                      triggers_update:
+                        - binary_sensor.energy_planner_ev_auto_charge_eligible
+                      icon: mdi:lock-open-variant
+                      name: Unlock
+                      show_name: true
+                      show_state: false
+                      tap_action:
+                        action: call-service
+                        service: toyota_na.door_unlock
+                        service_data:
+                          vehicle: '[[[[ return states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id || ""; ]]]]'
+                      hidden: '[[[[ return !states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id; ]]]]'
+                      styles: *ev_control_styles
+                    - type: custom:button-card
+                      entity: binary_sensor.energy_planner_ev_auto_charge_eligible
+                      triggers_update:
+                        - binary_sensor.energy_planner_ev_auto_charge_eligible
+                      icon: mdi:engine
+                      name: Start
+                      show_name: true
+                      show_state: false
+                      tap_action:
+                        action: call-service
+                        service: toyota_na.engine_start
+                        service_data:
+                          vehicle: '[[[[ return states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id || ""; ]]]]'
+                        confirmation:
+                          text: Remotely start the Lexus?
+                      hidden: '[[[[ return !states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id; ]]]]'
+                      styles: *ev_control_styles
+                    - type: custom:button-card
+                      entity: binary_sensor.energy_planner_ev_auto_charge_eligible
+                      triggers_update:
+                        - binary_sensor.energy_planner_ev_auto_charge_eligible
+                      icon: mdi:engine-off
+                      name: Stop
+                      show_name: true
+                      show_state: false
+                      tap_action:
+                        action: call-service
+                        service: toyota_na.engine_stop
+                        service_data:
+                          vehicle: '[[[[ return states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id || ""; ]]]]'
+                        confirmation:
+                          text: Remotely stop the Lexus?
+                      hidden: '[[[[ return !states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id; ]]]]'
+                      styles: *ev_control_styles
+                    - type: custom:button-card
+                      entity: binary_sensor.energy_planner_ev_auto_charge_eligible
+                      triggers_update:
+                        - binary_sensor.energy_planner_ev_auto_charge_eligible
+                      icon: mdi:refresh
+                      name: Refresh
+                      show_name: true
+                      show_state: false
+                      tap_action:
+                        action: call-service
+                        service: toyota_na.refresh
+                        service_data:
+                          vehicle: '[[[[ return states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id || ""; ]]]]'
+                      hidden: '[[[[ return !states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id; ]]]]'
+                      styles: *ev_control_styles
             styles:
               card:
                 - padding: 15px
@@ -1521,11 +1628,15 @@ views:
                 - border: 1px solid rgba(255,255,255,0.065)
                 - box-shadow: 0 12px 32px rgba(0,0,0,0.25)
               grid:
-                - grid-template-areas: '"content"'
+                - grid-template-areas: '"content" "controls"'
                 - grid-template-columns: 1fr
+                - grid-template-rows: auto auto
               custom_fields:
                 content:
                   - width: 100%
+                controls:
+                  - width: 100%
+                  - margin-top: 12px
 
 
 
