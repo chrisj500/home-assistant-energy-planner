@@ -4,6 +4,7 @@ from homeassistant.components.binary_sensor import BinarySensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
+from .const import CONF_EV_HOME, CONF_EV_SOC
 from .v018_coordinator import EnergyPlannerV018Coordinator
 
 
@@ -121,6 +122,8 @@ class EnergyPlannerAutoChargeEligible(
     def extra_state_attributes(self) -> dict[str, object]:
         data = self.coordinator.data or {}
         return {
+            "ev_soc_entity": self.coordinator.cfg.get(CONF_EV_SOC),
+            "ev_home_entity": self.coordinator.cfg.get(CONF_EV_HOME),
             "reason": data.get("rolling_ev_auto_charge_reason"),
             "charging_status": data.get("rolling_ev_status"),
             "advisory_detail": data.get("rolling_ev_advisory_detail"),
