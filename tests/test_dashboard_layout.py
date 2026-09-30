@@ -53,6 +53,58 @@ class DashboardLayoutTests(unittest.TestCase):
         )
         self.assertIn("Solar & Battery Outlook", headroom[2].get("content", ""))
 
+    def test_ev_parameters_card_is_under_battery_outlook(self):
+        outlook = self.sections[2]["cards"]
+        self.assertEqual(
+            outlook[2].get("entity"),
+            "binary_sensor.energy_planner_ev_auto_charge_eligible",
+        )
+        content = outlook[2]["custom_fields"]["content"]
+        for label in [
+            "RANGE",
+            "RANGE WITH A/C",
+            "ENERGY TO TARGET",
+            "CHARGE RATE",
+            "CURRENT CHARGE",
+            "FULL CHARGE ENERGY",
+            "advisory only",
+        ]:
+            self.assertIn(label, content)
+
+    @unittest.skipUnless(shutil.which("node"), "Node required for Lovelace JS validation")
+    def test_ev_card_uses_selected_vehicle_range_and_handles_missing_range(self):
+        card = self.sections[2]["cards"][2]
+        code = card["custom_fields"]["content"].strip()[3:-3]
+        script = "const render = new Function('states','hass'," + json.dumps(code) + ");" + r'''
+        const states = {
+          'binary_sensor.energy_planner_ev_auto_charge_eligible':{
+            state:'off',attributes:{
+              ev_soc_entity:'sensor.selected_ev_soc',ev_home_entity:'device_tracker.ev',
+              ev_current_power_w:0,learned_charge_power_w:3150,
+              learned_charge_power_source:'learned'
+            }
+          },
+          'sensor.selected_ev_soc':{state:'64',attributes:{friendly_name:'Model EV Battery Level Model'}},
+          'sensor.energy_planner_ev_soc':{state:'64'},
+          'sensor.energy_planner_ev_available_energy_to_target':{state:'5.1'},
+          'sensor.energy_planner_ev_learned_full_range_wall_energy':{state:'14.2'},
+          'device_tracker.ev':{state:'home'},
+          'sensor.ev_range':{state:'42',attributes:{friendly_name:'Model EV Range Model',unit_of_measurement:'mi'}},
+          'sensor.ev_range_ac':{state:'38',attributes:{friendly_name:'Model EV Range AC Model',unit_of_measurement:'mi'}},
+          'sensor.other_range':{state:'999',attributes:{friendly_name:'Other EV Range Other',unit_of_measurement:'mi'}}
+        };
+        let html = render(states,{});
+        for (const text of ['64%','42 mi','38 mi','5.1 kWh','3.15 kW','14.2 kWh','AT HOME']) {
+          if (!html.includes(text)) throw Error(`EV card is missing ${text}`);
+        }
+        if (html.includes('999 mi')) throw Error('Card selected another vehicle range');
+        delete states['sensor.ev_range'];
+        delete states['sensor.ev_range_ac'];
+        html = render(states,{});
+        if (!html.includes('Unavailable')) throw Error('Missing range was not handled gracefully');
+        '''
+        subprocess.run(["node", "-e", script], check=True, capture_output=True, text=True)
+
     def test_battery_card_prefers_planner_weighted_soc(self):
         headroom = self.sections[1]["cards"]
         content = headroom[1]["custom_fields"]["content"]
