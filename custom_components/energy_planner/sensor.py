@@ -77,6 +77,10 @@ def _percent(key: str, data_key: str, name: str):
 
 
 SENSORS = (
+    EnergyPlannerSensorDescription(key="solar_learning_blend_status", data_key="solar_learning_blend_status", name="Solar Learning Blend Status"),
+    EnergyPlannerSensorDescription(key="solar_learning_blend_scored_forecasts", data_key="solar_learning_blend_scored_forecasts", name="Solar Learning Blend Active Scored Forecasts", state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=0),
+    EnergyPlannerSensorDescription(key="solar_learning_persistence_status", data_key="solar_learning_persistence_status", name="Solar Learning Persistence Status"),
+    EnergyPlannerSensorDescription(key="solar_learning_persistence_scored_forecasts", data_key="solar_learning_persistence_scored_forecasts", name="Solar Learning Persistence Active Scored Forecasts", state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=0),
     EnergyPlannerSensorDescription(key="solar_learning_status", data_key="solar_learning_status", name="Solar Learning Status"),
     EnergyPlannerSensorDescription(key="solar_learning_usable_days", data_key="solar_learning_usable_days", name="Solar Learning Usable Days"),
     EnergyPlannerSensorDescription(key="solar_learning_scored_forecasts", data_key="solar_learning_scored_forecasts", name="Solar Learning Scored Forecasts"),
@@ -886,6 +890,9 @@ class EnergyPlannerSensor(CoordinatorEntity[EnergyPlannerCoordinator], SensorEnt
         data = self.coordinator.data or {}
         if self.entity_description.key == "solar_learning_status":
             return data.get("solar_learning_diagnostics", {})
+        for model in ("blend", "persistence"):
+            if self.entity_description.key == f"solar_learning_{model}_status":
+                return data.get("solar_learning_diagnostics", {}).get(model, {})
         if self.entity_description.key == "hvac_daily_electricity":
             return {
                 **data.get("hvac_energy_coverage", {}),

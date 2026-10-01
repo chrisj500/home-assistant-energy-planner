@@ -16,6 +16,7 @@ sys.path.insert(0, str(ROOT))
 from forecast_solar_shadow import interval_points_from_payload, integrate_interval_energy_kwh, weather_rows
 from headroom import correct_current_day_points
 from solar_learning import finalize, issue, lead_bucket, number, observe, scorecard, sky_bucket
+from solar_challengers import annotate_latest as annotate_challengers, scorecard as challenger_scorecard
 from solar_learning_v4 import (  # noqa: E402
     MODEL_NAME as V4_MODEL_NAME,
     annotate_latest as annotate_v4_latest,
@@ -94,6 +95,10 @@ class SolarCoordinatorTests(unittest.TestCase):
         self.assertFalse(d['v4_1']['forecast_applied'])
         self.assertEqual(d['v4_1']['model'], 'continuous_weather_residual_v4_1')
         self.assertEqual(d['v4_1']['model_version'], '4.1')
+        for model in ('blend', 'persistence'):
+            self.assertFalse(d[model]['forecast_applied'])
+            self.assertEqual(d[model]['metrics']['evaluation'], 'prospective_only')
+            self.assertIn('solar_learning_' + model + '_status', data)
         self.assertFalse(d['weather_forecast_available'])
         self.assertEqual(len(d['hourly_shadow']), 24)
         self.assertTrue(all(r['start'] > r['issued_at'] for r in self.saved['pending']))
@@ -107,6 +112,21 @@ class SolarCoordinatorTests(unittest.TestCase):
         self.update()
         self.assertEqual(self.c._solar_memory['pending'], pending)
         self.assertEqual(self.c._solar_memory['actual_hours'], {})
+
+    def test_new_challengers_are_frozen_saved_and_exposed_without_control_changes(self):
+        self.now += timedelta(hours=4, minutes=30)
+        self.c._estimate_last_success = self.now
+        for state in self.states.values():
+            state.last_reported = self.now
+        data = self.update()
+        row = self.saved['pending'][0]
+        self.assertTrue(row['persistence_active'])
+        self.assertEqual(row['challenger_version'], 1)
+        self.assertIn('blend_metadata', row)
+        self.assertEqual(data['solar_learning_persistence_status'], 'shadow')
+        self.assertEqual(data['solar_learning_persistence_scored_forecasts'], 0)
+        self.assertEqual(data['projected_sunset_soc'], 42)
+        self.assertFalse(data['rolling_ev_auto_charge_eligible'])
 
     def test_source_change_records_the_reset_time(self):
         self.c._solar_memory = {"identity": "old-source", "pending": ["old"]}
