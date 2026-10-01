@@ -15,6 +15,10 @@ from .forecast_solar_shadow import interval_points_from_payload, integrate_inter
 from .headroom import correct_current_day_points
 from .hvac_coordinator import EnergyPlannerHVACCoordinator
 from .solar_learning import finalize, issue, lead_bucket, merge_recovery, number, observe, scorecard, sky_bucket
+from .solar_challengers import (
+    annotate_latest as annotate_challengers,
+    scorecard as challenger_scorecard,
+)
 from .solar_learning_v4 import (
     MODEL_NAME as V4_MODEL_NAME,
     annotate_latest as annotate_v4_latest,
@@ -90,7 +94,8 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
         if not cfg.get("solar_learning_enabled", True):
             if self._solar_memory is not None:
                 self._solar_memory.pop("previous", None)
-            return {"solar_learning_status": "disabled", "solar_learning_diagnostics": {"forecast_applied": False}}
+            return {"solar_learning_status": "disabled", "solar_learning_diagnostics": {"forecast_applied": False},
+                    "solar_learning_blend_status": "disabled", "solar_learning_persistence_status": "disabled"}
         if self._solar_memory is None:
             loaded = await self._solar_learning_store.async_load()
             self._solar_memory = loaded if isinstance(loaded, dict) else {}
@@ -214,12 +219,34 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
                 site_latitude,
                 site_longitude,
             )
+            annotate_challengers(memory, stamp, points, site_latitude, site_longitude)
             issued = bool(candidates)
         pending = memory.get("pending", [])
         newest = [r for r in pending if r["issued_at"] == memory.get("last_issue")]
         stats = scorecard(memory)
         v4_stats = v4_scorecard(memory)
         v41_stats = v41_scorecard(memory)
+        challengers = {}
+        for model in ("blend", "persistence"):
+            active = any(r.get(model + "_active") for r in newest)
+            challenger_state = ("forecast_unavailable" if not forecast_fresh else
+                                "production_unavailable" if not valid else
+                                "shadow" if active else "collecting" if model == "blend" else "baseline_fallback")
+            challengers[model] = {
+                "forecast_applied": False, "model_version": 1,
+                "model": "horizon_weighted_blend" if model == "blend" else "clear_sky_persistence",
+                "status": challenger_state,
+                "metrics": challenger_scorecard(memory, model),
+                "policy": (
+                    "Latest 48 matched targets in the same horizon within 21 days; >=12 targets across >=3 days; "
+                    "inverse MAE weights shrunk toward live (0-3h) or raw baseline; only completed prior outcomes; "
+                    "prospective scores; shadow only"
+                    if model == "blend" else
+                    "Current AC power normalized by approximate Haurwitz horizontal clear-sky shape; "
+                    "linear fade to raw over 120 minutes; low-sun/stale-data fallback; roof geometry not modeled; "
+                    "prospective hourly scores with separate active-only cohort; shadow only"
+                ),
+            }
         state = "collecting" if valid else "production_unavailable"
         if not forecast_fresh:
             state = "forecast_unavailable"
@@ -247,6 +274,7 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
             else "collecting"
         )
         diagnostic = {"forecast_applied": False, "model": "hour_lead_cloud_residual_v3", "model_version": 3,
+            **challengers,
             "status": state, "sources": {**sources, "power": power_entity, "energy": energy_entity},
             "current_observation": sample, "weather_forecast_available": weather_fresh,
             "forecast_fresh": forecast_fresh, "pending_forecasts": len(pending),
@@ -311,7 +339,10 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
                 "solar_learning_v4_status": v4_state,
                 "solar_learning_v4_trained_forecasts": v4_stats["trained_forecasts"],
                 "solar_learning_v41_status": v41_state,
-                "solar_learning_v41_trained_forecasts": v41_stats["trained_forecasts"]}
+                "solar_learning_v41_trained_forecasts": v41_stats["trained_forecasts"],
+                **{f"solar_learning_{model}_status": item["status"] for model, item in challengers.items()},
+                **{f"solar_learning_{model}_scored_forecasts": item["metrics"]["active_forecasts"]
+                   for model, item in challengers.items()}}
 
     async def _async_update_data(self):
         data = await super()._async_update_data()
@@ -322,4 +353,5 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
             if self._solar_memory is not None:
                 self._solar_memory.pop("previous", None)
             data.update(solar_learning_status="error", solar_learning_diagnostics={"forecast_applied": False, "reason": "See integration logs"})
+            data.update(solar_learning_blend_status="error", solar_learning_persistence_status="error")
         return data

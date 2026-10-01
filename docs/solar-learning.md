@@ -1,8 +1,8 @@
-# AC solar learning — v3 + v4 + v4.1 shadow evaluation
+# AC solar learning — residual models, horizon blend, and persistence
 
 ## What is implemented
 
-Three local residual learners run in parallel shadow mode and cannot influence
+Three local residual learners and two challengers run in parallel shadow mode and cannot influence
 planner decisions.
 
 - **v3 control model** groups Forecast.Solar error by local hour, lead-time bucket,
@@ -130,7 +130,7 @@ predictions on one day are not independent days of evidence. v4 and v4.1 have
 separate scorecards so their continuous-neighbor behavior can be compared directly
 against Forecast.Solar and the v3 control.
 
-No confidence intervals or automatic model promotion are implemented. All three
+No confidence intervals or automatic model promotion are implemented. All five
 models remain advisory diagnostics. Clipping, curtailment, snow, and sensor problems
 cannot always be distinguished from aggregate AC readings alone. v4/v4.1 reduce
 categorical fragmentation but still depend on the quality of the underlying future
@@ -141,6 +141,72 @@ tilt, inverter AC limits, and an archived numerical weather forecast with future
 irradiance and clouds. Existing Forecast.Solar site settings can supply geometry
 where correctly configured. Ecowitt cannot supply future weather by itself. Evaluate
 that expansion only after the baseline collection and scoring are working reliably.
+
+## Horizon-specific blend (0.1.71)
+
+The `horizon_weighted_blend` challenger combines raw Forecast.Solar, the live
+adjustment, and currently trained v3/v4/v4.1 predictions. Members whose current
+output is identical to another member are not given duplicate weight. The live
+baseline is preferred at 0–3h; raw is the baseline at longer horizons. Persistence
+is evaluated separately and is not a member of this first blend.
+
+Weights use up to the latest 48 distinct target hours in the same horizon over
+the previous 21 days. A target must have completed before issuance. The latest
+issued prediction for each target is selected first, then every member is
+evaluated on the same complete cohort. Nighttime raw forecasts below 0.05 kWh
+are excluded, matching the existing scorecards. At least 12 targets across three
+days are required. Historical warm-up predictions remain in this matched cohort;
+their baseline fallback is the prediction that was actually frozen at issuance.
+
+Member weights are proportional to inverse MAE with a 0.10 kWh error floor. They
+are shrunk toward the baseline using `n/(n+24) * min(1, days/7)`, capped at 0.75.
+The remaining weight belongs to the baseline. This avoids switching entirely to
+a model after a few favorable hours. Each issued row saves exact weights,
+matched-cohort MAEs, sample/day counts, and a fallback reason. Insufficient
+evidence returns the horizon's baseline and is marked inactive.
+
+## Short-term clear-sky persistence (0.1.71)
+
+The `clear_sky_persistence` challenger scales the current measured AC power by
+the ratio of future/current clear-sky horizontal irradiance. It uses the Haurwitz
+shape `1098 * sin(elevation) * exp(-0.059 / sin(elevation))` and the existing
+approximate NOAA-style solar geometry. This is a **horizontal irradiance proxy**,
+not a site-specific roof or inverter model. Geometric rather than refracted solar
+elevation is used; issuance below 10 degrees falls back. Array orientation,
+shading, clipping and future cloud movement can still make this model wrong.
+
+At each one-minute integration midpoint, persistence influence decays linearly
+from 100% at issuance to zero two hours later. The remainder uses the frozen
+provider curve. Future/current shape ratios are limited to 3.0. Valid zero
+production can lower the forecast; suspicious zero readings already rejected by
+the collector cannot be used. Invalid, negative, nonfinite, future-dated, or
+over-five-minute-old observations, missing geometry, and incomplete provider
+curves all fall back to raw with a reason. No new packages or API calls are needed.
+
+Haurwitz reference: [pvlib clear-sky model documentation](https://pvlib-python.readthedocs.io/en/stable/reference/generated/pvlib.clearsky.haurwitz.html).
+
+### Prospective evaluation and restart behavior
+
+Both predictions are frozen on new pending rows after the residual-model outputs
+are frozen. Existing history is preserved; neither challenger is retrospectively
+backfilled. The blend may use existing scored history to estimate weights, but
+its own scores begin only after newly issued targets resolve. Upgrading between
+issuances can take up to an hour before the first new challenger forecasts.
+
+All challenger scorecards compare raw/live/v3/v4/v4.1/blend/persistence on the
+same prospective rows. Each has an `all` and an `active_only` cohort. Use the
+persistence **active-only 0–3h** cohort to assess its value: later forecasts equal
+raw and must not be counted as independent persistence successes. Scores remain
+hourly and start at the next full UTC hour; current partial-hour/15-minute and
+battery SOC scoring are not included. There are no accuracy guarantees or
+automatic promotions.
+
+Existing HA storage persists predictions, weights, reasons and outcomes; restart
+does not recompute them. Source-identity resets and retention rules still apply.
+Diagnostics include `blend` and `persistence` sections. New sensors expose each
+model's status and active scored count, with its scorecard on the status sensor.
+Operational forecasts, battery strategy, EV advice and equipment controls do not
+consume either challenger's predictions.
 
 
 ## v4 historical shadow bootstrap
