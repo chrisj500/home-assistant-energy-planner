@@ -297,6 +297,7 @@ views:
               - sensor.ecoflow_smart_home_panel_2_ac3_battery
               - sensor.ecoflow_smart_home_panel_2_ac3_power
               - sensor.patio_ecoflow_smart_home_panel_2_backup_charge_time_remaining
+              - number.ecoflow_smart_home_panel_2_backup_reserve_level
 
             custom_fields:
               content: |
@@ -377,6 +378,11 @@ views:
                       'sensor.patio_ecoflow_smart_home_panel_2_backup_charge_time_remaining'
                     );
 
+                  const reserveLevel =
+                    num(
+                      'number.ecoflow_smart_home_panel_2_backup_reserve_level'
+                    );
+
                   const totalPower = p1 + p2 + p3;
 
                   const charging = totalPower > 50;
@@ -449,7 +455,29 @@ views:
                     charging
                       ? formatEta(eta)
                       : discharging
-                        ? 'Supplying the home'
+                        ? (() => {
+                            if (soc === null || capacity === null || reserveLevel === null || capacity <= 0)
+                              return 'Time to reserve unavailable';
+                            if (soc <= reserveLevel)
+                              return 'At configured reserve';
+
+                            const remainingEnergyKwh =
+                              capacity * (soc - reserveLevel) / 100;
+                            const minutes =
+                              remainingEnergyKwh * 1000 * 60 * 0.9 / Math.abs(totalPower);
+                            if (!Number.isFinite(minutes) || minutes <= 0)
+                              return 'Time to reserve unavailable';
+
+                            const rounded = Math.max(1, Math.round(minutes));
+                            const h = Math.floor(rounded / 60);
+                            const m = rounded % 60;
+                            const duration = h === 0
+                              ? `${m}m`
+                              : m === 0
+                                ? `${h}h`
+                                : `${h}h ${m}m`;
+                            return `≈ ${duration} to ${Math.round(reserveLevel)}% reserve`;
+                          })()
                         : 'Not currently charging';
 
                   const stackPower = (p) => {

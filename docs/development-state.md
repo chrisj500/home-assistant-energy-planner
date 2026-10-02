@@ -1,38 +1,33 @@
-# Development handoff — solar challengers, 0.1.71
+# Development handoff — battery discharge estimate, 0.1.72
 
 ## Scope and behavior
 
-Base: main at `4c59e86`, version 0.1.70. This change adds the requested
-horizon-specific blend and short-term persistence challenger, both shadow-only.
-No equipment control, active forecast selection, dashboard layout, or existing
-v3/v4/v4.1 historical predictions are changed.
+Base: main at `a7f2929`, version 0.1.71. The Battery Bank dashboard card adds an
+approximate time-to-configured-backup-reserve estimate while the bank is
+discharging. It uses weighted whole-bank SOC, effective battery capacity, the
+EcoFlow backup reserve setting, measured AC discharge power and a 90% conversion
+factor. The display is advisory; it does not change reserve settings or control.
 
-The blend uses completed matched target-hour outcomes in each horizon, a recent
-48-target/21-day window, a 12-target/3-day gate and baseline-shrunk inverse-MAE
-weights. The persistence challenger uses current AC production, a Haurwitz GHI
-shape proxy and a two-hour linear fade to the raw forecast. It does not model
-roof orientation or inverter clipping. See solar-learning.md for exact policies.
+If the required SOC, capacity or reserve input is missing, the card reports the
+estimate unavailable. At or below reserve it reports that reserve has been
+reached. The counter updates on battery flow, SOC, capacity and reserve changes.
+The 0.1.71 horizon blend and persistence challenger remain shadow-only, as
+documented in `docs/solar-learning.md`.
 
-Predictions and metadata freeze at issuance and persist with existing HA storage.
-Challenger scores are prospective-only. Active-only cohorts distinguish actual
-model use from fallback. Existing hourly scoring does not cover the current
-partial hour or 15-minute windows. No automatic promotion is implemented.
+The battery dashboard is a separate file and must be imported into Home
+Assistant separately from the HACS integration.
 
 ## Validation
 
-- 311 unittest regressions passed locally.
-- Public-repository safety check and whitespace check passed.
-- The blend was exercised on ten pending forecast rows from a private diagnostic:
-  finite nonnegative predictions and normalized weights, about 0.005 seconds.
-  This is a functional check, not evidence of forecast accuracy.
-- Tests cover matched cohorts, temporal isolation, duplicate target evidence,
-  fallback inputs, immutable forecasts, storage restoration and control isolation.
-- Private diagnostics and site coordinates remain outside repository artifacts.
+- Dashboard YAML parses successfully.
+- Dashboard tests exercise a calculated discharge estimate, the reserve-reached
+  state and missing reserve input.
+- Integration control code and persisted model data are unchanged.
 
 ## Next steps
 
-Review the pull request and its GitHub validation. Merging main triggers the
-repository's release workflow. After installing 0.1.71, allow the next hourly
-issuance and target resolution, then inspect blend/persistence diagnostic
-scorecards and active scored counts. Keep models shadow-only while gathering
-multiple days and weather regimes. Persistence is not yet a blend member.
+Review the pull request and its GitHub validation. After the dashboard YAML is
+installed, compare the displayed estimate against subsequent SOC and discharge
+power changes. Treat it as a live-rate estimate; actual runtime will vary with
+load and conversion losses. Continue collecting prospective shadow scores for
+the 0.1.71 blend and persistence challengers before considering promotion.
