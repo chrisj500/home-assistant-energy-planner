@@ -309,6 +309,24 @@ class CoordinatorTests(unittest.TestCase):
                          "bounded_unstable_export_risk")
         self.assertGreater(result["rolling_dynamic_load_total_kwh"], 0)
 
+    def test_low_confidence_export_risk_keeps_future_ev_plan_when_away_and_disabled(self):
+        self.c._trust["records"] = [{"lead": 0, "error_soc": 25}] * 3
+        self.c.cfg[const.OPT_EV_SOLAR_ADVISORY_ENABLED] = False
+        self.states["home"].state = "not_home"
+        self.c.baseline = deepcopy(self.data)
+        result = asyncio.run(self.c._async_update_data())
+        self.assertEqual(result["forecast_reliability_status"], "low")
+        self.assertTrue(result["authoritative_headroom_risk"])
+        self.assertEqual(result["rolling_dynamic_load_forecast_status"],
+                         "bounded_low_confidence_export_risk")
+        self.assertEqual(result["rolling_ev_status"], "planned")
+        self.assertGreater(
+            datetime.fromisoformat(result["rolling_ev_window_start"]),
+            self.now,
+        )
+        self.assertFalse(result["rolling_ev_auto_charge_eligible"])
+        self.assertIn("advisory is disabled", result["rolling_ev_auto_charge_reason"])
+
     def test_unstable_future_release_is_bounded_above_reserve(self):
         tomorrow = self.now.date() + timedelta(days=1)
         candidate = tomorrow.isoformat()
@@ -371,6 +389,7 @@ class CoordinatorTests(unittest.TestCase):
 
     def test_future_ev_window_is_planned_while_vehicle_is_away(self):
         self.states["home"].state = "not_home"
+        self.c.cfg[const.OPT_EV_SOLAR_ADVISORY_ENABLED] = True
         window = DaylightWindow(
             self.now.date(),
             self.now.replace(hour=6),
