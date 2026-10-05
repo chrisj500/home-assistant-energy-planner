@@ -550,7 +550,7 @@ SENSORS = (
     _percent(
         "calibration_headroom_factor_pct",
         "calibration_headroom_factor_pct",
-        "No-Regret Headroom Factor",
+        "Export-Defense Headroom Factor",
     ),
     EnergyPlannerSensorDescription(
         key="calibration_overnight_median_kw",
@@ -694,17 +694,17 @@ SENSORS = (
     _energy(
         "confidence_required_headroom_tomorrow",
         "confidence_required_headroom_tomorrow",
-        "No-Regret Required Headroom Next Day",
+        "Export-Defense Required Headroom Next Day",
     ),
     _energy(
         "confidence_available_headroom_tomorrow",
         "confidence_available_headroom_tomorrow",
-        "No-Regret Available Headroom Next Day",
+        "Export-Defense Available Headroom Next Day",
     ),
     _energy(
         "confidence_headroom_shortfall_tomorrow",
         "confidence_headroom_shortfall_tomorrow",
-        "No-Regret Headroom Shortfall Next Day",
+        "Export-Defense Headroom Shortfall Next Day",
     ),
     _energy(
         "recommended_overnight_discharge",
@@ -719,7 +719,7 @@ SENSORS = (
     _energy(
         "no_regret_overnight_drop_tomorrow",
         "no_regret_overnight_drop_tomorrow",
-        "No-Regret Natural Overnight Headroom Allowance",
+        "Export-Defense Natural Overnight Headroom Allowance",
     ),
     _soc(
         "projected_next_day_start_soc",

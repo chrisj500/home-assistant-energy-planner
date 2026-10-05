@@ -311,8 +311,8 @@ def _confidence_strategy(
             return (
                 STRATEGY_HOLD,
                 f"Baseline point forecast shows {nominal.capacity_limited_export_kwh:.2f} "
-                "kWh of capacity-limited export, but the no-regret confidence model "
-                "does not justify additional battery discharge. Preserve stored solar.",
+                "kWh of capacity-limited export, but the export-defense confidence "
+                "model does not justify additional battery discharge.",
             )
         return (
             STRATEGY_HOLD,
@@ -902,10 +902,10 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             else today_capacity_export
         )
 
-        # Next-day start now includes empirically observed natural overnight
+        # Next-day start includes empirically observed natural overnight
         # depletion. The point forecast uses the median observed rate. The
-        # no-regret action test uses the upper empirical rate, because natural
-        # depletion creates headroom without intentional battery cycling.
+        # export-defense action test uses the lower empirical rate so it does
+        # not assume the battery will create substantial headroom on its own.
         projected_sunset_banks = today_ending_bank_socs
         if projected_sunset_banks is None and after_sunset:
             projected_sunset_banks = bank_socs
@@ -921,7 +921,7 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         )
 
         nominal_overnight_drop = 0.0
-        no_regret_overnight_drop = 0.0
+        export_defense_overnight_drop = 0.0
         nominal_start_banks = projected_sunset_banks
         conservative_start_banks = projected_sunset_banks
         if projected_sunset_banks is not None:
@@ -933,8 +933,8 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 capacity_kwh=capacity,
                 reserve_pct=effective_reserve,
             )
-            no_regret_overnight_drop = projected_overnight_drop_kwh(
-                drop_kw=profile.overnight_upper_drop_kw,
+            export_defense_overnight_drop = projected_overnight_drop_kwh(
+                drop_kw=profile.overnight_lower_drop_kw,
                 night_hours=night_hours,
                 sunset_soc_pct=sunset_soc,
                 capacity_kwh=capacity,
@@ -949,7 +949,7 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             conservative_start_banks = apply_stored_energy_drop(
                 bank_socs_pct=projected_sunset_banks,
                 bank_capacities_kwh=bank_capacities,
-                drop_kwh=no_regret_overnight_drop,
+                drop_kwh=export_defense_overnight_drop,
                 reserve_pct=effective_reserve,
             )
 
@@ -1025,10 +1025,22 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 ev_available=ev_available,
             )
             recommended_discharge = (
-                next_decision.recommended_additional_discharge_kwh
+                min(
+                    next_decision.recommended_additional_discharge_kwh,
+                    capacity * 0.10,
+                )
                 if next_day_strategy == STRATEGY_CREATE_HEADROOM
                 else 0.0
             )
+            if (
+                next_day_strategy == STRATEGY_CREATE_HEADROOM
+                and recommended_discharge + 0.05
+                < next_decision.recommended_additional_discharge_kwh
+            ):
+                next_day_strategy_reason += (
+                    f" Advisory capped at {recommended_discharge:.2f} kWh "
+                    "(10% of battery capacity maximum)."
+                )
             planned_start_banks = apply_stored_energy_drop(
                 bank_socs_pct=nominal_start_banks,
                 bank_capacities_kwh=bank_capacities,
@@ -1210,7 +1222,9 @@ class EnergyPlannerCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             "projected_next_day_start_soc": projected_next_day_start_soc,
             "planned_next_day_start_soc": planned_start_soc,
             "nominal_overnight_drop_tomorrow": nominal_overnight_drop,
-            "no_regret_overnight_drop_tomorrow": no_regret_overnight_drop,
+            "export_defense_overnight_drop_tomorrow": export_defense_overnight_drop,
+            # Compatibility key retained for dashboards that use the 0.1.72 name.
+            "no_regret_overnight_drop_tomorrow": export_defense_overnight_drop,
             "projected_max_soc_tomorrow": next_projected_max_soc,
             "projected_sunset_soc_tomorrow": next_projected_sunset_soc,
             "baseline_export_tomorrow": next_baseline_export,
