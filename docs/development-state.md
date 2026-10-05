@@ -1,4 +1,4 @@
-# Development handoff — export-defense recommendations, 0.1.73
+# Development handoff — export-defense recommendations, 0.1.74
 
 ## Current work
 
@@ -16,6 +16,13 @@ advisory and does not issue a battery command. Stale forecasts, storm
 conditions, and insufficient accuracy evidence still block the unstable-case
 exception.
 
+Version 0.1.74 extends bounded recommendations to fresh low-confidence
+forecasts when at least three horizon-matched records still identify export
+risk. It also separates future EV load planning from the legacy EV solar
+advisory toggle: a forecast window remains visible when that toggle is off or
+the vehicle is away, while immediate automation eligibility remains disabled
+until presence, advisory settings, and sustained live surplus are verified.
+
 Future EV solar windows no longer require the vehicle to be home when the
 forecast is created. A same-day window begins at least 15 minutes ahead if the
 vehicle is away or presence is unknown. Any immediate charge eligibility still
@@ -24,7 +31,8 @@ windows explicitly ask the automation to recheck presence and live surplus.
 
 Regression coverage includes calibrated export risk during provider instability,
 reserve and 10% capacity bounds for overnight advice, and a same-day solar
-window forecast while the EV is away. The full 315-test suite and public-repo
+window forecast while the EV is away or the advisory toggle is disabled. The full
+316-test suite and public-repo
 safety check pass.
 
 ## Previous behavior

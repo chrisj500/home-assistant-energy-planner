@@ -975,29 +975,38 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             legacy_release = bool(data.get("headroom_release"))
             legacy_discharge = number(data.get("recommended_overnight_discharge")) or 0.0
             suppress_actions(data, status, reason)
-            unstable_export_defense = (
-                status == "unstable"
+            bounded_export_defense = (
+                status in {"unstable", "low"}
                 and fresh
                 and data.get("storm") is False
                 and candidate is not None
                 and amount > 0
-                and profile.get("confidence") in {"medium", "high"}
                 and profile.get("samples", 0) >= MIN_EVIDENCE_SAMPLES
             )
-            advice_allowed = status == "ready" or unstable_export_defense
+            advice_allowed = status == "ready" or bounded_export_defense
+            if bounded_export_defense:
+                bounded_status = (
+                    "bounded_unstable_export_risk"
+                    if status == "unstable"
+                    else "bounded_low_confidence_export_risk"
+                )
+                reason = (
+                    "Forecast confidence is low or revisions are unstable, but fresh, "
+                    "horizon-matched export-risk evidence supports bounded conditional advice. "
+                    "Any immediate charge still requires live presence and surplus checks."
+                )
             if advice_allowed:
                 for row in data["rolling_day_plans"]:
                     if row["date"] == candidate:
                         row.update(dynamic_load_needed=True, dynamic_load_needed_kwh=amount / efficiency,
-                                   status=("bounded_unstable_export_risk"
-                                           if unstable_export_defense
+                                   status=(bounded_status if bounded_export_defense
                                            else "confirmed_headroom_risk"))
                 data.update(rolling_dynamic_load_days_count=1, rolling_dynamic_load_risk_dates=[candidate],
                             rolling_dynamic_load_total_kwh=amount / efficiency,
                             rolling_dynamic_load_next_3d_kwh=amount / efficiency,
                             rolling_dynamic_load_forecast_status=(
-                                "bounded_unstable_export_risk"
-                                if unstable_export_defense
+                                bounded_status
+                                if bounded_export_defense
                                 else "confirmed_headroom_risk"
                             ))
                 data.update(authoritative_headroom_risk=candidate == now.date().isoformat(),
@@ -1005,9 +1014,9 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                             authoritative_headroom_risk_date=candidate,
                             authoritative_headroom_shortfall_kwh=amount,
                             authoritative_headroom_action=(
-                                "Forecast is unstable, but calibrated export-defense evidence supports a bounded recommendation. "
+                                "Forecast confidence is low or revisions are unstable, but fresh export-defense evidence supports a bounded recommendation. "
                                 "EV charging remains conditional on being home and live solar verification."
-                                if unstable_export_defense
+                                if bounded_export_defense
                                 else "Export-defense headroom risk confirmed. EV charging still requires a verified solar window."
                             ))
                 # The base coordinator computes a reserve-safe, calibration-
@@ -1019,7 +1028,7 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 reserve = number(data.get("effective_reserve_floor")) or 0.0
                 reserve_kwh = capacity * min(max(reserve, 0.0), 100.0) / 100.0
                 discharge_cap = min(amount, capacity * 0.10, max(stored - reserve_kwh, 0.0))
-                if (unstable_export_defense and candidate > now.date().isoformat()
+                if (bounded_export_defense and candidate > now.date().isoformat()
                         and legacy_release and discharge_cap > 0.05):
                     discharge = min(max(legacy_discharge, 0.0), discharge_cap)
                     if discharge > 0.05:
@@ -1086,11 +1095,13 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         power = number(data.get("rolling_ev_charge_power_w"))
         available = number(data.get("rolling_ev_available_energy_kwh"))
         # Presence is required for an immediate charge instruction, but it is
-        # not a prerequisite for forecasting a later solar window.
+        # not a prerequisite for forecasting a later solar window. The legacy
+        # advisory toggle controls automation eligibility, not whether future
+        # discretionary-load opportunities are displayed.
         home = self.hass.states.get(self.cfg.get(CONF_EV_HOME, ""))
         enabled = self.cfg.get(OPT_EV_SOLAR_ADVISORY_ENABLED, DEFAULT_EV_SOLAR_ADVISORY_ENABLED)
-        if not enabled or data.get("rolling_ev_soc_data_status") != "fresh" or not power or not available:
-            data["rolling_ev_auto_charge_reason"] = "EV advice requires enabled advisory, fresh SOC, and known charge power."
+        if data.get("rolling_ev_soc_data_status") != "fresh" or not power or not available:
+            data["rolling_ev_auto_charge_reason"] = "EV forecast requires fresh SOC and known charge power."
             self._surplus_since = None
             return
         # Forecast the best solar-rich window on the risk day. For today's
@@ -1126,14 +1137,17 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             rolling_ev_headroom_preserved_kwh=window.preserved_stationary_headroom_kwh,
         )
         if window.start > now:
+            eligibility_reason = (
+                "Planned solar window; recheck EV presence and live surplus before charging."
+                if enabled
+                else "Planning window retained; the EV solar advisory is disabled, so no charge eligibility is published."
+            )
             data.update(
                 rolling_ev_status="planned",
                 rolling_ev_status_reason=(
                     "Export-defense headroom risk has a forecast solar-rich EV window."
                 ),
-                rolling_ev_auto_charge_reason=(
-                    "Planned solar window; recheck EV presence and live surplus before charging."
-                ),
+                rolling_ev_auto_charge_reason=eligibility_reason,
             )
             self._surplus_since = None
             return
@@ -1146,6 +1160,19 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 ),
                 rolling_ev_auto_charge_reason=(
                     "Future solar window identified; recheck EV presence and live surplus before charging."
+                ),
+            )
+            self._surplus_since = None
+            return
+
+        if not enabled:
+            data.update(
+                rolling_ev_status="planned",
+                rolling_ev_status_reason=(
+                    "A solar-rich EV window is available, but immediate advisory eligibility is disabled."
+                ),
+                rolling_ev_auto_charge_reason=(
+                    "Forecast window retained; advisory is disabled, so no immediate charge eligibility is published."
                 ),
             )
             self._surplus_since = None
