@@ -1,6 +1,35 @@
-# Development handoff — battery discharge estimate, 0.1.72
+# Development handoff — export-defense recommendations, 0.1.73
 
-## Scope and behavior
+## Current work
+
+Version 0.1.73 changes export-defense advice when forecast revisions are
+unstable. Fresh, storm-clear forecasts with at least three horizon-matched
+accuracy samples can still publish a bounded headroom recommendation when the
+high-solar export-defense scenario shows a shortfall. A future overnight
+discharge advisory is retained only when the base planner already considered it
+safe; the amount is capped at the smaller of modeled need, 10% of bank capacity,
+and stored energy above the configured reserve. The calibration now adds the
+positive historical solar underprediction tail to the headroom need (capped at
+25%), never discounts the need for past solar overestimates, and assumes only
+the lower measured bound of natural overnight depletion. The flag remains
+advisory and does not issue a battery command. Stale forecasts, storm
+conditions, and insufficient accuracy evidence still block the unstable-case
+exception.
+
+Future EV solar windows no longer require the vehicle to be home when the
+forecast is created. A same-day window begins at least 15 minutes ahead if the
+vehicle is away or presence is unknown. Any immediate charge eligibility still
+requires confirmed home status and ten minutes of measured surplus; planned
+windows explicitly ask the automation to recheck presence and live surplus.
+
+Regression coverage includes calibrated export risk during provider instability,
+reserve and 10% capacity bounds for overnight advice, and a same-day solar
+window forecast while the EV is away. The full 315-test suite and public-repo
+safety check pass.
+
+## Previous behavior
+
+### Battery discharge estimate, 0.1.72
 
 Base: main at `a7f2929`, version 0.1.71. The Battery Bank dashboard card adds an
 approximate time-to-configured-backup-reserve estimate while the bank is
@@ -17,14 +46,14 @@ documented in `docs/solar-learning.md`.
 The battery dashboard is a separate file and must be imported into Home
 Assistant separately from the HACS integration.
 
-## Validation
+### Validation
 
 - Dashboard YAML parses successfully.
 - Dashboard tests exercise a calculated discharge estimate, the reserve-reached
   state and missing reserve input.
 - Integration control code and persisted model data are unchanged.
 
-## Next steps
+### Next steps
 
 Review the pull request and its GitHub validation. After the dashboard YAML is
 installed, compare the displayed estimate against subsequent SOC and discharge

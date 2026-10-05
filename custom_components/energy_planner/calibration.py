@@ -19,13 +19,12 @@ class CalibrationProfile:
     gain. Negative values mean the point forecast over-predicted how much solar
     energy would actually be stored.
 
-    Overnight samples are measured stored-energy drop rates. For an intentional
-    headroom action we use the *upper* empirical overnight depletion bound. That
-    is deliberate: natural overnight discharge creates headroom for free, so we
-    only recommend extra discharge that remains necessary even on a night that
-    naturally creates relatively more headroom. Combined with a lower empirical
-    daylight-storage bound, this implements a no-regret bias against buying
-    energy later because of an overconfident forecast.
+    Export defense uses the positive empirical daylight-error tail to account
+    for solar energy the forecast may have missed. It does not reduce the
+    headroom target when past forecasts overestimated solar: avoiding exports
+    is the selected objective, even when that can mean some later grid import.
+    For natural overnight discharge, the lower empirical bound is used so the
+    plan does not assume a favorable amount of free battery drain.
     """
 
     status: str
@@ -121,7 +120,13 @@ def build_profile(
 
     lower_ratio = _lower_empirical_bound(daylight_ratios, MIN_ACTION_SAMPLES)
     lower_ratio = min(lower_ratio, 0.0)
-    headroom_factor = min(max(1.0 + lower_ratio, 0.0), 1.0)
+    upper_ratio = max(
+        _upper_empirical_bound(daylight_ratios, MIN_ACTION_SAMPLES),
+        0.0,
+    )
+    # Keep empirical-tail correction bounded so a small sample or outlier
+    # cannot dominate the physical export-defense estimate.
+    headroom_factor = min(1.0 + upper_ratio, 1.25)
 
     overnight_lower = max(
         _lower_empirical_bound(overnight_rates, MIN_ACTION_SAMPLES),
@@ -253,9 +258,9 @@ def confidence_headroom_decision(
     shortfall = max(confidence_required - conservative_available, 0.0)
     recommended = min(shortfall, stored_above_reserve)
     reason = (
-        f"No-regret stored-solar need is {confidence_required:.2f} kWh "
+        f"Export-defense headroom target is {confidence_required:.2f} kWh "
         f"({profile.headroom_factor * 100:.1f}% of the physical point forecast) "
-        f"versus {conservative_available:.2f} kWh of headroom after the upper "
+        f"versus {conservative_available:.2f} kWh of headroom after the lower "
         "empirical natural-overnight-depletion allowance."
     )
     return HeadroomDecision(

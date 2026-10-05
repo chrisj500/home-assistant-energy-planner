@@ -291,6 +291,113 @@ class CoordinatorTests(unittest.TestCase):
         self.assertGreater(result["forecast_export_headroom_kwh"], 0)
         self.assertFalse(result["rolling_ev_auto_charge_eligible"])
 
+    def test_unstable_provider_does_not_hide_calibrated_export_risk(self):
+        self.c._trust["records"] = [{"lead": 0, "error_soc": 1}] * 3
+        self.c._trust["revisions"] = [{
+            "at": (self.now - timedelta(minutes=20)).isoformat(),
+            "revision": "older-provider-refresh",
+            "targets": {
+                "2026-09-18": {"soc": 0.0, "solar": 10.0},
+            },
+            "candidate": "2026-09-18",
+        }]
+        self.c.baseline = deepcopy(self.data)
+        result = asyncio.run(self.c._async_update_data())
+        self.assertEqual(result["forecast_reliability_status"], "unstable")
+        self.assertTrue(result["authoritative_headroom_risk"])
+        self.assertEqual(result["rolling_dynamic_load_forecast_status"],
+                         "bounded_unstable_export_risk")
+        self.assertGreater(result["rolling_dynamic_load_total_kwh"], 0)
+
+    def test_unstable_future_release_is_bounded_above_reserve(self):
+        tomorrow = self.now.date() + timedelta(days=1)
+        candidate = tomorrow.isoformat()
+        baseline = deepcopy(self.data)
+        baseline["rolling_day_plans"][0].update(
+            confidence="medium", display_confidence="medium"
+        )
+        baseline["rolling_day_plans"].append({
+            "date": candidate,
+            "sunset_soc_pct": 100,
+            "solar_kwh": 80,
+            "confidence": "medium",
+            "display_confidence": "medium",
+            "dynamic_load_needed": False,
+        })
+        baseline.update(headroom_release=True, recommended_overnight_discharge=12.0)
+        self.c.cfg[const.OPT_EV_SOLAR_ADVISORY_ENABLED] = False
+        self.c._trust["records"] = [{"lead": 1, "error_soc": 1}] * 3
+        self.c._trust["revisions"] = [{
+            "at": (self.now - timedelta(minutes=20)).isoformat(),
+            "revision": "older-provider-refresh",
+            "targets": {candidate: {"soc": 90.0, "solar": 10.0}},
+            "candidate": candidate,
+        }]
+        profile = {
+            "confidence": "medium",
+            "samples": 3,
+            "mae_soc": 1,
+            "mae_kwh": 0.5,
+            "signed_bias_kwh": 0.2,
+            "export_underprediction_bias_kwh": 0.2,
+            "learning_ready": True,
+            "sunset_samples": 3,
+            "sunset_samples_required": 3,
+            "overnight_samples": 3,
+            "overnight_samples_required": 3,
+        }
+        points = [IntervalPoint(self.now, 15000)]
+        windows = [
+            DaylightWindow(tomorrow, self.now + timedelta(hours=21), self.now + timedelta(hours=33))
+        ]
+        self.c._scenarios = lambda *_: (
+            {candidate: profile}, candidate, 6.0, points, windows, 1000, 0.9
+        )
+        self.c.baseline = baseline
+        result = asyncio.run(self.c._async_update_data())
+        self.assertEqual(result["forecast_reliability_status"], "unstable")
+        self.assertTrue(result["headroom_release"])
+        self.assertGreater(result["recommended_overnight_discharge"], 0)
+        self.assertLessEqual(
+            result["recommended_overnight_discharge"],
+            result["battery_capacity_kwh"] * 0.10,
+        )
+        self.assertGreaterEqual(
+            result["stored_energy"] - result["recommended_overnight_discharge"],
+            result["battery_capacity_kwh"]
+            * result["effective_reserve_floor"]
+            / 100.0,
+        )
+
+    def test_future_ev_window_is_planned_while_vehicle_is_away(self):
+        self.states["home"].state = "not_home"
+        window = DaylightWindow(
+            self.now.date(),
+            self.now.replace(hour=6),
+            self.now.replace(hour=18),
+        )
+        points = [
+            IntervalPoint(self.now.replace(hour=9, minute=15), 15000),
+            IntervalPoint(self.now.replace(hour=18), 15000),
+        ]
+        self.c._verified_ev(
+            self.data,
+            self.now,
+            self.now.date().isoformat(),
+            3.0,
+            points,
+            [window],
+            1000,
+            0.9,
+        )
+        self.assertEqual(self.data["rolling_ev_status"], "planned")
+        self.assertGreater(
+            datetime.fromisoformat(self.data["rolling_ev_window_start"]),
+            self.now,
+        )
+        self.assertFalse(self.data.get("rolling_ev_auto_charge_eligible", False))
+        self.assertIn("recheck EV presence", self.data["rolling_ev_auto_charge_reason"])
+
     def test_low_solar_does_not_justify_headroom(self):
         self.states["remaining"].state = "1"
         self.states["solar"].state = "200"

@@ -36,7 +36,7 @@ class CalibrationTests(unittest.TestCase):
         self.assertEqual(decision.confidence_required_headroom_kwh, 25.0)
         self.assertEqual(decision.confidence_shortfall_kwh, 10.0)
 
-    def test_small_sample_uses_worst_observed_no_regret_bounds(self) -> None:
+    def test_small_sample_uses_export_defense_solar_tail_and_overnight_lower_bound(self) -> None:
         profile = build_profile(
             [
                 {"error_kwh": -1.0, "error_ratio": -0.05},
@@ -52,11 +52,11 @@ class CalibrationTests(unittest.TestCase):
         self.assertTrue(profile.action_ready)
         self.assertEqual(profile.status, "calibrating")
         self.assertAlmostEqual(profile.daylight_lower_error_ratio, -0.30)
-        self.assertAlmostEqual(profile.headroom_factor, 0.70)
+        self.assertAlmostEqual(profile.headroom_factor, 1.10)
         self.assertAlmostEqual(profile.overnight_lower_drop_kw, 1.0)
         self.assertAlmostEqual(profile.overnight_upper_drop_kw, 1.5)
 
-    def test_positive_daylight_errors_never_increase_headroom_request(self) -> None:
+    def test_positive_daylight_errors_increase_headroom_request_with_a_cap(self) -> None:
         profile = build_profile(
             [
                 {"error_kwh": 1.0, "error_ratio": 0.10},
@@ -70,7 +70,7 @@ class CalibrationTests(unittest.TestCase):
             ],
         )
         self.assertEqual(profile.daylight_lower_error_ratio, 0.0)
-        self.assertEqual(profile.headroom_factor, 1.0)
+        self.assertEqual(profile.headroom_factor, 1.25)
 
     def test_ten_samples_use_empirical_tails_not_single_outlier(self) -> None:
         ratios = [-0.9, -0.2, -0.18, -0.15, -0.1, -0.08, -0.05, 0.0, 0.02, 0.05]
@@ -87,7 +87,8 @@ class CalibrationTests(unittest.TestCase):
             min(quantile(ratios, 0.10), 0.0),
         )
         self.assertAlmostEqual(profile.overnight_upper_drop_kw, quantile(rates, 0.90))
-        self.assertGreater(profile.headroom_factor, 0.1)
+        expected_factor = min(1.0 + max(quantile(ratios, 0.90), 0.0), 1.25)
+        self.assertAlmostEqual(profile.headroom_factor, expected_factor)
 
     def test_overnight_drop_is_bounded_by_reserve(self) -> None:
         drop = projected_overnight_drop_kwh(
@@ -118,7 +119,7 @@ class CalibrationTests(unittest.TestCase):
         self.assertAlmostEqual(before - after, 5.0, places=6)
         self.assertTrue(all(soc >= 10.0 for soc in ending))
 
-    def test_confidence_decision_uses_lower_solar_need_and_more_natural_headroom(self) -> None:
+    def test_confidence_decision_never_discounts_overestimated_solar(self) -> None:
         profile = build_profile(
             [
                 {"error_kwh": -2.0, "error_ratio": -0.20},
@@ -131,18 +132,16 @@ class CalibrationTests(unittest.TestCase):
                 {"drop_rate_kw": 1.5},
             ],
         )
-        # Point forecast says 25 kWh needed. Evidence lower bound says 70%=17.5.
-        # If natural overnight depletion is expected to leave 18 kWh headroom,
-        # there is no no-regret reason to force extra discharge.
+        # Historical solar overestimates do not discount export headroom need.
         decision = confidence_headroom_decision(
             profile=profile,
             nominal_required_headroom_kwh=25.0,
             conservative_available_headroom_kwh=18.0,
             stored_above_reserve_kwh=20.0,
         )
-        self.assertAlmostEqual(decision.confidence_required_headroom_kwh, 17.5)
-        self.assertEqual(decision.confidence_shortfall_kwh, 0.0)
-        self.assertEqual(decision.recommended_additional_discharge_kwh, 0.0)
+        self.assertAlmostEqual(decision.confidence_required_headroom_kwh, 25.0)
+        self.assertEqual(decision.confidence_shortfall_kwh, 7.0)
+        self.assertEqual(decision.recommended_additional_discharge_kwh, 7.0)
 
     def test_confidence_decision_recommends_only_robust_shortfall(self) -> None:
         profile = build_profile(
@@ -163,9 +162,9 @@ class CalibrationTests(unittest.TestCase):
             conservative_available_headroom_kwh=20.0,
             stored_above_reserve_kwh=15.0,
         )
-        # Lower ratio -0.20 => 24 kWh robust need, so only 4 kWh extra.
-        self.assertAlmostEqual(decision.confidence_required_headroom_kwh, 24.0)
-        self.assertAlmostEqual(decision.recommended_additional_discharge_kwh, 4.0)
+        # Solar overestimation does not discount a 30 kWh export-defense need.
+        self.assertAlmostEqual(decision.confidence_required_headroom_kwh, 30.0)
+        self.assertAlmostEqual(decision.recommended_additional_discharge_kwh, 10.0)
 
 
 if __name__ == "__main__":

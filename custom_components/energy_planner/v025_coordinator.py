@@ -968,22 +968,70 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                     "overnight records"
                 ),
             )
-            # Always close old advice before selectively publishing verified advice.
+            # Snapshot the legacy bounded release before reliability clears old
+            # advice. A provider revision can be unstable while the calibrated
+            # export-defense scenario still supports a small, reserve-bounded
+            # headroom recommendation.
+            legacy_release = bool(data.get("headroom_release"))
+            legacy_discharge = number(data.get("recommended_overnight_discharge")) or 0.0
             suppress_actions(data, status, reason)
-            if status == "ready":
+            unstable_export_defense = (
+                status == "unstable"
+                and fresh
+                and data.get("storm") is False
+                and candidate is not None
+                and amount > 0
+                and profile.get("confidence") in {"medium", "high"}
+                and profile.get("samples", 0) >= MIN_EVIDENCE_SAMPLES
+            )
+            advice_allowed = status == "ready" or unstable_export_defense
+            if advice_allowed:
                 for row in data["rolling_day_plans"]:
                     if row["date"] == candidate:
                         row.update(dynamic_load_needed=True, dynamic_load_needed_kwh=amount / efficiency,
-                                   status="confirmed_headroom_risk")
+                                   status=("bounded_unstable_export_risk"
+                                           if unstable_export_defense
+                                           else "confirmed_headroom_risk"))
                 data.update(rolling_dynamic_load_days_count=1, rolling_dynamic_load_risk_dates=[candidate],
                             rolling_dynamic_load_total_kwh=amount / efficiency,
                             rolling_dynamic_load_next_3d_kwh=amount / efficiency,
-                            rolling_dynamic_load_forecast_status="confirmed_headroom_risk")
+                            rolling_dynamic_load_forecast_status=(
+                                "bounded_unstable_export_risk"
+                                if unstable_export_defense
+                                else "confirmed_headroom_risk"
+                            ))
                 data.update(authoritative_headroom_risk=candidate == now.date().isoformat(),
                             authoritative_headroom_status="risk_today" if candidate == now.date().isoformat() else "risk_future",
                             authoritative_headroom_risk_date=candidate,
                             authoritative_headroom_shortfall_kwh=amount,
-                            authoritative_headroom_action="Export-defense headroom risk confirmed. EV charging still requires a verified solar window.")
+                            authoritative_headroom_action=(
+                                "Forecast is unstable, but calibrated export-defense evidence supports a bounded recommendation. "
+                                "EV charging remains conditional on being home and live solar verification."
+                                if unstable_export_defense
+                                else "Export-defense headroom risk confirmed. EV charging still requires a verified solar window."
+                            ))
+                # The base coordinator computes a reserve-safe, calibration-
+                # adjusted overnight release. Keep it only for a future risk
+                # day and cap the advisory against both modeled need and 10% of
+                # bank capacity. This remains an advisory flag, not a command.
+                capacity = number(data.get("battery_capacity_kwh")) or 0.0
+                stored = number(data.get("stored_energy")) or 0.0
+                reserve = number(data.get("effective_reserve_floor")) or 0.0
+                reserve_kwh = capacity * min(max(reserve, 0.0), 100.0) / 100.0
+                discharge_cap = min(amount, capacity * 0.10, max(stored - reserve_kwh, 0.0))
+                if (unstable_export_defense and candidate > now.date().isoformat()
+                        and legacy_release and discharge_cap > 0.05):
+                    discharge = min(max(legacy_discharge, 0.0), discharge_cap)
+                    if discharge > 0.05:
+                        data.update(
+                            headroom_release=True,
+                            recommended_overnight_discharge=discharge,
+                            tomorrow_strategy="create_headroom",
+                            tomorrow_strategy_reason=(
+                                "Unstable forecast; bounded overnight headroom recommendation is supported by "
+                                "calibrated export risk and remains above the configured reserve."
+                            ),
+                        )
                 self._verified_ev(data, now, candidate, amount, points, windows, load, efficiency)
             else:
                 self._surplus_since = None
@@ -1037,11 +1085,12 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
     def _verified_ev(self, data, now, candidate, amount, points, windows, load, efficiency):
         power = number(data.get("rolling_ev_charge_power_w"))
         available = number(data.get("rolling_ev_available_energy_kwh"))
-        # Missing home telemetry must not be interpreted as home.
+        # Presence is required for an immediate charge instruction, but it is
+        # not a prerequisite for forecasting a later solar window.
         home = self.hass.states.get(self.cfg.get(CONF_EV_HOME, ""))
         enabled = self.cfg.get(OPT_EV_SOLAR_ADVISORY_ENABLED, DEFAULT_EV_SOLAR_ADVISORY_ENABLED)
-        if not enabled or home is None or home.state != "home" or data.get("rolling_ev_soc_data_status") != "fresh" or not power or not available:
-            data["rolling_ev_auto_charge_reason"] = "EV advice requires enabled advisory, fresh SOC, known home status, and charge power."
+        if not enabled or data.get("rolling_ev_soc_data_status") != "fresh" or not power or not available:
+            data["rolling_ev_auto_charge_reason"] = "EV advice requires enabled advisory, fresh SOC, and known charge power."
             self._surplus_since = None
             return
         # Forecast the best solar-rich window on the risk day. For today's
@@ -1051,11 +1100,9 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         if candidate == now.date().isoformat():
             # For a current-day actionable window, keep the target anchored to
             # NOW so live verification cannot chase a moving later optimum.
-            earliest = now
-            latest = min(
-                risk_window.sunset,
-                now + timedelta(hours=energy / (power / 1000)),
-            )
+            home_confirmed = home is not None and home.state == "home"
+            earliest = now if home_confirmed else now + timedelta(minutes=15)
+            latest = min(risk_window.sunset, earliest + timedelta(hours=energy / (power / 1000)))
         else:
             earliest = max(now, risk_window.sunrise)
             latest = risk_window.sunset
@@ -1085,7 +1132,20 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                     "Export-defense headroom risk has a forecast solar-rich EV window."
                 ),
                 rolling_ev_auto_charge_reason=(
-                    "Planned solar window; wait for the window and live surplus verification."
+                    "Planned solar window; recheck EV presence and live surplus before charging."
+                ),
+            )
+            self._surplus_since = None
+            return
+
+        if home is None or home.state != "home":
+            data.update(
+                rolling_ev_status="planned",
+                rolling_ev_status_reason=(
+                    "Solar window is available later, but the EV is not confirmed home yet."
+                ),
+                rolling_ev_auto_charge_reason=(
+                    "Future solar window identified; recheck EV presence and live surplus before charging."
                 ),
             )
             self._surplus_since = None
