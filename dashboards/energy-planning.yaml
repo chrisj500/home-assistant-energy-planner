@@ -1,6 +1,6 @@
-# Energy Planning dashboard v25
+# Energy Planning dashboard v26
 #
-# Compact operating dashboard for Energy Planner v0.1.49.
+# Compact operating dashboard for Energy Planner v0.1.78.
 # Requires custom:button-card.
 #
 # Design priorities:
@@ -827,7 +827,7 @@ views:
               +{{ gain | round(1) if gain is number else '—' }} kWh ·
               {{ export | round(1) if export is number else '—' }} kWh export
 
-              **Solar after load:** {{ s3 | round(1) if s3 is number else '—' }} kWh / 3d ·
+              **Projected baseline export before discretionary loads:** {{ s3 | round(1) if s3 is number else '—' }} kWh / 3d ·
               {{ sh | round(1) if sh is number else '—' }} kWh horizon
 
               **No-action battery:** {{ cf_soc }}% now → {{ cf_sunset }}% sunset ·
@@ -1708,11 +1708,11 @@ views:
               {% if is_state(live,'on') %}
               ## 🟢 CAPTURE SOLAR NOW
               **{{ live_reason or 'Charge the Lexus from measured solar surplus.' }}**
-              {% elif is_state(cf,'on') and live_status in ['pending','waiting_for_surplus','blocked'] %}
-              ## 🟡 NO-ACTION HEADROOM RISK
-              **{{ live_reason or 'Without a flexible load, the battery is on a saturation trajectory.' }}**
               {% elif risk_date not in ['none','unknown','unavailable',''] %}
               ## 🟡 EXPORT RISK — {{ risk_date }}
+              {% if is_state(cf,'on') and live_status in ['pending','waiting_for_surplus','blocked'] %}
+              **Immediate EV charging check:** {{ live_reason or 'Wait for measured surplus before starting EV charging.' }} This current-power gate does not change the multi-day export outlook.
+              {% endif %}
               {% if available | float(0) <= 0 %}
               **The high-solar scenario identifies up to {{ risk_load | round(1) }} kWh of flexible-load opportunity over this day, but the Lexus is already full. Plan another flexible load or create EV capacity before the high-solar period.**
               {% else %}
@@ -1723,6 +1723,10 @@ views:
               **Battery energy above reserve at the forecast day's start:** {{ risk_day.get('planning_max_battery_discharge_kwh') | round(1) }} kWh. Actual headroom creation also depends on discharge power, load, and time available.
               {% endif %}
               _This is a daily high-solar scenario, not a request to empty that much from the battery. Forecast uncertainty is shown separately from immediate charge eligibility._
+              {% elif is_state(cf,'on') and live_status in ['pending','waiting_for_surplus','blocked'] %}
+              ## 🟡 IMMEDIATE EV CHARGE GATE
+              **{{ live_reason or 'Wait for measured surplus before starting EV charging.' }}**
+              _This gate concerns current measured surplus only; the four-day forecast plan is shown above._
               {% elif reliability == 'learning' %}
               ## 🟡 FORECAST LEARNING
               **No forecast-dependent recommendation yet.** {{ reason or states('sensor.energy_planner_forecast_learning_progress') }}
@@ -2510,19 +2514,20 @@ views:
           {% endif %}
 
           {% if d.ev_charge_kwh > 0 %}
+          {% set ev_start = as_local(as_datetime(d.ev_window_start)) %}
+          {% set ev_end = as_local(as_datetime(d.ev_window_end)) %}
 
-          **Charge the EV {{ d.ev_charge_kwh | round(1) }} kWh**, {{ d.ev_window_start.split(''T'')[1][:5] }}–{{ d.ev_window_end.split(''T'')[1][:5]
-          }}.
+          **EV charging opportunity: {{ d.ev_charge_kwh | round(1) }} kWh**, {% if ev_start and ev_end %}{{ ev_start.strftime(''%-I:%M %p'') }}–{{ ev_end.strftime(''%-I:%M %p'') }} local time{% else %}time unavailable{% endif %}.
 
-          Solar supplies {{ d.ev_direct_solar_kwh | round(1) }} kWh; battery or grid supplies {{ d.ev_battery_or_grid_kwh
-          | round(1) }} kWh. This window remains planned while the EV is away.
+          Solar is forecast to supply {{ d.ev_direct_solar_kwh | round(1) }} kWh; {{ d.ev_battery_or_grid_kwh | round(1) }} kWh is projected from battery or grid combined. This is a planning recommendation and does not send a charging command. The EV can return during the day and use this window.
 
           {% endif %}
 
           {% if d.other_load_opportunity_kwh > 0.05 %}
+          {% set flex_start = as_local(as_datetime(d.flex_window_start)) %}
+          {% set flex_end = as_local(as_datetime(d.flex_window_end)) %}
 
-          **Remaining export: {{ d.other_load_opportunity_kwh | round(1) }} kWh.** Schedule other useful loads {{
-          d.flex_window_start.split(''T'')[1][:5] }}–{{ d.flex_window_end.split(''T'')[1][:5] }} to absorb it.
+          **Remaining export:** {{ d.other_load_opportunity_kwh | round(1) }} kWh. Schedule other useful loads {% if flex_start and flex_end %}{{ flex_start.strftime(''%-I:%M %p'') }}–{{ flex_end.strftime(''%-I:%M %p'') }} local time{% else %}during the forecast window{% endif %} to absorb it.
 
           {% if d.ev_return_opportunity_kwh > 0.05 %}
 
