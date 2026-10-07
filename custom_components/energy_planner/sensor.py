@@ -77,6 +77,7 @@ def _percent(key: str, data_key: str, name: str):
 
 
 SENSORS = (
+    EnergyPlannerSensorDescription(key="four_day_plan", data_key="four_day_plan_status", name="Four Day Plan"),
     EnergyPlannerSensorDescription(key="solar_learning_blend_status", data_key="solar_learning_blend_status", name="Solar Learning Blend Status"),
     EnergyPlannerSensorDescription(key="solar_learning_blend_scored_forecasts", data_key="solar_learning_blend_scored_forecasts", name="Solar Learning Blend Active Scored Forecasts", state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=0),
     EnergyPlannerSensorDescription(key="solar_learning_persistence_status", data_key="solar_learning_persistence_status", name="Solar Learning Persistence Status"),
@@ -888,6 +889,8 @@ class EnergyPlannerSensor(CoordinatorEntity[EnergyPlannerCoordinator], SensorEnt
     @property
     def extra_state_attributes(self):
         data = self.coordinator.data or {}
+        if self.entity_description.key == "four_day_plan":
+            return data.get("four_day_plan", {})
         if self.entity_description.key == "solar_learning_status":
             return data.get("solar_learning_diagnostics", {})
         for model in ("blend", "persistence"):

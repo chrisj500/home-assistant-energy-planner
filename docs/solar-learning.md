@@ -1,3 +1,9 @@
+> Version 0.1.75: the four-day planner evaluates persistence for the next two
+> hours and the horizon blend through 24 hours for planning. Provider/live
+> forecasts supply unsupported horizons or missing learning evidence. Individual
+> issued predictions remain frozen for prospective comparisons. Historical
+> descriptions below of exclusively shadow operation apply to earlier versions.
+
 # AC solar learning — residual models, horizon blend, and persistence
 
 ## What is implemented

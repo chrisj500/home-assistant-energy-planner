@@ -1684,6 +1684,9 @@ views:
               {% set risk_headroom = states('sensor.energy_planner_forecast_export_defense_headroom') | float(0) %}
               {% set risk_load = states('sensor.energy_planner_forecast_flexible_load_energy_needed') | float(0) %}
               {% set risk_reason = states('sensor.energy_planner_forecast_export_risk_reason') %}
+              {% set risk_days = state_attr('sensor.energy_planner_forecast_confidence','days') or [] %}
+              {% set risk_rows = risk_days | selectattr('date','eq',risk_date) | list %}
+              {% set risk_day = risk_rows[0] if risk_rows else {} %}
               {% set reason = state_attr(e,'reason') %}
               {% set live_reason = state_attr(live,'reason') %}
               {% set live_status = state_attr(live,'status') %}
@@ -1711,11 +1714,15 @@ views:
               {% elif risk_date not in ['none','unknown','unavailable',''] %}
               ## 🟡 EXPORT RISK — {{ risk_date }}
               {% if available | float(0) <= 0 %}
-              **The zero-export forecast needs about {{ risk_headroom | round(1) }} kWh of stationary-battery headroom (about {{ risk_load | round(1) }} kWh of flexible-load energy), but the Lexus is already full. Plan another flexible load or create EV capacity before the high-solar period.**
+              **The high-solar scenario identifies up to {{ risk_load | round(1) }} kWh of flexible-load opportunity over this day, but the Lexus is already full. Plan another flexible load or create EV capacity before the high-solar period.**
               {% else %}
-              **The zero-export forecast needs about {{ risk_headroom | round(1) }} kWh of stationary-battery headroom (about {{ risk_load | round(1) }} kWh of flexible-load energy). Use the solar-rich window when verified.**
+              **The high-solar scenario identifies up to {{ risk_load | round(1) }} kWh of flexible-load opportunity over this day. The Lexus can currently accept {{ available | float(0) | round(1) }} kWh. Additional surplus needs other loads or battery space; some export may remain.**
               {% endif %}
-              _Risk basis: {{ risk_reason | replace('_',' ') }}. Confidence gates action timing, not whether the export risk is displayed._
+              {% if risk_day.get('planning_expected_capacity_export_kwh') is not none %}
+              **Expected capacity export:** {{ risk_day.get('planning_expected_capacity_export_kwh') | round(1) }} kWh · **High-solar scenario:** {{ risk_day.get('planning_possible_capacity_export_kwh') | round(1) }} kWh.
+              **Battery energy above reserve at the forecast day's start:** {{ risk_day.get('planning_max_battery_discharge_kwh') | round(1) }} kWh. Actual headroom creation also depends on discharge power, load, and time available.
+              {% endif %}
+              _This is a daily high-solar scenario, not a request to empty that much from the battery. Forecast uncertainty is shown separately from immediate charge eligibility._
               {% elif reliability == 'learning' %}
               ## 🟡 FORECAST LEARNING
               **No forecast-dependent recommendation yet.** {{ reason or states('sensor.energy_planner_forecast_learning_progress') }}

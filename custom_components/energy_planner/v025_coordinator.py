@@ -583,6 +583,11 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                 "confidence": profile["confidence"], "error_samples": profile["samples"],
                 "historical_mae_soc": profile["mae_soc"],
                 "nominal_start_soc_pct": round(mid.start_soc_pct, 2),
+                "planning_expected_capacity_export_kwh": round(mid.capacity_export_kwh, 3),
+                "planning_possible_capacity_export_kwh": round(hi.capacity_export_kwh, 3),
+                "planning_max_battery_discharge_kwh": round(
+                    max(mid.start_soc_pct - reserve_floor, 0.0) / 100.0 * capacity, 3
+                ),
                 "historical_signed_bias_soc": profile.get("signed_bias_soc"),
                 "export_underprediction_bias_soc": profile.get(
                     "export_underprediction_bias_soc"
@@ -632,7 +637,7 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
             lead = (lo.day - now.date()).days
             if export_assessment.risk:
                 export_risk_days.append(row["date"])
-            if candidate is None and export_assessment.risk and lead <= 2:
+            if candidate is None and export_assessment.risk:
                 candidate = row["date"]
                 amount = export_assessment.headroom_kwh
                 data.update(
@@ -645,15 +650,15 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                     forecast_export_risk_reason=export_assessment.reason,
                 )
         data["forecast_export_risk_days"] = export_risk_days
-        # EV-window forecasting uses the same low-load assumption as export
-        # defense. Live measured surplus still gates an immediate recommendation.
+        # Show expected solar/grid contributions from the nominal scenario.
+        # The stress scenario remains a separately labelled risk envelope.
         return (
             profiles,
             candidate,
             amount,
-            upper_points,
+            points,
             windows,
-            load * 0.70,
+            load,
             efficiency,
         )
 
@@ -995,20 +1000,36 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                     "horizon-matched export-risk evidence supports bounded conditional advice. "
                     "Any immediate charge still requires live presence and surplus checks."
                 )
+            # Forecast opportunities remain visible for every risk day. Confidence
+            # controls immediate eligibility, not whether future demand exists.
+            risk_rows = [row for row in data["rolling_day_plans"]
+                         if row.get("export_defense_risk")]
+            for row in risk_rows:
+                row.update(
+                    dynamic_load_needed=True,
+                    dynamic_load_needed_kwh=row["export_defense_wall_energy_kwh"],
+                    status="forecast_export_opportunity",
+                )
+            data.update(
+                rolling_dynamic_load_days_count=len(risk_rows),
+                rolling_dynamic_load_risk_dates=[row["date"] for row in risk_rows],
+                rolling_dynamic_load_total_kwh=sum(row["dynamic_load_needed_kwh"] for row in risk_rows),
+                rolling_dynamic_load_next_3d_kwh=sum(
+                    row["dynamic_load_needed_kwh"] for row in risk_rows
+                    if 0 <= (dt_util.parse_date(row["date"]) - now.date()).days < 3
+                ),
+                rolling_dynamic_load_forecast_status=(
+                    "forecast_export_opportunity" if risk_rows else status
+                ),
+            )
             if advice_allowed:
-                for row in data["rolling_day_plans"]:
+                for row in risk_rows:
                     if row["date"] == candidate:
-                        row.update(dynamic_load_needed=True, dynamic_load_needed_kwh=amount / efficiency,
-                                   status=(bounded_status if bounded_export_defense
-                                           else "confirmed_headroom_risk"))
-                data.update(rolling_dynamic_load_days_count=1, rolling_dynamic_load_risk_dates=[candidate],
-                            rolling_dynamic_load_total_kwh=amount / efficiency,
-                            rolling_dynamic_load_next_3d_kwh=amount / efficiency,
-                            rolling_dynamic_load_forecast_status=(
-                                bounded_status
-                                if bounded_export_defense
-                                else "confirmed_headroom_risk"
-                            ))
+                        row["status"] = (bounded_status if bounded_export_defense
+                                         else "confirmed_headroom_risk")
+                data["rolling_dynamic_load_forecast_status"] = (
+                    bounded_status if bounded_export_defense else "confirmed_headroom_risk"
+                )
                 data.update(authoritative_headroom_risk=candidate == now.date().isoformat(),
                             authoritative_headroom_status="risk_today" if candidate == now.date().isoformat() else "risk_future",
                             authoritative_headroom_risk_date=candidate,
@@ -1021,13 +1042,13 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
                             ))
                 # The base coordinator computes a reserve-safe, calibration-
                 # adjusted overnight release. Keep it only for a future risk
-                # day and cap the advisory against both modeled need and 10% of
-                # bank capacity. This remains an advisory flag, not a command.
+                # day and cap the advisory against modeled need and stored
+                # energy above reserve. This remains an advisory flag, not a command.
                 capacity = number(data.get("battery_capacity_kwh")) or 0.0
                 stored = number(data.get("stored_energy")) or 0.0
                 reserve = number(data.get("effective_reserve_floor")) or 0.0
                 reserve_kwh = capacity * min(max(reserve, 0.0), 100.0) / 100.0
-                discharge_cap = min(amount, capacity * 0.10, max(stored - reserve_kwh, 0.0))
+                discharge_cap = min(amount, max(stored - reserve_kwh, 0.0))
                 if (bounded_export_defense and candidate > now.date().isoformat()
                         and legacy_release and discharge_cap > 0.05):
                     discharge = min(max(legacy_discharge, 0.0), discharge_cap)
@@ -1108,24 +1129,36 @@ class EnergyPlannerV025Coordinator(EnergyPlannerV022Coordinator):
         # window, live measured surplus still gates the immediate recommendation.
         energy = min(available, amount / efficiency)
         risk_window = next(w for w in windows if w.day.isoformat() == candidate)
-        if candidate == now.date().isoformat():
-            # For a current-day actionable window, keep the target anchored to
-            # NOW so live verification cannot chase a moving later optimum.
-            home_confirmed = home is not None and home.state == "home"
-            earliest = now if home_confirmed else now + timedelta(minutes=15)
-            latest = min(risk_window.sunset, earliest + timedelta(hours=energy / (power / 1000)))
-        else:
-            earliest = max(now, risk_window.sunrise)
-            latest = risk_window.sunset
+        home_confirmed = home is not None and home.state == "home"
+        earliest = max(now if home_confirmed else now + timedelta(minutes=15),
+                       risk_window.sunrise)
+        latest = risk_window.sunset
+        # An already useful live window must not keep sliding into the future
+        # on every refresh while the sustained-surplus timer is running.
+        solar_now = self._fresh_power(self.cfg.get(CONF_ACTUAL_SOLAR_POWER), now)
+        base_now = self._fresh_power(self.cfg.get(CONF_BASE_LOAD_POWER), now)
+        if (home_confirmed and earliest == now and solar_now is not None
+                and base_now is not None and solar_now - max(base_now, load) >= power + 500):
+            latest = min(latest, now + timedelta(hours=energy / (power / 1000)))
+        # Retain a partial useful charge when the full target cannot fit today.
+        energy = min(energy, max((latest - earliest).total_seconds(), 0) / 3600 * power / 1000)
         window = choose_ev_charge_window(points=points, daylight_windows=windows,
             earliest=earliest, latest=latest, base_load_kw=load / 1000,
             charge_power_w=power, energy_kwh=energy,
             charge_efficiency=efficiency, step_minutes=15)
-        if window is None or window.solar_energy_kwh / max(window.requested_energy_kwh, .001) < .90:
-            data["rolling_ev_auto_charge_reason"] = "No export-defense charging window is at least 90% solar supplied."
+        if window is None or window.solar_energy_kwh <= 0:
+            data.update(
+                rolling_ev_status="no_window",
+                rolling_ev_status_reason="No remaining daylight window has forecast solar available for the EV.",
+                rolling_ev_auto_charge_reason="No remaining daylight window has forecast solar available for the EV.",
+            )
             self._surplus_since = None
             return
         data.update(
+            rolling_ev_status="planned",
+            rolling_ev_status_reason="Forecast EV opportunity; expected solar and grid energy are shown separately.",
+            rolling_ev_advisory_detail="forecast_window",
+            rolling_ev_auto_charge_eligible=False,
             rolling_ev_recommended_energy_kwh=window.requested_energy_kwh,
             rolling_ev_window_start=window.start.isoformat(),
             rolling_ev_window_end=window.end.isoformat(),

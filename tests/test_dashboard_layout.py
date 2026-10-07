@@ -385,7 +385,8 @@ class DashboardLayoutTests(unittest.TestCase):
         self.assertIn("EXPORT RISK", content)
         self.assertIn("sensor.energy_planner_forecast_export_risk_date", content)
         self.assertIn("Lexus is already full", content)
-        self.assertIn("zero-export forecast", content)
+        self.assertIn("high-solar scenario", content)
+        self.assertNotIn("kWh of stationary-battery headroom", content)
         self.assertLess(
             content.index("EXPORT RISK"),
             content.index("NO EV ACTION REQUIRED"),

@@ -1,0 +1,749 @@
+# Authoritative four-day planner. Replace the previous Energy Planning dashboard with this file.
+views:
+- title: Energy Planning
+  path: energy-planning
+  icon: mdi:solar-power
+  type: sections
+  max_columns: 4
+  dense_section_placement: true
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: HVAC Overview
+      icon: mdi:thermostat
+    - type: custom:button-card
+      entity: climate.thermostat
+      triggers_update: all
+      show_name: false
+      show_icon: false
+      tap_action:
+        action: more-info
+      styles:
+        card:
+        - padding: 14px
+        - border-radius: 28px
+        grid:
+        - grid-template-areas: '"content"'
+        - grid-template-columns: 1fr
+        custom_fields:
+          content:
+          - white-space: normal
+          - text-align: center
+          - min-width: 0
+      custom_fields:
+        content: "[[[\n  const esc = x => String(x ?? '').replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"\
+          ':'&quot;',\"'\":'&#39;'}[c]));\n  const num = x => x !== null && x !== undefined && x !== '' && Number.isFinite(Number(x))\
+          \ ? Number(x) : null;\n  const avg = values => {\n    const valid = values.filter(v => v !== null);\n\
+          \    return valid.length ? valid.reduce((a,b) => a + b, 0) / valid.length : null;\n  };\n  const t = states['climate.thermostat'];\n\
+          \  const a = t?.attributes || {};\n  const valid = t && !['unknown','unavailable'].includes(t.state);\n\
+          \  const action = valid ? (a.hvac_action || '') : '';\n  const actionModes = {\n    cooling: ['Cooling','mdi:snowflake','#64c7ff'],\n\
+          \    heating: ['Heating','mdi:fire','#ffac66'],\n    fan: ['Fan only','mdi:fan','#7bddbf'],\n    idle:\
+          \ ['Idle','mdi:pause-circle-outline','#c5cbd5'],\n    off: ['Off','mdi:power','#c5cbd5'],\n    drying:\
+          \ ['Drying','mdi:water-percent','#aab2ff'],\n    defrosting: ['Defrosting','mdi:snowflake-melt','#aab2ff']\n\
+          \  };\n  const thermostatModes = {\n    cool: ['Cool mode','mdi:snowflake','#64c7ff'],\n    heat: ['Heat\
+          \ mode','mdi:fire','#ffac66'],\n    fan_only: ['Fan only','mdi:fan','#7bddbf'],\n    dry: ['Dry mode','mdi:water-percent','#aab2ff'],\n\
+          \    heat_cool: ['Auto mode','mdi:autorenew','#c5cbd5'],\n    off: ['Off','mdi:power','#c5cbd5']\n  };\n\
+          \  const [label, icon, color] = !valid\n    ? ['State unavailable','mdi:help-circle-outline','#c5cbd5']\n\
+          \    : (actionModes[action] || thermostatModes[t.state] || [`${String(t.state || 'Mode').replaceAll('_','\
+          \ ')} mode`,'mdi:thermostat','#c5cbd5']);\n  const unit = a.temperature_unit || hass.config.unit_system.temperature;\n\
+          \  const current = valid ? num(a.current_temperature) : null;\n  const target = num(a.temperature);\n\
+          \  const targetLow = num(a.target_temp_low);\n  const targetHigh = num(a.target_temp_high);\n  const fmt\
+          \ = x => x === null ? '—' : x.toFixed(1);\n  const setpoint = target !== null ? `${fmt(target)}${esc(unit)}`\
+          \ :\n    (targetLow !== null && targetHigh !== null ? `${fmt(targetLow)}–${fmt(targetHigh)}${esc(unit)}`\
+          \ : '—');\n\n  const roomState = (room, metric) => {\n    const suffix = `${room}_${metric}`;\n    const\
+          \ candidates = [\n      `sensor.homepod_indoor_climate_${suffix}`,\n      `sensor.home_homepod_indoor_climate_${suffix}`\n\
+          \    ];\n    for (const id of candidates) {\n      if (states[id]) return [id, states[id]];\n    }\n \
+          \   const id = Object.keys(states).find(\n      key => key.startsWith('sensor.') &&\n        key.includes('homepod_indoor_climate')\
+          \ &&\n        key.endsWith(`_${suffix}`)\n    );\n    return id ? [id, states[id]] : [null, null];\n \
+          \ };\n  const reading = (room, metric) => {\n    const [id, s] = roomState(room, metric);\n    if (!s\
+          \ || ['unknown','unavailable'].includes(s.state)) {\n      return {id, value:null, unit:'', fresh:false};\n\
+          \    }\n    const last = s.attributes?.last_received;\n    const age = last ? (Date.now() - Date.parse(last))\
+          \ / 60000 : null;\n    const freshFlag = s.attributes?.fresh;\n    const fresh = freshFlag !== false &&\
+          \ (age === null || (Number.isFinite(age) && age >= 0 && age <= 15));\n    return {\n      id,\n      value:\
+          \ fresh ? num(s.state) : null,\n      unit: s.attributes?.unit_of_measurement || (metric === 'humidity'\
+          \ ? '%' : unit),\n      fresh\n    };\n  };\n  const room = key => ({\n    temperature: reading(key, 'temperature'),\n\
+          \    humidity: reading(key, 'humidity')\n  });\n  const living = room('living_room');\n  const guest =\
+          \ room('guest_bedroom');\n  const mainLeft = room('main_bedroom_left');\n  const mainRight = room('main_bedroom_right');\n\
+          \  const mainTemp = avg([mainLeft.temperature.value, mainRight.temperature.value]);\n  const mainHumidity\
+          \ = avg([mainLeft.humidity.value, mainRight.humidity.value]);\n  const mainCount = [mainLeft.temperature.value,\
+          \ mainRight.temperature.value].filter(v => v !== null).length;\n  const houseTemp = avg([living.temperature.value,\
+          \ guest.temperature.value, mainTemp]);\n  const houseHumidity = avg([living.humidity.value, guest.humidity.value,\
+          \ mainHumidity]);\n  const houseCount = [living.temperature.value, guest.temperature.value, mainTemp].filter(v\
+          \ => v !== null).length;\n  const roomCard = (name, temperature, humidity, note='') => {\n    const hasValue\
+          \ = temperature !== null || humidity !== null;\n    return `<div style=\"padding:8px 7px;background:var(--secondary-background-color);border-radius:12px;min-height:68px\"\
+          ><div style=\"font-size:11px;line-height:1.25\">${esc(name)}</div><div style=\"font-size:19px;font-weight:650;margin-top:3px\"\
+          >${fmt(temperature)}${temperature === null ? '' : esc(unit)}</div><div style=\"font-size:10px;margin-top:2px;color:var(--secondary-text-color)\"\
+          >${humidity === null ? '—' : `${fmt(humidity)}% RH`}</div>${!hasValue ? '<div style=\"font-size:12px;margin-top:4px\"\
+          >Missing or stale</div>' : note ? `<div style=\"font-size:9px;margin-top:3px;color:var(--secondary-text-color)\"\
+          >${esc(note)}</div>` : ''}</div>`;\n  };\n  const rooms = [\n    roomCard('Main bedroom', mainTemp, mainHumidity,\
+          \ mainCount === 2 ? 'Left + right average' : `${mainCount}/2 HomePods available`),\n    roomCard('Guest\
+          \ bedroom', guest.temperature.value, guest.humidity.value),\n    roomCard('Living room', living.temperature.value,\
+          \ living.humidity.value),\n    roomCard('House average', houseTemp, houseHumidity, `${houseCount}/3 physical\
+          \ rooms`)\n  ].join('');\n\n  const p = num(states['sensor.energy_planner_hvac_electrical_power']?.state);\n\
+          \  const e = states['sensor.energy_planner_hvac_daily_electricity'];\n  const kwh = num(e?.state);\n \
+          \ const coverage = num(e?.attributes.coverage_percent);\n  const energyLabel = kwh === null ? 'Unavailable'\
+          \ : `${kwh.toFixed(2)} kWh`;\n  const powerLabel = p === null ? 'Unavailable' : p >= 1000 ? `${(p/1000).toFixed(2)}\
+          \ kW` : `${Math.round(p)} W`;\n  const BASE_IMPORT_RATE_USD_PER_KWH = 0.25;\n  const costToday = kwh ===\
+          \ null ? null : kwh * BASE_IMPORT_RATE_USD_PER_KWH;\n  const costTodayLabel = costToday === null\n   \
+          \ ? 'Cost unavailable'\n    : 'Estimated cost today $' + costToday.toFixed(2) + ' @ $' + BASE_IMPORT_RATE_USD_PER_KWH.toFixed(2)\
+          \ + '/kWh';\n  const model = states['sensor.energy_planner_hvac_model_status'];\n  const m = model?.attributes\
+          \ || {};\n  const configuredOutdoorId = m?.entities?.hvac_outdoor_temperature || 'sensor.ecowitt_outdoor_temperature';\n\
+          \  const configuredWeatherId = m?.entities?.hvac_weather || 'weather.forecast_home';\n  const outdoorState\
+          \ = states[configuredOutdoorId];\n  const weatherState = states[configuredWeatherId];\n  const convertTemp\
+          \ = (value, fromUnit, toUnit) => {\n    if (value === null) return null;\n    if (!fromUnit || fromUnit\
+          \ === toUnit) return value;\n    if (fromUnit === '°C' && toUnit === '°F') return value * 1.8 + 32;\n\
+          \    if (fromUnit === '°F' && toUnit === '°C') return (value - 32) / 1.8;\n    return null;\n  };\n  const\
+          \ outdoorRaw = outdoorState && !['unknown','unavailable'].includes(outdoorState.state) ? num(outdoorState.state)\
+          \ : null;\n  const outdoor = convertTemp(outdoorRaw, outdoorState?.attributes?.unit_of_measurement, unit);\n\
+          \  const outdoorDelta = outdoor !== null && target !== null ? outdoor - target : null;\n  const insideHumidity\
+          \ = num(a.current_humidity);\n  const outsideHumidity = weatherState && !['unknown','unavailable'].includes(weatherState.state)\n\
+          \    ? num(weatherState.attributes?.humidity)\n    : null;\n  const humidityDelta = outsideHumidity !==\
+          \ null && insideHumidity !== null\n    ? outsideHumidity - insideHumidity\n    : null;\n  const signed\
+          \ = value => value === null ? '—' : `${value > 0 ? '+' : ''}${value.toFixed(1)}`;\n  const outdoorLine\
+          \ = outdoor === null\n    ? 'Outside temperature unavailable'\n    : `Outside ${fmt(outdoor)}${esc(unit)}\
+          \ · Target ${target === null ? '—' : `${fmt(target)}${esc(unit)}`} · Δ ${signed(outdoorDelta)}${esc(unit)}`;\n\
+          \  const humidityLine = outsideHumidity === null || insideHumidity === null\n    ? 'Outside / inside humidity\
+          \ unavailable'\n    : `Outside RH ${outsideHumidity.toFixed(1)}% · Inside RH ${insideHumidity.toFixed(1)}%\
+          \ · Δ ${signed(humidityDelta)} pts`;\n  const recovery = m?.recovery || {};\n  const thermal = m?.thermal\
+          \ || {};\n  const rateFactor = unit === '°F' ? 1.8 : 1;\n  const recoveryEta = num(recovery.eta_minutes);\n\
+          \  const recoveryRate = num(recovery.rate_c_per_hour);\n  const recoveryCycles = num(recovery.completed_cycles)\
+          \ ?? 0;\n\n  let demandAction = null;\n  let demandGap = null;\n  if (valid && current !== null) {\n \
+          \   if (t.state === 'cool' && target !== null && current > target + 0.05) {\n      demandAction = 'cooling';\n\
+          \      demandGap = current - target;\n    } else if (t.state === 'heat' && target !== null && current\
+          \ < target - 0.05) {\n      demandAction = 'heating';\n      demandGap = target - current;\n    } else\
+          \ if (t.state === 'heat_cool' && targetLow !== null && current < targetLow - 0.05) {\n      demandAction\
+          \ = 'heating';\n      demandGap = targetLow - current;\n    } else if (t.state === 'heat_cool' && targetHigh\
+          \ !== null && current > targetHigh + 0.05) {\n      demandAction = 'cooling';\n      demandGap = current\
+          \ - targetHigh;\n    }\n  }\n\n  const learnedRateC = demandAction ? num(recovery?.models?.[demandAction]?.rate_c_per_hour)\
+          \ : null;\n  let bestEta = recoveryEta !== null && recoveryEta > 0\n    ? recoveryEta\n    : (demandGap\
+          \ !== null && learnedRateC !== null && learnedRateC > 0\n      ? demandGap / (learnedRateC * rateFactor)\
+          \ * 60\n      : null);\n  if (bestEta !== null && (!Number.isFinite(bestEta) || bestEta <= 0)) bestEta\
+          \ = null;\n  if (bestEta !== null) bestEta = Math.min(360, bestEta);\n  const etaMinutes = bestEta ===\
+          \ null ? null : Math.max(1, Math.round(bestEta));\n  const etaLabel = etaMinutes === null\n    ? ''\n\
+          \    : etaMinutes < 60\n      ? `≈ ${etaMinutes} min to target`\n      : `≈ ${Math.floor(etaMinutes /\
+          \ 60)} hr ${etaMinutes % 60 ? `${etaMinutes % 60} min ` : ''}to target`;\n\n  const recoveryLine = recovery.active\n\
+          \    ? recoveryEta !== null\n      ? `Recovery ETA ${Math.round(recoveryEta)} min · ${(recoveryRate *\
+          \ rateFactor).toFixed(1)}${esc(unit)}/h · ${esc(recovery.status || recovery.source || 'estimate')}`\n\
+          \      : `Recovery ${esc(recovery.status || 'learning')} · ${recoveryCycles} completed calls`\n    : `Recovery\
+          \ model · ${recoveryCycles} completed calls`;\n  const thermalDrift = num(thermal.predicted_drift_c_per_hour);\n\
+          \  const thermalTau = num(thermal.time_constant_hours);\n  const thermalSamples = num(thermal.samples)\
+          \ ?? 0;\n  const thermalRequired = num(thermal.samples_required) ?? 3;\n  const thermalLine = thermalDrift\
+          \ !== null\n    ? `Passive thermal drift ${signed(thermalDrift * rateFactor)}${esc(unit)}/h at current\
+          \ ΔT · τ ${thermalTau?.toFixed(1) ?? '—'} h · ${esc(thermal.status || thermal.source || 'estimate')}`\n\
+          \    : `Passive thermal model ${esc(thermal.status || 'learning')} · ${thermalSamples}/${thermalRequired}\
+          \ completed idle windows`;\n  const learningState = model?.state || 'unavailable';\n  const learningSamples\
+          \ = num(m.learning_samples) ?? 0;\n  const learningSamplesRequired = num(m.learning_samples_required)\
+          \ ?? 36;\n  const learningDays = num(m.learning_days) ?? 0;\n  const learningDaysRequired = num(m.learning_days_required)\
+          \ ?? 3;\n  const learningPct = num(m.learning_progress_pct) ?? 0;\n  const learningColor = learningState\
+          \ === 'ready' ? '#30d158' : learningState === 'suspected_fault' || learningState === 'unavailable' ? '#ff453a'\
+          \ : '#ffd60a';\n  const hourlySupported = num(m.hourly_supported_hours) ?? 0;\n  const hourlyTotal = num(m.hourly_forecast_hours)\
+          \ ?? 0;\n  const sourceData = states['sensor.energy_planner_hvac_electrical_power']?.attributes?.power_sources\
+          \ || {};\n  const sourceItems = Object.values(sourceData);\n  const sourceIssues = sourceItems.filter(x\
+          \ => x && x.available === false).map(x => `${esc(x.entity_id)}: ${esc(x.raw_state)} (${esc(x.reason)})`);\n\
+          \  const sourceLabel = !sourceItems.length ? 'Power source diagnostics unavailable' : sourceIssues.length\
+          \ ? sourceIssues.join(' · ') : 'Condenser and blower/control sources available';\n\n  return `<div style=\"\
+          color:var(--primary-text-color);font-family:inherit\">\n    <div style=\"display:flex;align-items:center;justify-content:center;gap:7px;color:${color};font-size:18px;font-weight:650\"\
+          ><ha-icon icon=\"${icon}\" style=\"width:26px\"></ha-icon>${label}</div>\n    <div style=\"font-size:10px;margin-top:4px\"\
+          >Thermostat-reported state · Mode: ${esc(valid ? t.state : 'unknown')}</div>\n    <div style=\"position:relative;width:min(100%,205px);aspect-ratio:1;margin:10px\
+          \ auto\">\n      <svg viewBox=\"0 0 240 240\" style=\"width:100%;height:100%\" aria-hidden=\"true\"><circle\
+          \ cx=\"120\" cy=\"120\" r=\"105\" fill=\"none\" stroke=\"var(--divider-color)\" stroke-width=\"12\"/><circle\
+          \ cx=\"120\" cy=\"120\" r=\"105\" fill=\"none\" stroke=\"${color}\" stroke-width=\"12\" stroke-linecap=\"\
+          round\" stroke-dasharray=\"495 660\" transform=\"rotate(135 120 120)\"/><circle cx=\"120\" cy=\"120\"\
+          \ r=\"89\" fill=\"none\" stroke=\"var(--divider-color)\" stroke-width=\"1\"/></svg>\n      <div style=\"\
+          position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;align-items:center\"\
+          ><div style=\"font-size:10px;letter-spacing:1px\">THERMOSTAT</div><div style=\"font-size:39px;font-weight:650;margin:4px\
+          \ 0\">${fmt(current)}<span style=\"font-size:16px\">${esc(unit)}</span></div><div style=\"font-size:13px\"\
+          >Target ${setpoint}</div>${etaLabel ? `<div style=\"font-size:11px;font-weight:650;margin-top:4px\">${etaLabel}</div>`\
+          \ : ''}<div style=\"font-size:11px;margin-top:5px\">Humidity ${fmt(num(a.current_humidity))}%</div></div>\n\
+          \    </div>\n    <div style=\"margin:0 0 10px;padding:7px 9px;border-radius:12px;background:var(--secondary-background-color);font-size:10px;line-height:1.45;color:var(--secondary-text-color)\"\
+          >\n      <div><ha-icon icon=\"mdi:thermometer\" style=\"width:16px;margin-right:4px\"></ha-icon>${outdoorLine}</div>\n\
+          \      <div><ha-icon icon=\"mdi:water-percent\" style=\"width:16px;margin-right:4px\"></ha-icon>${humidityLine}</div>\n\
+          \    </div>\n    <div style=\"display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px\">${rooms}</div>\n\
+          \    <div style=\"display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin-top:11px;border-top:1px\
+          \ solid var(--divider-color);padding-top:11px\"><div><div style=\"font-size:13px\">Electricity now</div><div\
+          \ style=\"font-size:19px;font-weight:650;margin-top:3px\">${powerLabel}</div></div><div><div style=\"\
+          font-size:13px\">Electricity today</div><div style=\"font-size:19px;font-weight:650;margin-top:3px\">${energyLabel}</div></div><div\
+          \ style=\"grid-column:1 / -1;font-size:9px;color:var(--secondary-text-color);margin-top:0\">${costTodayLabel}</div></div>\n\
+          \    <div style=\"margin-top:9px;padding:8px 10px;border-radius:12px;background:rgba(255,255,255,.045);text-align:left\"\
+          >\n      <div style=\"display:flex;align-items:center;justify-content:space-between;gap:8px\"><span style=\"\
+          font-size:10px;font-weight:700\">HVAC learner</span><span style=\"font-size:10px;font-weight:750;color:${learningColor}\"\
+          >${esc(learningState)}</span></div>\n      <div style=\"margin-top:4px;font-size:9px;line-height:1.4;color:rgba(255,255,255,.60)\"\
+          >${learningSamples}/${learningSamplesRequired} samples · ${learningDays}/${learningDaysRequired} days\
+          \ · ${learningPct.toFixed(0)}% ready</div>\n    </div>\n  </div>`;\n]]]\n"
+  - type: grid
+    cards:
+    - type: heading
+      heading: Headroom Decision
+      icon: mdi:battery-alert-variant-outline
+    - type: custom:button-card
+      entity: sensor.ecoflow_smart_home_panel_2_backup_battery
+      show_name: false
+      show_icon: false
+      show_state: false
+      tap_action:
+        action: more-info
+      triggers_update:
+      - sensor.ecoflow_smart_home_panel_2_backup_battery
+      - sensor.energy_planner_whole_bank_soc
+      - sensor.energy_planner_effective_battery_capacity
+      - sensor.energy_planner_battery_pack_count
+      - sensor.energy_planner_battery_topology_source
+      - sensor.ecoflow_smart_home_panel_2_ac1_battery
+      - sensor.ecoflow_smart_home_panel_2_ac1_power
+      - sensor.ecoflow_smart_home_panel_2_ac2_battery
+      - sensor.ecoflow_smart_home_panel_2_ac2_power
+      - sensor.ecoflow_smart_home_panel_2_ac3_battery
+      - sensor.ecoflow_smart_home_panel_2_ac3_power
+      - sensor.patio_ecoflow_smart_home_panel_2_backup_charge_time_remaining
+      - number.ecoflow_smart_home_panel_2_backup_reserve_level
+      custom_fields:
+        content: "[[[\n  const num = (id) => {\n    const s = states[id];\n\n    if (\n      !s ||\n      ['unknown','unavailable'].includes(s.state)\n\
+          \    ) {\n      return null;\n    }\n\n    const n = Number(s.state);\n    return Number.isFinite(n) ?\
+          \ n : null;\n  };\n\n  const soc =\n    num(\n      'sensor.energy_planner_whole_bank_soc'\n    ) ??\n\
+          \    num(\n      'sensor.ecoflow_smart_home_panel_2_backup_battery'\n    );\n\n  const capacity =\n  \
+          \  num(\n      'sensor.energy_planner_effective_battery_capacity'\n    );\n\n  const packCount =\n   \
+          \ num(\n      'sensor.energy_planner_battery_pack_count'\n    );\n\n  const topologySource =\n    states['sensor.energy_planner_battery_topology_source']?.state;\n\
+          \n  const bankSubtitle = [\n    'EcoFlow Smart Home Panel 2',\n    packCount === null ? null : `${Math.round(packCount)}\
+          \ packs`,\n    capacity === null ? null : `${capacity.toFixed(1)} kWh`\n  ].filter(Boolean).join(' · ');\n\
+          \n  const soc1 =\n    num(\n      'sensor.ecoflow_smart_home_panel_2_ac1_battery'\n    );\n\n  const soc2\
+          \ =\n    num(\n      'sensor.ecoflow_smart_home_panel_2_ac2_battery'\n    );\n\n  const soc3 =\n    num(\n\
+          \      'sensor.ecoflow_smart_home_panel_2_ac3_battery'\n    );\n\n  const p1 =\n    num(\n      'sensor.ecoflow_smart_home_panel_2_ac1_power'\n\
+          \    ) ?? 0;\n\n  const p2 =\n    num(\n      'sensor.ecoflow_smart_home_panel_2_ac2_power'\n    ) ??\
+          \ 0;\n\n  const p3 =\n    num(\n      'sensor.ecoflow_smart_home_panel_2_ac3_power'\n    ) ?? 0;\n\n \
+          \ const eta =\n    num(\n      'sensor.patio_ecoflow_smart_home_panel_2_backup_charge_time_remaining'\n\
+          \    );\n\n  const reserveLevel =\n    num(\n      'number.ecoflow_smart_home_panel_2_backup_reserve_level'\n\
+          \    );\n\n  const totalPower = p1 + p2 + p3;\n\n  const charging = totalPower > 50;\n  const discharging\
+          \ = totalPower < -50;\n\n  const flowAccent =\n    charging\n      ? '#41e66f'\n      : discharging\n\
+          \        ? '#68a8ff'\n        : '#a8adb5';\n\n  const status =\n    charging\n      ? 'CHARGING'\n   \
+          \   : discharging\n        ? 'DISCHARGING'\n        : 'IDLE';\n\n  const statusIcon =\n    charging\n\
+          \      ? 'mdi:lightning-bolt'\n      : discharging\n        ? 'mdi:home-lightning-bolt-outline'\n    \
+          \    : 'mdi:power-sleep';\n\n  const clamp = (v) =>\n    v === null\n      ? 0\n      : Math.max(0,Math.min(100,v));\n\
+          \n  const socText = (v) =>\n    v === null\n      ? '—'\n      : `${Math.round(v)}%`;\n\n  const powerText\
+          \ = (p) => {\n    const a = Math.abs(p);\n\n    return a >= 1000\n      ? `${(a / 1000).toFixed(2)} kW`\n\
+          \      : `${Math.round(a)} W`;\n  };\n\n  const formatEta = (minutes) => {\n\n    if (\n      minutes\
+          \ === null ||\n      minutes <= 0\n    ) {\n      return 'Calculating remaining time';\n    }\n\n    const\
+          \ h =\n      Math.floor(minutes / 60);\n\n    const m =\n      Math.round(minutes % 60);\n\n    if (h\
+          \ === 0)\n      return `Full in ${m}m`;\n\n    if (m === 0)\n      return `Full in ${h}h`;\n\n    return\
+          \ `Full in ${h}h ${m}m`;\n  };\n\n  const etaText =\n    charging\n      ? formatEta(eta)\n      : discharging\n\
+          \        ? (() => {\n            if (soc === null || capacity === null || reserveLevel === null || capacity\
+          \ <= 0)\n              return 'Time to reserve unavailable';\n            if (soc <= reserveLevel)\n \
+          \             return 'At configured reserve';\n\n            const remainingEnergyKwh =\n            \
+          \  capacity * (soc - reserveLevel) / 100;\n            const minutes =\n              remainingEnergyKwh\
+          \ * 1000 * 60 * 0.9 / Math.abs(totalPower);\n            if (!Number.isFinite(minutes) || minutes <= 0)\n\
+          \              return 'Time to reserve unavailable';\n\n            const rounded = Math.max(1, Math.round(minutes));\n\
+          \            const h = Math.floor(rounded / 60);\n            const m = rounded % 60;\n            const\
+          \ duration = h === 0\n              ? `${m}m`\n              : m === 0\n                ? `${h}h`\n  \
+          \              : `${h}h ${m}m`;\n            return `≈ ${duration} to ${Math.round(reserveLevel)}% reserve`;\n\
+          \          })()\n        : 'Not currently charging';\n\n  const stackPower = (p) => {\n\n    if (Math.abs(p)\
+          \ < 50)\n      return 'Idle';\n\n    return p > 0\n      ? `${powerText(p)} in`\n      : `${powerText(p)}\
+          \ out`;\n  };\n\n  const batteryBar = (\n    level,\n    height = 8\n  ) => `\n    <div style=\"\n   \
+          \   position:relative;\n      height:${height}px;\n      border-radius:999px;\n      overflow:hidden;\n\
+          \      background:rgba(255,255,255,.09);\n    \">\n\n      <div style=\"\n        position:absolute;\n\
+          \        inset:0 auto 0 0;\n        width:${clamp(level)}%;\n        border-radius:999px;\n        background:\n\
+          \          linear-gradient(\n            90deg,\n            #29c95a,\n            #41e66f\n         \
+          \ );\n        transition:width .5s ease;\n      \">\n      </div>\n\n      <div style=\"\n        position:absolute;\n\
+          \        inset:0;\n        background-image:\n          linear-gradient(\n            to right,\n    \
+          \        transparent calc(100% - 2px),\n            rgba(17,18,20,.72) 0\n          );\n        background-size:10%\
+          \ 100%;\n      \">\n      </div>\n\n    </div>\n  `;\n\n  const stack = (\n    name,\n    battery,\n \
+          \   power\n  ) => `\n    <div style=\"\n      background:\n        rgba(255,255,255,.04);\n      border:\n\
+          \        1px solid\n        rgba(255,255,255,.07);\n      border-radius:16px;\n      padding:12px;\n \
+          \     min-width:0;\n    \">\n\n      <div style=\"\n        display:flex;\n        justify-content:\n\
+          \          space-between;\n        align-items:center;\n        margin-bottom:9px;\n      \">\n\n    \
+          \    <span style=\"\n          font-size:11px;\n          letter-spacing:.10em;\n          font-weight:750;\n\
+          \          color:\n            rgba(255,255,255,.58);\n        \">\n          ${name}\n        </span>\n\
+          \n        <ha-icon\n          icon=\"${\n            power > 50\n              ? 'mdi:lightning-bolt'\n\
+          \              : power < -50\n                ? 'mdi:home-lightning-bolt-outline'\n                : 'mdi:battery'\n\
+          \          }\"\n          style=\"\n            width:15px;\n            color:${\n              Math.abs(power)\
+          \ > 50\n                ? flowAccent\n                : 'rgba(255,255,255,.4)'\n            };\n     \
+          \     \">\n        </ha-icon>\n\n      </div>\n\n      <div style=\"\n        font-size:24px;\n      \
+          \  font-weight:650;\n        color:#fff;\n        margin-bottom:9px;\n      \">\n        ${socText(battery)}\n\
+          \      </div>\n\n      ${batteryBar(battery,6)}\n\n      <div style=\"\n        margin-top:8px;\n    \
+          \    font-size:10px;\n        color:\n          rgba(255,255,255,.55);\n      \">\n        ${stackPower(power)}\n\
+          \      </div>\n\n    </div>\n  `;\n\n  return `\n    <div>\n\n      <div style=\"\n        display:grid;\n\
+          \        grid-template-columns:\n          minmax(0,1fr) auto;\n        align-items:start;\n        column-gap:10px;\n\
+          \        margin-bottom:17px;\n      \">\n\n        <div style=\"min-width:0;text-align:left;\">\n\n  \
+          \        <div style=\"\n            font-size:20px;\n            font-weight:650;\n            color:#fff;\n\
+          \            text-align:left;\n            white-space:nowrap;\n          \">\n            Battery Bank\n\
+          \          </div>\n\n          <div style=\"\n            margin-top:4px;\n            font-size:11px;\n\
+          \            color:\n              rgba(255,255,255,.55);\n            text-align:left;\n          \"\
+          >\n            ${bankSubtitle}\n          </div>\n\n        </div>\n\n        <div style=\"\n        \
+          \  display:flex;\n          align-items:center;\n          justify-content:center;\n          flex-shrink:0;\n\
+          \          white-space:nowrap;\n          gap:5px;\n          padding:6px 9px;\n          border-radius:999px;\n\
+          \          background:${flowAccent}18;\n          color:${flowAccent};\n          font-size:10px;\n  \
+          \        font-weight:800;\n          letter-spacing:.10em;\n        \">\n\n          <ha-icon\n      \
+          \      icon=\"${statusIcon}\"\n            style=\"width:14px;\">\n          </ha-icon>\n\n          ${status}\n\
+          \n        </div>\n\n      </div>\n\n      <div style=\"\n        display:grid;\n        grid-template-columns:\n\
+          \          1.2fr .8fr;\n        gap:16px;\n        align-items:end;\n        margin-bottom:19px;\n   \
+          \   \">\n\n        <div>\n\n          <div style=\"\n            font-size:10px;\n            font-weight:750;\n\
+          \            letter-spacing:.12em;\n            color:\n              rgba(255,255,255,.45);\n       \
+          \   \">\n            BANK SOC\n          </div>\n\n          <div style=\"\n            margin:4px 0 12px;\n\
+          \            font-size:53px;\n            line-height:1;\n            font-weight:560;\n            letter-spacing:-.06em;\n\
+          \            color:#fff;\n          \">\n            ${socText(soc)}\n          </div>\n\n          ${batteryBar(soc,10)}\n\
+          \n        </div>\n\n        <div>\n\n          <div style=\"\n            font-size:10px;\n          \
+          \  font-weight:750;\n            letter-spacing:.11em;\n            color:\n              rgba(255,255,255,.45);\n\
+          \          \">\n            ${\n              charging\n                ? 'CHARGE RATE'\n            \
+          \    : discharging\n                  ? 'DISCHARGE RATE'\n                  : 'POWER FLOW'\n         \
+          \   }\n          </div>\n\n          <div style=\"\n            margin-top:7px;\n            display:flex;\n\
+          \            gap:6px;\n            align-items:center;\n          \">\n\n            <ha-icon\n      \
+          \        icon=\"${statusIcon}\"\n              style=\"\n                width:20px;\n               \
+          \ color:${flowAccent};\n              \">\n            </ha-icon>\n\n            <span style=\"\n    \
+          \          font-size:24px;\n              font-weight:600;\n              color:#fff;\n            \"\
+          >\n              ${powerText(totalPower)}\n            </span>\n\n          </div>\n\n          <div style=\"\
+          \n            margin-top:5px;\n            font-size:11px;\n            color:\n              rgba(255,255,255,.55);\n\
+          \          \">\n            ${etaText}\n          </div>\n\n        </div>\n\n      </div>\n\n      <div\
+          \ style=\"\n        display:grid;\n        grid-template-columns:\n          repeat(3,minmax(0,1fr));\n\
+          \        gap:8px;\n      \">\n        ${stack('AC1',soc1,p1)}\n        ${stack('AC2',soc2,p2)}\n     \
+          \   ${stack('AC3',soc3,p3)}\n      </div>\n\n    </div>\n  `;\n]]]\n"
+      styles:
+        card:
+        - padding: 18px
+        - border-radius: 26px
+        - background: linear-gradient( 145deg, rgba(29,31,34,0.99) 0%, rgba(15,16,18,0.995) 100%)
+        - border: 1px solid rgba(255,255,255,0.065)
+        - box-shadow: 0 12px 32px rgba(0,0,0,0.25)
+        grid:
+        - grid-template-areas: '"content"'
+        - grid-template-columns: 1fr
+        custom_fields:
+          content:
+          - width: 100%
+    - type: markdown
+      title: Battery Plan
+      content: '{% set p = ''sensor.energy_planner_four_day_plan'' %}
+
+        {% set days = state_attr(p,''days'') or [] %}
+
+        {{ state_attr(p,''reason'') or ''Waiting for planning inputs.'' }}
+
+        {% for d in days %}
+
+        **{{ d.date }}:** Use {{ d.battery_discharge_before_sunrise_kwh | round(1) }} kWh of stored battery energy
+        for household demand before sunrise. Sunset battery: **{{ d.sunset_soc_pct | round(0) }}%**.
+
+        {% endfor %}
+
+        Battery reserve: **{{ state_attr(p,''reserve_pct'') }}%**.
+
+        '
+  - type: grid
+    cards:
+    - type: heading
+      heading: Battery Outlook — Next 4 Days
+      icon: mdi:battery-clock-outline
+    - type: markdown
+      title: Four-Day Energy Plan
+      content: '{% set p = ''sensor.energy_planner_four_day_plan'' %}
+
+        {% set days = state_attr(p,''days'') or [] %}
+
+        | Day | Solar | House | EV plan | Remaining export |
+
+        | --- | ---: | ---: | ---: | ---: |
+
+        {% for d in days %}
+
+        | {{ d.date }} | {{ d.solar_kwh | round(1) }} | {{ d.house_kwh | round(1) }} | {{ d.ev_charge_kwh | round(1)
+        }} | {{ d.residual_export_kwh | round(1) }} |
+
+        {% endfor %}
+
+        All energy in kWh. Today''s figures cover the remaining day.
+
+        {% for day in state_attr(p,''missing_days'') or [] %}
+
+        **{{ day }}:** Solar forecast coverage is missing.
+
+        {% endfor %}
+
+        '
+    - type: custom:button-card
+      entity: binary_sensor.energy_planner_ev_auto_charge_eligible
+      show_name: false
+      show_icon: false
+      show_state: false
+      tap_action:
+        action: more-info
+      triggers_update: all
+      custom_fields:
+        content: "[[[\n  const eligibility = states['binary_sensor.energy_planner_ev_auto_charge_eligible'];\n \
+          \ const attrs = eligibility?.attributes || {};\n  const read = id => states[id]?.state;\n  const numeric\
+          \ = value => {\n    const n = Number(value);\n    return value !== undefined && value !== null && value\
+          \ !== '' && Number.isFinite(n) ? n : null;\n  };\n  const display = (value, digits=0) => {\n    const\
+          \ n = numeric(value);\n    return n === null ? '—' : n.toLocaleString(undefined, {maximumFractionDigits:digits});\n\
+          \  };\n  const soc = numeric(read('sensor.energy_planner_ev_soc'));\n  const available = numeric(read('sensor.energy_planner_ev_available_energy_to_target'));\n\
+          \  const fullEnergy = numeric(read('sensor.energy_planner_ev_learned_full_range_wall_energy'));\n  const\
+          \ chargeRate = numeric(attrs.learned_charge_power_w);\n  const currentPower = numeric(attrs.ev_current_power_w);\n\
+          \  const source = states[attrs.ev_soc_entity];\n  const sourceName = source?.attributes?.friendly_name\
+          \ || '';\n  const findRange = (label) => {\n    if (!sourceName) return null;\n    const expected = sourceName.replace(/\
+          \ EV Battery Level /i, ` EV ${label} `).toLowerCase();\n    const found = Object.values(states).find(s\
+          \ =>\n      (s?.attributes?.friendly_name || '').toLowerCase() === expected &&\n      !['unknown','unavailable',''].includes(String(s.state).toLowerCase())\n\
+          \    );\n    return found || null;\n  };\n  const range = findRange('Range');\n  const rangeAc = findRange('Range\
+          \ AC');\n  const rangeLabel = entity => entity ? `${display(entity.state, 0)} ${entity.attributes.unit_of_measurement\
+          \ || ''}`.trim() : 'Unavailable';\n  const lockState = states[attrs.ev_lock_entity]?.state;\n  const lockStatus\
+          \ = lockState === 'locked' ? 'LOCKED' : lockState === 'unlocked' ? 'UNLOCKED' : 'LOCK STATUS UNAVAILABLE';\n\
+          \  const lockIcon = lockState === 'locked' ? 'mdi:lock' : lockState === 'unlocked' ? 'mdi:lock-open-variant'\
+          \ : 'mdi:lock-question';\n  const homeEntity = states[attrs.ev_home_entity];\n  const status = currentPower\
+          \ !== null && currentPower >= 50 ? 'CHARGING' :\n    homeEntity?.state === 'home' ? 'AT HOME' : homeEntity?.state\
+          \ === 'not_home' ? 'AWAY' : 'STATUS UNKNOWN';\n  const bar = soc === null ? 0 : Math.max(0, Math.min(100,\
+          \ soc));\n  const esc = value => String(value ?? '').replace(/[&<>\"']/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"\
+          ':'&quot;',\"'\":'&#39;'}[ch]));\n  const stat = (label, value, hint='') => `\n    <div style=\"min-width:0;padding:11px\
+          \ 12px;border-radius:15px;background:rgba(255,255,255,.045);border:1px solid rgba(255,255,255,.055)\"\
+          >\n      <div style=\"font-size:10px;letter-spacing:.09em;color:#8e9298;font-weight:700\">${label}</div>\n\
+          \      <div style=\"font-size:17px;font-weight:750;color:#f4f4f5;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis\"\
+          >${value}</div>\n      ${hint ? `<div style=\"font-size:10px;color:#8e9298;margin-top:3px\">${hint}</div>`\
+          \ : ''}\n    </div>`;\n  return `\n    <div style=\"font-family:system-ui,-apple-system,sans-serif;color:#f4f4f5\"\
+          >\n      <div style=\"display:flex;align-items:center;justify-content:space-between;gap:10px\">\n    \
+          \    <div style=\"display:flex;align-items:center;gap:9px;min-width:0\">\n          <ha-icon icon=\"mdi:car-electric\"\
+          \ style=\"width:22px;height:22px;color:#64d2ff\"></ha-icon>\n          <div style=\"font-size:16px;font-weight:750\"\
+          >Lexus EV</div>\n        </div>\n        <div style=\"font-size:9px;letter-spacing:.08em;color:#64d2ff;border:1px\
+          \ solid rgba(100,210,255,.25);background:rgba(100,210,255,.08);border-radius:20px;padding:5px 8px;white-space:nowrap\"\
+          >${status}</div>\n      </div>\n      <div style=\"display:flex;align-items:center;gap:6px;margin-top:9px;color:#b8bbc1;font-size:11px\"\
+          >\n        <ha-icon icon=\"${lockIcon}\" style=\"width:15px;height:15px;color:${lockState === 'locked'\
+          \ ? '#30d158' : lockState === 'unlocked' ? '#ff9f0a' : '#8e9298'}\"></ha-icon>\n        <span>${lockStatus}</span>\n\
+          \      </div>\n      <div style=\"margin-top:15px;display:flex;align-items:baseline;justify-content:space-between\"\
+          >\n        <div style=\"font-size:11px;letter-spacing:.09em;color:#a1a1aa;font-weight:700\">STATE OF CHARGE</div>\n\
+          \        <div style=\"font-size:23px;font-weight:800\">${soc === null ? '—' : `${display(soc)}%`}</div>\n\
+          \      </div>\n      <div style=\"height:7px;background:rgba(255,255,255,.09);border-radius:8px;overflow:hidden;margin:7px\
+          \ 0 13px\">\n        <div style=\"width:${bar}%;height:100%;background:linear-gradient(90deg,#30d158,#64d2ff);border-radius:8px\"\
+          ></div>\n      </div>\n      <div style=\"display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px\"\
+          >\n        ${stat('RANGE', esc(rangeLabel(range)))}\n        ${stat('RANGE WITH A/C', esc(rangeLabel(rangeAc)))}\n\
+          \        ${stat('ENERGY TO TARGET', available === null ? '—' : `${display(available,1)} kWh`)}\n     \
+          \   ${stat('CHARGE RATE', chargeRate === null ? '—' : `${display(chargeRate / 1000,2)} kW`, attrs.learned_charge_power_source\
+          \ ? esc(attrs.learned_charge_power_source) : 'learned')}\n        ${stat('CURRENT CHARGE', currentPower\
+          \ === null ? '—' : `${display(currentPower / 1000,2)} kW`)}\n        ${stat('FULL CHARGE ENERGY', fullEnergy\
+          \ === null ? '—' : `${display(fullEnergy,1)} kWh`)}\n      </div>\n      <div style=\"font-size:10px;color:#777c84;margin-top:11px;text-align:right\"\
+          >Vehicle data · Toyota Connected Services</div>\n    </div>\n  `;\n]]]\n"
+        controls:
+          card:
+            type: horizontal-stack
+            cards:
+            - type: custom:button-card
+              entity: binary_sensor.energy_planner_ev_auto_charge_eligible
+              triggers_update:
+              - binary_sensor.energy_planner_ev_auto_charge_eligible
+              icon: mdi:lock
+              name: Lock
+              show_name: true
+              show_state: false
+              tap_action:
+                action: call-service
+                service: toyota_na.door_lock
+                service_data:
+                  vehicle: '[[[[ return states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id
+                    || ""; ]]]]'
+              hidden: '[[[[ return !states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id;
+                ]]]]'
+              styles: &id001
+                card:
+                - padding: 8px 2px
+                - border-radius: 13px
+                - background: rgba(255,255,255,0.045)
+                - border: 1px solid rgba(255,255,255,0.06)
+                - box-shadow: none
+                grid:
+                - grid-template-areas: '"i" "n"'
+                - grid-template-columns: 1fr
+                - grid-template-rows: 20px min-content
+                icon:
+                - width: 17px
+                - color: '#64d2ff'
+                name:
+                - font-size: 9px
+                - color: '#d4d4d8'
+                - padding-top: 3px
+            - type: custom:button-card
+              entity: binary_sensor.energy_planner_ev_auto_charge_eligible
+              triggers_update:
+              - binary_sensor.energy_planner_ev_auto_charge_eligible
+              icon: mdi:lock-open-variant
+              name: Unlock
+              show_name: true
+              show_state: false
+              tap_action:
+                action: call-service
+                service: toyota_na.door_unlock
+                service_data:
+                  vehicle: '[[[[ return states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id
+                    || ""; ]]]]'
+              hidden: '[[[[ return !states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id;
+                ]]]]'
+              styles: *id001
+            - type: custom:button-card
+              entity: binary_sensor.energy_planner_ev_auto_charge_eligible
+              triggers_update:
+              - binary_sensor.energy_planner_ev_auto_charge_eligible
+              icon: mdi:engine
+              name: Start
+              show_name: true
+              show_state: false
+              tap_action:
+                action: call-service
+                service: toyota_na.engine_start
+                service_data:
+                  vehicle: '[[[[ return states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id
+                    || ""; ]]]]'
+                confirmation:
+                  text: Remotely start the Lexus?
+              hidden: '[[[[ return !states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id;
+                ]]]]'
+              styles: *id001
+            - type: custom:button-card
+              entity: binary_sensor.energy_planner_ev_auto_charge_eligible
+              triggers_update:
+              - binary_sensor.energy_planner_ev_auto_charge_eligible
+              icon: mdi:engine-off
+              name: Stop
+              show_name: true
+              show_state: false
+              tap_action:
+                action: call-service
+                service: toyota_na.engine_stop
+                service_data:
+                  vehicle: '[[[[ return states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id
+                    || ""; ]]]]'
+                confirmation:
+                  text: Remotely stop the Lexus?
+              hidden: '[[[[ return !states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id;
+                ]]]]'
+              styles: *id001
+            - type: custom:button-card
+              entity: binary_sensor.energy_planner_ev_auto_charge_eligible
+              triggers_update:
+              - binary_sensor.energy_planner_ev_auto_charge_eligible
+              icon: mdi:refresh
+              name: Refresh
+              show_name: true
+              show_state: false
+              tap_action:
+                action: call-service
+                service: toyota_na.refresh
+                service_data:
+                  vehicle: '[[[[ return states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id
+                    || ""; ]]]]'
+              hidden: '[[[[ return !states["binary_sensor.energy_planner_ev_auto_charge_eligible"]?.attributes?.ev_device_id;
+                ]]]]'
+              styles: *id001
+      styles:
+        card:
+        - padding: 15px
+        - border-radius: 24px
+        - background: linear-gradient( 145deg, rgba(29,31,34,0.99) 0%, rgba(15,16,18,0.995) 100%)
+        - border: 1px solid rgba(255,255,255,0.065)
+        - box-shadow: 0 12px 32px rgba(0,0,0,0.25)
+        grid:
+        - grid-template-areas: '"content" "controls"'
+        - grid-template-columns: 1fr
+        - grid-template-rows: auto auto
+        custom_fields:
+          content:
+          - width: 100%
+          controls:
+          - width: 100%
+          - margin-top: 12px
+  - type: grid
+    cards:
+    - type: heading
+      heading: What To Do
+      icon: mdi:lightbulb-on-outline
+    - type: markdown
+      title: What To Do
+      content: '{% set p = ''sensor.energy_planner_four_day_plan'' %}
+
+        {% set days = state_attr(p,''days'') or [] %}
+
+        {% if states(p) == ''conserve'' %}
+
+        **Preserve battery energy during the low-solar days listed below.** Resume household battery use when solar
+        returns.
+
+        {% elif states(p) in [''storm'',''storm_sensor_unavailable''] %}
+
+        **{{ state_attr(p,''reason'') }}**
+
+        {% elif states(p) == ''unavailable'' %}
+
+        **Missing planning input:** {{ state_attr(p,''reason'') }}
+
+        {% else %}
+
+        **Use batteries for household demand. Move flexible loads into the windows below.**
+
+        {% endif %}
+
+        {% for d in days %}
+
+        ### {{ d.date }}
+
+        {% if d.status == ''conserve'' %}
+
+        Preserve the battery for the sustained low-solar period.
+
+        {% endif %}
+
+        {% if d.ev_charge_kwh > 0 %}
+
+        **Charge the EV {{ d.ev_charge_kwh | round(1) }} kWh**, {{ d.ev_window_start.split(''T'')[1][:5] }}–{{ d.ev_window_end.split(''T'')[1][:5]
+        }}.
+
+        Solar supplies {{ d.ev_direct_solar_kwh | round(1) }} kWh; battery or grid supplies {{ d.ev_battery_or_grid_kwh
+        | round(1) }} kWh. This window remains planned while the EV is away.
+
+        {% endif %}
+
+        {% if d.other_load_opportunity_kwh > 0.05 %}
+
+        **Remaining export: {{ d.other_load_opportunity_kwh | round(1) }} kWh.** Schedule other useful loads {{
+        d.flex_window_start.split(''T'')[1][:5] }}–{{ d.flex_window_end.split(''T'')[1][:5] }} to absorb it.
+
+        {% if d.ev_return_opportunity_kwh > 0.05 %}
+
+        A later EV return can use up to {{ d.ev_return_opportunity_kwh | round(1) }} kWh of that same opportunity
+        as driving creates charge capacity.
+
+        {% endif %}
+
+        {% else %}
+
+        No additional flexible load is needed.
+
+        {% endif %}
+
+        {% endfor %}
+
+        '
+- title: Diagnostics
+  path: energy-planning-diagnostics
+  icon: mdi:stethoscope
+  type: sections
+  max_columns: 4
+  dense_section_placement: true
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: Planner Health
+      icon: mdi:heart-pulse
+    - type: entities
+      title: Forecast reliability
+      entities:
+      - sensor.energy_planner_forecast_reliability_status
+      - sensor.energy_planner_forecast_learning_progress
+      - sensor.energy_planner_storm_safety_status
+      - sensor.energy_planner_forecast_confidence
+      - sensor.energy_planner_forecast_error_samples
+      - sensor.energy_planner_forecast_reliability_reason
+      - sensor.energy_planner_effective_battery_capacity
+      - sensor.energy_planner_battery_pack_count
+      - sensor.energy_planner_battery_topology_source
+      - binary_sensor.energy_planner_forecast_export_risk
+      - sensor.energy_planner_forecast_export_risk_date
+      - sensor.energy_planner_forecast_export_defense_headroom
+      - sensor.energy_planner_forecast_flexible_load_energy_needed
+      - sensor.energy_planner_forecast_export_risk_reason
+      - binary_sensor.energy_planner_no_action_headroom_risk_today
+      - binary_sensor.energy_planner_live_solar_capture_opportunity
+      - sensor.energy_planner_no_action_counterfactual_soc
+      - sensor.energy_planner_no_action_projected_sunset_soc
+      - sensor.energy_planner_ev_solar_energy_today
+      - sensor.energy_planner_ev_preserved_battery_headroom_today
+      - sensor.energy_planner_avoided_solar_export_today
+    - type: markdown
+      content: '{% set e = ''binary_sensor.energy_planner_dynamic_load_forecast'' %} {% set status = state_attr(e,''battery_outlook_status'')
+        %} {% set reason = state_attr(e,''battery_outlook_reason'') %} {% set inputs = state_attr(e,''battery_outlook_inputs'')
+        or {} %}
+
+        ### Battery model
+
+        **Status:** {{ status or ''unknown'' }}
+
+        {% if reason %}**Reason:** {{ reason }}{% endif %}
+
+        {% set socs = inputs.get(''battery_soc'', []) %} {% if socs %} {% for row in socs %} - {{ row.entity_id
+        }} = **{{ row.state }}** {% if row.available %}✓{% else %}✗{% endif %} {% endfor %} {% else %} **SOC:**
+        {{ inputs.get(''battery_soc_pct'', ''—'') }} {% endif %}
+
+        **Charge limit:** {{ inputs.get(''charge_limit_pct'', ''—'') }}% · **Planning load:** {{ inputs.get(''planning_load_w'',
+        ''—'') }} W · **Forecast points:** {{ inputs.get(''forecast_points'', ''—'') }} · **Interval source:** {{
+        inputs.get(''interval_source'', ''—'') }}'
+  - type: grid
+    cards:
+    - type: heading
+      heading: HVAC Diagnostics
+      icon: mdi:hvac
+    - type: entities
+      entities:
+      - sensor.energy_planner_hvac_model_status
+      - sensor.energy_planner_hvac_electrical_power
+      - sensor.energy_planner_hvac_daily_electricity
+    - type: markdown
+      content: '{% set e = ''sensor.energy_planner_hvac_model_status'' %} {% set p = state_attr(e,''persistence'')
+        or {} %} {% set r = state_attr(e,''recovery'') or {} %} {% set t = state_attr(e,''thermal'') or {} %}
+
+        ### Learning persistence
+
+        **Persistence:** {{ p.get(''status'',''—'') }} · restored {{ p.get(''restored_samples'',0) }} samples, {{
+        p.get(''restored_recovery_cycles'',0) }} recovery cycles, {{ p.get(''restored_thermal_samples'',0) }} thermal
+        samples
+
+        **Recovery:** {{ r.get(''status'',''—'') }} · {{ r.get(''completed_cycles'',0) }} completed calls · ETA
+        {{ r.get(''eta_minutes'',''—'') }} min
+
+        **Thermal:** {{ t.get(''status'',''—'') }} · {{ t.get(''samples'',0) }}/{{ t.get(''samples_required'',3)
+        }} windows · τ {{ t.get(''time_constant_hours'',''—'') }} h'
+  - type: grid
+    cards:
+    - type: heading
+      heading: Forecast Quality
+      icon: mdi:chart-bell-curve-cumulative
+    - type: tile
+      entity: sensor.energy_planner_forecast_solar_enhancement_status
+      name: Forecast.Solar
+      icon: mdi:weather-sunny-alert
+      vertical: false
+    - type: tile
+      entity: sensor.energy_planner_forecast_solar_paid_raw_remaining_today
+      name: Forecast.Solar Raw Remaining
+      icon: mdi:solar-power-variant
+      vertical: false
+    - type: tile
+      entity: sensor.energy_planner_forecast_solar_shadow_energy_scale_factor
+      name: Local / Forecast.Solar Scale
+      icon: mdi:scale-balance
+      vertical: false
+    - type: tile
+      entity: sensor.energy_planner_forecast_solar_interval_resolution
+      name: Forecast Resolution
+      icon: mdi:timeline-clock-outline
+      vertical: false
+    - type: tile
+      entity: sensor.energy_planner_forecast_calibration_status
+      name: Calibration Status
+      icon: mdi:chart-timeline-variant-shimmer
+      vertical: false
+    - type: tile
+      entity: sensor.energy_planner_daylight_stored_energy_forecast_mae
+      name: Daylight Forecast MAE
+      icon: mdi:chart-line-variant
+      vertical: false
+  - type: grid
+    cards:
+    - type: heading
+      heading: Tools
+      icon: mdi:tools
+    - type: button
+      name: Energy Planner Integration / Diagnostics
+      icon: mdi:download
+      show_name: true
+      show_icon: true
+      tap_action:
+        action: navigate
+        navigation_path: /config/integrations/integration/energy_planner
+    - type: button
+      name: Energy History Export
+      icon: mdi:history
+      show_name: true
+      show_icon: true
+      tap_action:
+        action: navigate
+        navigation_path: /history?entity_id=sensor.envoy_482538078562_current_net_power_consumption%2Csensor.envoy_482538078562_current_power_production%2Csensor.ecoflow_smart_home_panel_2_grid_power%2Csensor.ecoflow_smart_home_panel_2_home_power%2Csensor.ecoflow_smart_home_panel_2_ac1_battery%2Csensor.ecoflow_smart_home_panel_2_ac2_battery%2Csensor.ecoflow_smart_home_panel_2_ac3_battery%2Cnumber.ecoflow_smart_home_panel_2_charging_power%2Cnumber.ecoflow_smart_home_panel_2_backup_reserve_level%2Csensor.solar_actual_power%2Csensor.solar_forecast_power_now%2Csensor.energy_production_today%2Csensor.energy_production_today_remaining%2Csensor.energy_production_tomorrow%2Csensor.house_end_use_power%2Csensor.forecast_base_load_3h_average%2Csensor.forecast_base_load_24h_average%2Csensor.energy_planner_whole_bank_soc%2Csensor.energy_planner_battery_headroom%2Csensor.energy_planner_rolling_headroom_shortfall%2Csensor.energy_planner_rolling_risk_day_capacity_export%2Csensor.energy_planner_rolling_headroom_risk_date%2Cbinary_sensor.energy_planner_headroom_risk_today%2Cbinary_sensor.energy_planner_dynamic_load_forecast%2Csensor.energy_planner_ev_soc%2Csensor.car_charger_power%2Csensor.hot_tub_power%2Csensor.hvac_power%2Csensor.networking_servers_power%2Csensor.rear_patio_power
