@@ -358,7 +358,7 @@ class DashboardLayoutTests(unittest.TestCase):
         content = what["cards"][1]["content"]
         self.assertIn("CAPTURE SOLAR NOW", content)
         self.assertIn("binary_sensor.energy_planner_live_solar_capture_opportunity", content)
-        self.assertIn("NO-ACTION HEADROOM RISK", content)
+        self.assertIn("IMMEDIATE EV CHARGE GATE", content)
         self.assertLess(
             content.index("CAPTURE SOLAR NOW"),
             content.index("FORECAST HOLD"),
