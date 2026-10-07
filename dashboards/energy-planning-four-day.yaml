@@ -1,8 +1,8 @@
-# Authoritative four-day planner. Replace the previous Energy Planning dashboard with this file.
+# Optional standalone dashboard. Four-Day Plan is also a tab in energy-planning.yaml.
 views:
-- title: Energy Planning
-  path: energy-planning
-  icon: mdi:solar-power
+- title: Four-Day Plan
+  path: four-day-plan
+  icon: mdi:calendar-multiselect
   type: sections
   max_columns: 4
   dense_section_placement: true
