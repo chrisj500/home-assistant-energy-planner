@@ -18,7 +18,7 @@ from .config_migration import (
     remove_legacy_topology_keys,
 )
 from .solar_policy import migrated_solar_options
-from .solar_learning_coordinator import EnergyPlannerSolarLearningCoordinator
+from .planning_coordinator import EnergyPlannerPlanningCoordinator as EnergyPlannerSolarLearningCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 SERVICE_RESTORE_SOLAR_LEARNING = "restore_solar_learning"

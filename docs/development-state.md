@@ -1,3 +1,81 @@
+# Four-day export-first planner — 0.1.75
+
+## Current implementation
+
+The final coordinator is now EnergyPlannerPlanningCoordinator, which publishes
+one authoritative four-day plan after legacy telemetry and learner updates.
+Its independent 15-minute per-bank ledger carries storage across all four days,
+serves household demand from the bank down to reserve, applies physical power
+and efficiency limits, and allocates current EV capacity once. Future EV return
+opportunities are separate, bounded by known full-range capacity and available
+window power; they are not counted as scheduled loads or avoided export.
+
+Persistence is evaluated from fresh production for the next two hours. The
+existing horizon-weighted blend is evaluated through 24 hours, using completed
+prior outcomes, with raw provider intervals beyond 24 hours. Missing training
+uses the provider/live baseline, not a hold. Forecast changes recompute the plan;
+legacy instability, refresh streaks, and historical confidence do not veto it.
+
+Conservation requires two complete low-solar days that reach reserve even in a
+30%-higher-solar simulation. It ends when the low-solar run ends. Storm protection
+retains stored energy. Missing storm status is explicitly reported. Absent later
+forecast days are labelled missing while covered days continue to be planned.
+Charging limits come from the installed controller. The discharge planning limit
+uses that verified charge-power ceiling as a conservative assumed discharge
+ceiling, explicitly labelled in diagnostics; it is not a measured discharge limit.
+
+## User interface and installation
+
+Install the integration, restart Home Assistant, and replace the old dashboard
+with dashboards/energy-planning-four-day.yaml. This keeps the existing live
+battery, HVAC and EV controls, while the three forecast/action cards read only
+sensor.energy_planner_four_day_plan. The legacy dashboard remains for compatibility.
+The new view shows expected solar, house energy, EV allocations, remaining export,
+battery use before sunrise, and windows for other useful loads on every day.
+No generic flexible loads are invented or counted as scheduled.
+
+## Validation and evidence
+
+See docs/planning-acceptance.md and run python scripts/planning_acceptance.py.
+Those results are synthetic fixtures, not claimed realized household savings.
+Tests exercise the real final coordinator, publication, reserve and energy
+conservation per interval, four risk days, pre-sunrise planning, an absent EV,
+partial-solar EV windows, revisions, sustained low solar, sunny recovery, missing
+later coverage, and agreement between authoritative display outputs.
+
+The October 6 diagnostic does not contain the original multi-day provider curve;
+a full replay of that exact live forecast is not claimed. Live outcome validation
+requires the installed build and subsequent diagnostics. No Home Assistant
+installation or device action is performed by this repository change.
+
+## Previous implementation history
+
+# Unreleased correction — forecast opportunities and physical quantities
+
+The October 7 dashboard audit found a same-day EV search ending before sunrise,
+a 90% solar-share filter suppressing useful mixed-supply forecasts, a single-day
+summary overwriting multi-day risk, and stress-case daily energy labelled as
+stationary battery headroom. Earlier fixes did not test these user outcomes.
+
+Local corrections search the remaining daylight (while retaining an immediately
+useful live window), allow partial-solar and partial-duration forecasts, report
+all risk days even during learning, and use nominal solar/load for expected EV
+energy contributions. Immediate charge eligibility remains a separate live
+verification. The overnight advice no longer has an arbitrary 10% capacity cap;
+it remains bounded by the base planner's computed release, modeled need, and
+stored energy above reserve. Daily rows expose nominal capacity export, stress
+capacity export, and battery energy above reserve separately. The dashboard
+labels the stress quantity as a daily opportunity, not achievable headroom.
+
+Validation: 319 regression tests pass, including pre-sunrise planning,
+50% solar/50% grid window retention, and four visible risk days while learning.
+Dashboard YAML parses. These checks establish the specific corrections only.
+Outstanding: recorded end-to-end replays and realized avoidable-export outcomes;
+reconcile the differing legacy/counterfactual outlook totals; integrate the
+proposed horizon-selected solar forecasts (currently still shadow-only).
+Do not claim the project's operational objective is validated or deployed.
+Dashboard changes require a separate dashboard import.
+
 # Development handoff — export-defense recommendations, 0.1.74
 
 ## Current work

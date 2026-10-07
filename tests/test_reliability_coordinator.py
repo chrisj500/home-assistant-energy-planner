@@ -378,7 +378,7 @@ class CoordinatorTests(unittest.TestCase):
         self.assertGreater(result["recommended_overnight_discharge"], 0)
         self.assertLessEqual(
             result["recommended_overnight_discharge"],
-            result["battery_capacity_kwh"] * 0.10,
+            6.0,
         )
         self.assertGreaterEqual(
             result["stored_energy"] - result["recommended_overnight_discharge"],
@@ -416,6 +416,49 @@ class CoordinatorTests(unittest.TestCase):
         )
         self.assertFalse(self.data.get("rolling_ev_auto_charge_eligible", False))
         self.assertIn("recheck EV presence", self.data["rolling_ev_auto_charge_reason"])
+
+    def test_before_sunrise_finds_today_daylight_charge(self):
+        now = self.now.replace(hour=2, minute=19)
+        sunrise, sunset = now.replace(hour=6, minute=0), now.replace(hour=18, minute=0)
+        points = [IntervalPoint(sunrise, 8000), IntervalPoint(sunset, 8000)]
+        self.c._verified_ev(self.data, now, now.date().isoformat(), 66.4,
+                            points, [DaylightWindow(now.date(), sunrise, sunset)], 1000, .9)
+        self.assertEqual(self.data["rolling_ev_status"], "planned")
+        self.assertGreaterEqual(datetime.fromisoformat(self.data["rolling_ev_window_start"]), sunrise)
+        self.assertEqual(self.data["rolling_ev_recommended_energy_kwh"], 6)
+        self.assertFalse(self.data["rolling_ev_auto_charge_eligible"])
+
+    def test_partial_solar_window_retains_plan_with_grid_estimate(self):
+        self.states["solar"].state = "4000"
+        self.data["rolling_ev_status_reason"] = "Forecast unstable—do not act."
+        sunrise, sunset = self.now.replace(hour=6), self.now.replace(hour=18)
+        points = [IntervalPoint(sunrise, 4000), IntervalPoint(sunset, 4000)]
+        self.c._verified_ev(self.data, self.now, self.now.date().isoformat(), 6,
+                            points, [DaylightWindow(self.now.date(), sunrise, sunset)], 1000, .9)
+        self.assertEqual(self.data["rolling_ev_status"], "planned")
+        self.assertGreater(self.data["rolling_ev_window_grid_kwh"], 0)
+        self.assertAlmostEqual(self.data["rolling_ev_window_solar_fraction_pct"], 50)
+        self.assertNotIn("do not act", self.data["rolling_ev_status_reason"])
+        self.assertFalse(self.data["rolling_ev_auto_charge_eligible"])
+
+    def test_all_export_days_remain_visible_during_learning(self):
+        rows, watts = [], {}
+        for offset in range(4):
+            day = self.now + timedelta(days=offset)
+            rows.append({"date": day.date().isoformat(), "sunset_soc_pct": 100,
+                         "solar_kwh": 100, "dynamic_load_needed": True})
+            for hour in range(6, 19):
+                watts[day.replace(hour=hour).isoformat()] = 15000
+        self.data["rolling_day_plans"] = rows
+        self.c._estimate_payload["result"]["watts"] = watts
+        self.c.baseline = deepcopy(self.data)
+        result = asyncio.run(self.c._async_update_data())
+        self.assertEqual(result["rolling_dynamic_load_days_count"], 4)
+        self.assertEqual(len(result["rolling_dynamic_load_risk_dates"]), 4)
+        self.assertGreater(result["rolling_dynamic_load_total_kwh"], result["rolling_dynamic_load_next_3d_kwh"])
+        self.assertFalse(result["rolling_ev_auto_charge_eligible"])
+        for row in result["rolling_day_plans"]:
+            self.assertLessEqual(row["planning_max_battery_discharge_kwh"], result["battery_capacity_kwh"])
 
     def test_low_solar_does_not_justify_headroom(self):
         self.states["remaining"].state = "1"
