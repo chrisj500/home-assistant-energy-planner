@@ -1,5 +1,12 @@
 # Home Assistant Energy Planner
 
+## v0.1.77 Four-day load-profile parsing fix
+
+Fix a crash that prevented the four-day plan from publishing when the rolling
+load profile was supplied in its documented `{date, load_w}` row format. The
+planner now reads `load_w` from each row and falls back to the overall planning
+load if a row is missing or invalid.
+
 ## v0.1.76 Four-Day Plan tab
 
 Import `dashboards/energy-planning.yaml` into the existing dashboard to retain

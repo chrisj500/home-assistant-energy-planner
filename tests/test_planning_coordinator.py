@@ -42,7 +42,8 @@ class CoordinatorOutcomeTests(unittest.TestCase):
         self.c.hass=SimpleNamespace(config=SimpleNamespace(latitude=38.9,longitude=-77),states=SimpleNamespace(get=lambda _:None))
         self.c._fresh_power=lambda *a:None
         self.c.baseline={'storm':False,'forecast_reliability_status':'unstable','rolling_ev_status':'hold',
-            'rolling_planning_base_load_w':1000,'rolling_planning_load_profile_w':[1000]*4,
+            'rolling_planning_base_load_w':1000,'rolling_planning_load_profile_w':[
+                {'date':w.day.isoformat(),'load_w':1000} for w in args['windows']],
             'battery_bank_capacities_kwh':args['capacities'],'battery_bank_socs_pct':args['socs'],
             'effective_reserve_floor':40,'rolling_ev_soc_data_status':'fresh',
             'rolling_ev_available_energy_kwh':1.68,'rolling_ev_charge_power_w':6190,
