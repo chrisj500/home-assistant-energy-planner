@@ -1,5 +1,12 @@
 # Home Assistant Energy Planner
 
+## v0.1.76 Four-Day Plan tab
+
+Import `dashboards/energy-planning.yaml` into the existing dashboard to retain
+Energy Planning and Diagnostics and add Four-Day Plan as a third tab.
+Update the dashboard raw configuration separately after updating through HACS.
+The separate `energy-planning-four-day.yaml` remains an optional standalone dashboard.
+
 ## v0.1.62 persisted EcoFlow battery topology
 
 Energy Planner now treats live EcoFlow DPU pack discovery as authoritative and
