@@ -389,8 +389,13 @@ class DashboardLayoutTests(unittest.TestCase):
         self.assertNotIn("kWh of stationary-battery headroom", content)
         self.assertLess(
             content.index("EXPORT RISK"),
+            content.index("IMMEDIATE EV CHARGE GATE"),
+        )
+        self.assertLess(
+            content.index("EXPORT RISK"),
             content.index("NO EV ACTION REQUIRED"),
         )
+        self.assertIn("does not change the multi-day export outlook", content)
 
     def test_battery_outlook_displays_export_defense_future_risk(self):
         outlook = self.sections[2]["cards"][1]["custom_fields"]["content"]
@@ -408,6 +413,29 @@ class DashboardLayoutTests(unittest.TestCase):
         self.assertIn("No forecast-dependent recommendation yet", content)
         self.assertIn("NO EV ACTION REQUIRED", content)
 
+
+    def test_four_day_advice_uses_local_times_and_never_implies_a_command(self):
+        view = next(
+            view for view in self.dashboard["views"]
+            if view["title"] == "Four-Day Plan"
+        )
+        cards = [
+            card
+            for section in view.get("sections", [])
+            for card in section.get("cards", [])
+        ]
+        what = next(card for card in cards if card.get("title") == "What To Do")
+        content = what["content"]
+        self.assertIn("as_local(as_datetime(d.ev_window_start))", content)
+        self.assertIn("as_local(as_datetime(d.flex_window_start))", content)
+        self.assertNotIn("split('T')", content)
+        self.assertIn("does not send a charging command", content)
+        self.assertIn("can return during the day", content)
+
+    def test_baseline_export_summary_names_what_is_being_counted(self):
+        headroom = self.sections[1]["cards"][2]["content"]
+        self.assertIn("Projected baseline export before discretionary loads", headroom)
+        self.assertNotIn("Solar after load", headroom)
 
 if __name__ == "__main__":
     unittest.main()
