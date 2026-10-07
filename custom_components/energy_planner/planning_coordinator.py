@@ -55,8 +55,17 @@ class EnergyPlannerPlanningCoordinator(EnergyPlannerSolarLearningCoordinator):
             profile = data.get('rolling_planning_load_profile_w') or []
             if load_w is None:
                 raise ValueError('Household planning load is unavailable')
-            loads = {window.day.isoformat(): (profile[i] if i<len(profile) else load_w)/1000
-                     for i,window in enumerate(windows)}
+            # Profile rows are published as {date, load_w}; older inputs may be numeric.
+            # Read watts explicitly and fall back to the shared base-load estimate.
+            loads = {}
+            for i, window in enumerate(windows):
+                row = profile[i] if i < len(profile) else None
+                row_load_w = row.get('load_w') if isinstance(row, dict) else row
+                try:
+                    row_load_w = float(row_load_w)
+                except (TypeError, ValueError):
+                    row_load_w = float(load_w)
+                loads[window.day.isoformat()] = row_load_w / 1000
             settings = _controller_settings(self.hass, 0)
             efficiency = float(self.cfg.get(OPT_CHARGE_EFFICIENCY, DEFAULT_CHARGE_EFFICIENCY))
             if efficiency > 1: efficiency /= 100
