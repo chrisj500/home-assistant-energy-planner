@@ -5,7 +5,8 @@ from homeassistant.util import dt as dt_util
 from .solar_learning_coordinator import EnergyPlannerSolarLearningCoordinator
 from .coordinator import _solar_window, _controller_settings, _num
 from .const import (CONF_CHARGE_LIMIT, OPT_CHARGE_EFFICIENCY, DEFAULT_CHARGE_EFFICIENCY,
-    CONF_EV_HOME, CONF_ACTUAL_SOLAR_POWER, CONF_BASE_LOAD_POWER, OPT_EV_SOLAR_ADVISORY_ENABLED)
+    CONF_EV_HOME, CONF_ACTUAL_SOLAR_POWER, CONF_BASE_LOAD_POWER, CONF_BASE_LOAD_3H,
+    CONF_BASE_LOAD_24H, OPT_EV_SOLAR_ADVISORY_ENABLED)
 from .forecast_solar_shadow import interval_points_from_payload, weather_rows
 from .headroom import correct_current_day_points
 from .rolling_ev import DaylightWindow
@@ -54,7 +55,7 @@ class EnergyPlannerPlanningCoordinator(EnergyPlannerSolarLearningCoordinator):
             load_w = data.get('rolling_planning_base_load_w')
             profile = data.get('rolling_planning_load_profile_w') or []
             if load_w is None:
-                raise ValueError('Household planning load is unavailable')
+                raise ValueError(self._planning_load_unavailable_reason())
             # Profile rows are published as {date, load_w}; older inputs may be numeric.
             # Read watts explicitly and fall back to the shared base-load estimate.
             loads = {}
@@ -120,6 +121,51 @@ class EnergyPlannerPlanningCoordinator(EnergyPlannerSolarLearningCoordinator):
                 rolling_ev_auto_charge_eligible=False, rolling_ev_recommended_energy_kwh=0,
                 headroom_release=False, battery_outlook_status='unavailable', battery_outlook_reason=str(err))
         return data
+
+    def _planning_load_unavailable_reason(self) -> str:
+        """Explain which live power inputs prevent the household load estimate."""
+        configured = (
+            self.cfg.get(CONF_BASE_LOAD_3H) or "sensor.forecast_base_load_3h_average",
+            self.cfg.get(CONF_BASE_LOAD_24H) or "sensor.forecast_base_load_24h_average",
+            self.cfg.get(CONF_BASE_LOAD_POWER),
+        )
+        missing_helpers = []
+        for entity_id in dict.fromkeys(entity for entity in configured if entity):
+            state = self.hass.states.get(entity_id)
+            if state is None or state.state.lower() in {"unknown", "unavailable"}:
+                missing_helpers.append(entity_id)
+
+        source_entities = {"Enphase": [], "EcoFlow": []}
+        all_states = getattr(self.hass.states, "async_all", lambda *_: [])("sensor")
+        for state in all_states:
+            entity_id = state.entity_id.lower()
+            if ("envoy" in entity_id or "enphase" in entity_id) and (
+                "current_power_production" in entity_id
+                or "current_power_consumption" in entity_id
+            ):
+                source_entities["Enphase"].append(state)
+            elif "ecoflow" in entity_id and (
+                "grid_power" in entity_id or "home_power" in entity_id
+            ):
+                source_entities["EcoFlow"].append(state)
+
+        details = []
+        for source, states in source_entities.items():
+            if not states:
+                details.append(f"{source} power sensors not found")
+                continue
+            unavailable = [
+                state.entity_id for state in states
+                if state.state.lower() in {"unknown", "unavailable"}
+            ]
+            if unavailable:
+                details.append(f"{source} unavailable: {', '.join(sorted(unavailable))}")
+            else:
+                details.append(f"{source} power sensors available")
+
+        if missing_helpers:
+            details.append(f"base-load helper unavailable: {', '.join(missing_helpers)}")
+        return "Household planning load is unavailable. " + "; ".join(details) + "."
 
     def _verify_plan_live(self, data, now):
         home = self.hass.states.get(self.cfg.get(CONF_EV_HOME, ''))
