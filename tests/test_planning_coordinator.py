@@ -84,6 +84,26 @@ class CoordinatorOutcomeTests(unittest.TestCase):
         self.assertIn('older than two hours',d['four_day_plan']['reason'])
         self.assertFalse(d['rolling_ev_auto_charge_eligible'])
 
+    def test_missing_load_reason_names_unavailable_enphase_and_available_ecoflow(self):
+        states = [
+            SimpleNamespace(entity_id='sensor.forecast_base_load_3h_average', state='unavailable'),
+            SimpleNamespace(entity_id='sensor.forecast_base_load_24h_average', state='unavailable'),
+            SimpleNamespace(entity_id='sensor.envoy_123_current_power_consumption', state='unavailable'),
+            SimpleNamespace(entity_id='sensor.envoy_123_current_power_production', state='unavailable'),
+            SimpleNamespace(entity_id='sensor.ecoflow_panel_grid_power', state='0.0'),
+            SimpleNamespace(entity_id='sensor.ecoflow_panel_home_power', state='1094.0'),
+        ]
+        self.c.hass.states = SimpleNamespace(
+            get=lambda entity_id: next((state for state in states if state.entity_id == entity_id), None),
+            async_all=lambda domain: states if domain == 'sensor' else [],
+        )
+
+        reason = self.c._planning_load_unavailable_reason()
+
+        self.assertIn('Enphase unavailable: sensor.envoy_123_current_power_consumption', reason)
+        self.assertIn('EcoFlow power sensors available', reason)
+        self.assertIn('sensor.forecast_base_load_3h_average', reason)
+
 
 class DashboardRenderTests(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("jinja2"), "Jinja2 is installed by the CI validation workflow")
