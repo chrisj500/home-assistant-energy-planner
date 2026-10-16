@@ -133,6 +133,10 @@ class SolarLearningTests(unittest.TestCase):
         self.assertEqual(lead_bucket(3), "3-12h")
         self.assertEqual(lead_bucket(11.99), "3-12h")
         self.assertEqual(lead_bucket(12), "12-24h")
+        self.assertEqual(lead_bucket(24), "24-48h")
+        self.assertEqual(lead_bucket(48), "48-72h")
+        self.assertEqual(lead_bucket(72), "72-96h")
+        self.assertEqual(lead_bucket(96), "72-96h")
 
     def test_recovery_merges_scored_rows_without_touching_live_state(self):
         existing = dict(candidate(start=10*86400, issued_at=10*86400-3600),

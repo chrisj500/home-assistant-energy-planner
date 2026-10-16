@@ -96,7 +96,7 @@ class EnergyPlannerPlanningCoordinator(EnergyPlannerSolarLearningCoordinator):
             plan['charge_limit_source'] = getattr(settings, 'source', 'configured')
             publish_plan(data, plan)
             self._verify_plan_live(data, now)
-            for model in ('blend','persistence'):
+            for model in ('blend','persistence','profile'):
                 used = any(r['model']==model for r in members)
                 diagnostics.get(model, {})['forecast_applied'] = used
                 if used:
@@ -105,11 +105,25 @@ class EnergyPlannerPlanningCoordinator(EnergyPlannerSolarLearningCoordinator):
                     policy = diagnostics.get(model,{}).get('policy','')
                     diagnostics.get(model,{})['policy'] = policy.replace('shadow only','used in planning; prospective scoring continues')
             for member, key, sensor in (('v4','v4','solar_learning_v4_status'), ('v41','v4_1','solar_learning_v41_status')):
-                used = any(r['model']=='blend' and r['weights'].get(member,0)>0 for r in members)
+                used = any(r['model']==member for r in members)
                 diagnostics.get(key,{})['forecast_applied'] = used
                 if used:
                     data[sensor] = 'planning'
                     diagnostics.get(key,{})['status'] = 'planning'
+            diagnostics['planning_model_routing'] = {
+                'persistence': 'qualified persistence for leads under 2h; live curve fallback',
+                'v4': '2-24h only after trained and matched prospective MAE beats raw without increasing underforecast bias',
+                'profile': 'direct measured-AC model for 24-96h after trained and horizon-matched prospective validation',
+                'v3': 'evaluation only', 'v4_1': 'evaluation only', 'blend': 'evaluation only',
+                'selected_hours_by_model': {
+                    model: sum(1 for row in members if row['model'] == model)
+                    for model in ('persistence', 'live', 'v4', 'profile', 'provider')
+                },
+                'long_lead_buckets': ('24-48h', '48-72h', '72-96h'),
+                'long_lead_warmup': not any(
+                    row['model'] == 'profile' for row in members
+                ),
+            }
             diagnostics['planning_model'] = plan['model']
         except Exception as err:
             self._plan_surplus_since = None

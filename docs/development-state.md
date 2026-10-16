@@ -76,7 +76,26 @@ proposed horizon-selected solar forecasts (currently still shadow-only).
 Do not claim the project's operational objective is validated or deployed.
 Dashboard changes require a separate dashboard import.
 
-# Development handoff — export-defense recommendations, 0.1.74
+# Development handoff — validated horizon solar models, 0.1.80
+
+## Current work
+
+The four-day planner now routes solar by forecast lead: qualified persistence
+under two hours, V4 corrections from two through 24 hours only after a matched
+prospective MAE win without worsening underforecast bias, and a direct measured
+AC profile from 24 through 96 hours after its own horizon-matched validation.
+The long-lead profile does not use provider solar energy as a prediction input;
+it uses prior measured AC outcomes matched on forecast cloud, temperature, sun
+geometry, hour, lead and season. The provider curve remains a documented warm-up
+fallback until the profile has enough valid examples and wins its scorecard.
+V3, V4.1 and the adaptive blend remain diagnostics and do not feed the plan.
+
+Solar predictions are frozen and scored prospectively for up to 96 hours.
+Separate profile status and trained-count sensors expose its progress. Existing
+four-day plan, load-source diagnostics and live EV checks are retained.
+
+Validation: targeted model, horizon-collection and planner-routing tests pass;
+the full suite and GitHub checks are run before merge.
 
 ## Current work
 

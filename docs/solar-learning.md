@@ -1,15 +1,17 @@
-> Version 0.1.75: the four-day planner evaluates persistence for the next two
-> hours and the horizon blend through 24 hours for planning. Provider/live
-> forecasts supply unsupported horizons or missing learning evidence. Individual
-> issued predictions remain frozen for prospective comparisons. Historical
-> descriptions below of exclusively shadow operation apply to earlier versions.
+> Version 0.1.80: the four-day planner uses persistence under two hours, V4
+> corrections from two through 24 hours after a matched prospective accuracy
+> win, and an independent measured-AC profile for 24–96 hours after that model
+> wins its horizon scorecard. Provider solar energy remains a warm-up fallback.
+> The adaptive blend, V3 and V4.1 remain evaluation-only. Issued predictions
+> and their outcomes are frozen for prospective comparisons.
 
 # AC solar learning — residual models, horizon blend, and persistence
 
 ## What is implemented
 
-Three local residual learners and two challengers run in parallel shadow mode and cannot influence
-planner decisions.
+V3, V4, V4.1, the horizon blend, persistence and the independent profile are
+scored prospectively. The planner selects only persistence, qualified V4 and
+the independently validated profile by lead time.
 
 - **v3 control model** groups Forecast.Solar error by local hour, lead-time bucket,
   and categorical cloud bin (clear/mixed/cloudy/unknown).
@@ -27,9 +29,9 @@ neural networks. Their purpose is to learn how this installation behaves under
 changing cloud conditions without fragmenting evidence into dozens of tiny
 categorical buckets.
 
-Every hour, freeze predictions for the next 24 complete UTC hours, along with the
+Every hour, freeze predictions for up to 96 complete UTC hours, along with the
 local date/hour, issuance time, provider retrieval time, and available weather.
-The last target begins less than 24 hours after issuance and ends up to 25 hours later. Save raw paid, v0.1.40 live
+Save raw paid, v0.1.40 live
 adjusted, and learned predictions separately. Only completed, valid observations
 available before issuance enter training. Repeated predictions of the same target
 hour count as one training observation within each group.
@@ -136,19 +138,13 @@ predictions on one day are not independent days of evidence. v4 and v4.1 have
 separate scorecards so their continuous-neighbor behavior can be compared directly
 against Forecast.Solar and the v3 control.
 
-No confidence intervals or automatic model promotion are implemented. All five
-models remain advisory diagnostics. Clipping, curtailment, snow, and sensor problems
-cannot always be distinguished from aggregate AC readings alone. v4/v4.1 reduce
-categorical fragmentation but still depend on the quality of the underlying future
-weather forecast. Ninety-day history cannot establish annual seasonal accuracy.
+Clipping, curtailment, snow, and sensor problems cannot always be distinguished
+from aggregate AC readings alone. V4/V4.1 and the profile still depend on future
+weather inputs; the profile specifically needs cloud and temperature forecasts.
+Ninety-day history cannot establish annual seasonal accuracy. The independent
+profile is an empirical measured-AC model, not a physical irradiance simulation.
 
-For a later independent model we still need verified roof-group capacity/orientation/
-tilt, inverter AC limits, and an archived numerical weather forecast with future
-irradiance and clouds. Existing Forecast.Solar site settings can supply geometry
-where correctly configured. Ecowitt cannot supply future weather by itself. Evaluate
-that expansion only after the baseline collection and scoring are working reliably.
-
-## Horizon-specific blend (0.1.71)
+## Horizon-specific blend (evaluation only)
 
 The `horizon_weighted_blend` challenger combines raw Forecast.Solar, the live
 adjustment, and currently trained v3/v4/v4.1 predictions. Members whose current
@@ -171,7 +167,7 @@ a model after a few favorable hours. Each issued row saves exact weights,
 matched-cohort MAEs, sample/day counts, and a fallback reason. Insufficient
 evidence returns the horizon's baseline and is marked inactive.
 
-## Short-term clear-sky persistence (0.1.71)
+## Short-term clear-sky persistence
 
 The `clear_sky_persistence` challenger scales the current measured AC power by
 the ratio of future/current clear-sky horizontal irradiance. It uses the Haurwitz

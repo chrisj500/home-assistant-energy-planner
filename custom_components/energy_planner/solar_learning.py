@@ -23,7 +23,16 @@ def number(value):
 
 
 def lead_bucket(hours):
-    return "0-3h" if hours < 3 else "3-12h" if hours < 12 else "12-24h"
+    """Bucket forecast lead for matched, prospective model scoring."""
+    return (
+        "0-3h" if hours < 3 else
+        "3-12h" if hours < 12 else
+        "12-24h" if hours < 24 else
+        "24-48h" if hours < 48 else
+        "48-72h" if hours < 72 else
+        "72-96h" if hours <= 96 else
+        "96h+"
+    )
 
 
 def sky_bucket(value):
@@ -233,7 +242,7 @@ def merge_recovery(memory, bundle, now):
 def scorecard(memory):
     rows = [r for r in memory.get("scored", []) if r.get("accepted") and r["raw_kwh"] >= 0.05]
     result = {}
-    for lead in ("0-3h", "3-12h", "12-24h"):
+    for lead in ("0-3h", "3-12h", "12-24h", "24-48h", "48-72h", "72-96h"):
         issued = [r for r in rows if r["lead"] == lead]
         # Forecasts are refreshed hourly, so the same target hour may have
         # several valid as-issued predictions. Score its latest prediction

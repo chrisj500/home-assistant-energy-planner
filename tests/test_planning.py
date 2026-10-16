@@ -121,4 +121,33 @@ class PlanningTests(unittest.TestCase):
         self.assertTrue(any(r['model']=='provider' for r in members))
         self.assertTrue(all(r['model']=='provider' for r in members if datetime.fromisoformat(r['start'])>=args['now']+timedelta(hours=24)))
 
+    def test_independent_profile_is_used_for_long_leads_after_prospective_win(self):
+        args = scenario()
+        now = args['now']
+        memory = {'scored': []}
+        for day_offset in (1, 2, 3, 4, 5):
+            for hour in (10, 11, 12):
+                target = (now-timedelta(days=6-day_offset)).replace(hour=hour)
+                start = target.timestamp()
+                memory['scored'].append({
+                    'issued_at': start-50*3600, 'start': start, 'end': start+3600,
+                    'day': target.date().isoformat(), 'hour': hour, 'lead': '48-72h',
+                    'lead_hours': 50, 'accepted': True, 'v4_trained': False,
+                    'v4_learned_kwh': 5.0, 'actual_kwh': 6.0, 'raw_kwh': 5.0,
+                    'forecast_sky': 0.2, 'target_sun_elevation_deg': 40.0,
+                    'target_sun_azimuth_deg': 180.0,
+                    'day_of_year': target.timetuple().tm_yday,
+                    'profile_model_version': 1, 'profile_trained': True,
+                    'profile_kwh': 6.0, 'forecast_temperature_c': 20.0,
+                })
+        weather = [{'_at': p.at, 'sky': 0.2, 'temperature': 20.0} for p in args['points']]
+        _, members = selected_curve(
+            points=args['points'], live_points=args['points'], now=now, memory=memory,
+            observation={}, latitude=38.9, longitude=-77, weather=weather,
+        )
+        long_profile = [r for r in members if r['model'] == 'profile'
+                        and r['lead_bucket'] in ('24-48h', '48-72h', '72-96h')]
+        self.assertTrue(long_profile)
+        self.assertGreaterEqual(long_profile[0]['profile_metadata']['samples'], 12)
+
 if __name__=='__main__':unittest.main()
