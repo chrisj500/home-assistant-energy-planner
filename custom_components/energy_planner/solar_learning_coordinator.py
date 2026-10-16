@@ -32,6 +32,7 @@ from .solar_learning_v41 import (
     ensure_shadow as ensure_v41_shadow,
     scorecard as v41_scorecard,
 )
+from .solar_profile import annotate_latest as annotate_profile_latest, scorecard as profile_scorecard
 
 _LOGGER = logging.getLogger(__name__)
 DEFAULT_SOLAR_SOURCES = {
@@ -95,7 +96,8 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
             if self._solar_memory is not None:
                 self._solar_memory.pop("previous", None)
             return {"solar_learning_status": "disabled", "solar_learning_diagnostics": {"forecast_applied": False},
-                    "solar_learning_blend_status": "disabled", "solar_learning_persistence_status": "disabled"}
+                    "solar_learning_blend_status": "disabled", "solar_learning_persistence_status": "disabled",
+                    "solar_learning_profile_status": "disabled"}
         if self._solar_memory is None:
             loaded = await self._solar_learning_store.async_load()
             self._solar_memory = loaded if isinstance(loaded, dict) else {}
@@ -189,7 +191,9 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
                                                corrected_remaining_kwh=None, actual_solar_w=power if valid else None).points
             candidates = []
             first = (int(stamp) // 3600 + 1) * 3600
-            for offset in range(24):
+            # Freeze hourly predictions over the complete four-day planning
+            # horizon so long-lead corrections can be scored prospectively.
+            for offset in range(96):
                 start = datetime.fromtimestamp(first + offset * 3600, now.tzinfo)
                 end = datetime.fromtimestamp(start.timestamp() + 3600, now.tzinfo)
                 if start < points[0].at or end > points[-1].at:
@@ -205,6 +209,7 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
                 candidates.append({"issued_at": stamp, "provider_received_at": success.timestamp(),
                     "start": start.timestamp(), "end": end.timestamp(), "day": start.date().isoformat(),
                     "hour": start.hour, "lead": lead_bucket((start.timestamp() - stamp) / 3600),
+                    "lead_hours": (start.timestamp() - stamp) / 3600,
                     "raw_kwh": integrate_interval_energy_kwh(points, start, end),
                     "live_kwh": integrate_interval_energy_kwh(live, start, end),
                     "sky_bin": sky_bucket(sky), "forecast_sky": sky,
@@ -220,12 +225,15 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
                 site_longitude,
             )
             annotate_challengers(memory, stamp, points, site_latitude, site_longitude)
+            annotate_profile_latest(memory, stamp, site_latitude, site_longitude)
             issued = bool(candidates)
         pending = memory.get("pending", [])
         newest = [r for r in pending if r["issued_at"] == memory.get("last_issue")]
+        profile_active = any(row.get("profile_trained") for row in newest)
         stats = scorecard(memory)
         v4_stats = v4_scorecard(memory)
         v41_stats = v41_scorecard(memory)
+        profile_stats = profile_scorecard(memory)
         challengers = {}
         for model in ("blend", "persistence"):
             active = any(r.get(model + "_active") for r in newest)
@@ -323,6 +331,13 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
                 ],
                 "training_policy": "tuned continuous weather residual; hard lead locality (1.5h/3h/4h by horizon), target-midpoint solar geometry, >=6 unique target hours across 3 days with >=3 effective neighbors; correction cap grows with evidence and prior out-of-sample performance, with additional horizon authority 100%/65%/40% for 0-3h/3-12h/12-24h; absolute ceiling +/-20%; shadow only",
             },
+            "profile": {
+                **profile_stats,
+                "status": "shadow" if profile_active or profile_stats["trained_forecasts"] else "collecting",
+                "features": ["measured_ac_outcomes", "forecast_cloud_fraction", "forecast_temperature",
+                             "target_sun_elevation", "target_sun_azimuth", "local_hour", "seasonal_day"],
+                "training_policy": "direct weighted-median AC energy from up to 36 nearest historical targets; >=12 neighbors, >=5 days and >=5 effective samples; no raw solar-energy input; prospective scoring only",
+            },
             "last_issue": memory.get("last_issue"), "reset_reason": memory.get("reset_reason"), "reset_at": memory.get("reset_at"),
             "reset_changed_components": memory.get("reset_changed_components"),
             "source_identity_status": "complete" if identity is not None else "deferred",
@@ -340,6 +355,8 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
                 "solar_learning_v4_trained_forecasts": v4_stats["trained_forecasts"],
                 "solar_learning_v41_status": v41_state,
                 "solar_learning_v41_trained_forecasts": v41_stats["trained_forecasts"],
+                "solar_learning_profile_status": "shadow" if profile_active or profile_stats["trained_forecasts"] else "collecting",
+                "solar_learning_profile_trained_forecasts": profile_stats["trained_forecasts"],
                 **{f"solar_learning_{model}_status": item["status"] for model, item in challengers.items()},
                 **{f"solar_learning_{model}_scored_forecasts": item["metrics"]["active_forecasts"]
                    for model, item in challengers.items()}}
@@ -354,4 +371,5 @@ class EnergyPlannerSolarLearningCoordinator(EnergyPlannerHVACCoordinator):
                 self._solar_memory.pop("previous", None)
             data.update(solar_learning_status="error", solar_learning_diagnostics={"forecast_applied": False, "reason": "See integration logs"})
             data.update(solar_learning_blend_status="error", solar_learning_persistence_status="error")
+            data.update(solar_learning_profile_status="error")
         return data

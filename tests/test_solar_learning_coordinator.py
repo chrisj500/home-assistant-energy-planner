@@ -30,6 +30,7 @@ from solar_learning_v41 import (  # noqa: E402
     ensure_shadow as ensure_v41_shadow,
     scorecard as v41_scorecard,
 )
+from solar_profile import annotate_latest as annotate_profile_latest, scorecard as profile_scorecard
 
 
 class Parent:
@@ -70,7 +71,7 @@ class SolarCoordinatorTests(unittest.TestCase):
         self.c._forecast_solar_source = lambda: (object(), None)
         self.c._estimate_source_signature = lambda source: {'site': 'test'}
         self.c._estimate_last_success = self.now
-        self.c._estimate_payload = {'result': {'watts': {(self.now+timedelta(hours=h)).isoformat(): 2000 for h in range(-1, 30)}}}
+        self.c._estimate_payload = {'result': {'watts': {(self.now+timedelta(hours=h)).isoformat(): 2000 for h in range(-1, 98)}}}
         self.c._professional_cache = {}
         self.c._professional_attempts = {}
         self.saved = None
@@ -99,8 +100,11 @@ class SolarCoordinatorTests(unittest.TestCase):
             self.assertFalse(d[model]['forecast_applied'])
             self.assertEqual(d[model]['metrics']['evaluation'], 'prospective_only')
             self.assertIn('solar_learning_' + model + '_status', data)
+        self.assertFalse(d['profile']['forecast_applied'])
+        self.assertEqual(d['profile']['evaluation'], 'prospective_only')
+        self.assertIn('solar_learning_profile_status', data)
         self.assertFalse(d['weather_forecast_available'])
-        self.assertEqual(len(d['hourly_shadow']), 24)
+        self.assertEqual(len(d['hourly_shadow']), 96)
         self.assertTrue(all(r['start'] > r['issued_at'] for r in self.saved['pending']))
         self.assertEqual(d['sources']['energy'], 'sensor.envoy_test_lifetime_energy_production')
 

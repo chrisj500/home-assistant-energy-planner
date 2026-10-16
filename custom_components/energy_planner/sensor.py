@@ -82,6 +82,8 @@ SENSORS = (
     EnergyPlannerSensorDescription(key="solar_learning_blend_scored_forecasts", data_key="solar_learning_blend_scored_forecasts", name="Solar Learning Blend Active Scored Forecasts", state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=0),
     EnergyPlannerSensorDescription(key="solar_learning_persistence_status", data_key="solar_learning_persistence_status", name="Solar Learning Persistence Status"),
     EnergyPlannerSensorDescription(key="solar_learning_persistence_scored_forecasts", data_key="solar_learning_persistence_scored_forecasts", name="Solar Learning Persistence Active Scored Forecasts", state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=0),
+    EnergyPlannerSensorDescription(key="solar_learning_profile_status", data_key="solar_learning_profile_status", name="Solar Learning Independent Profile Status"),
+    EnergyPlannerSensorDescription(key="solar_learning_profile_trained_forecasts", data_key="solar_learning_profile_trained_forecasts", name="Solar Learning Independent Profile Trained Forecasts", state_class=SensorStateClass.MEASUREMENT, suggested_display_precision=0),
     EnergyPlannerSensorDescription(key="solar_learning_status", data_key="solar_learning_status", name="Solar Learning Status"),
     EnergyPlannerSensorDescription(key="solar_learning_usable_days", data_key="solar_learning_usable_days", name="Solar Learning Usable Days"),
     EnergyPlannerSensorDescription(key="solar_learning_scored_forecasts", data_key="solar_learning_scored_forecasts", name="Solar Learning Scored Forecasts"),
@@ -893,7 +895,7 @@ class EnergyPlannerSensor(CoordinatorEntity[EnergyPlannerCoordinator], SensorEnt
             return data.get("four_day_plan", {})
         if self.entity_description.key == "solar_learning_status":
             return data.get("solar_learning_diagnostics", {})
-        for model in ("blend", "persistence"):
+        for model in ("blend", "persistence", "profile"):
             if self.entity_description.key == f"solar_learning_{model}_status":
                 return data.get("solar_learning_diagnostics", {}).get(model, {})
         if self.entity_description.key == "hvac_daily_electricity":
