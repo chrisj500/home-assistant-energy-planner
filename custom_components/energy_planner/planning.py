@@ -4,7 +4,7 @@ All energies are AC kWh except explicitly named stored battery quantities.
 Plans are recommendations, never device commands.
 """
 from __future__ import annotations
-from datetime import timedelta
+from datetime import datetime, time, timedelta, timezone
 from math import isfinite
 
 try:
@@ -51,7 +51,7 @@ def simulate(slots, *, initial, capacities, reserve, ceiling, charge_kw, dischar
 def build_plan(*, now, windows, points, capacities, socs, load_by_day,
                reserve_pct, ceiling_pct=100, charge_kw=3.9, discharge_kw=3.9,
                efficiency=.9, ev_capacity_kwh=0, ev_power_kw=0, ev_return_capacity_kwh=0, storm=False):
-    if not capacities or len(capacities) != len(socs) or any(not isfinite(v) or v <= 0 for v in capacities):
+    if not capacities or not socs or len(capacities) != len(socs) or any(not isfinite(v) or v <= 0 for v in capacities):
         raise ValueError('Battery capacities are unavailable')
     if any(not isfinite(v) or not 0 <= v <= 100 for v in socs):
         raise ValueError('Battery SOC is unavailable')
@@ -65,8 +65,14 @@ def build_plan(*, now, windows, points, capacities, socs, load_by_day,
     slots, days = [], []
     for window in windows[:4]:
         day = window.day.isoformat()
-        start = max(now, window.sunrise.replace(hour=0, minute=0, second=0, microsecond=0))
-        end = window.sunrise.replace(hour=0, minute=0, second=0, microsecond=0) + timedelta(days=1)
+        # HA's astral events are UTC instants, while window.day is a local date.
+        # Deriving midnight from sunrise truncates western time zones' evenings.
+        local_start = datetime.combine(window.day, time.min, tzinfo=now.tzinfo)
+        local_end = datetime.combine(window.day + timedelta(days=1), time.min, tzinfo=now.tzinfo)
+        start = max(now, local_start).astimezone(timezone.utc)
+        end = local_end.astimezone(timezone.utc)
+        if start >= end:
+            continue
         daylight_start = max(start, window.sunrise)
         if daylight_start < window.sunset:
             if points[0].at > daylight_start or points[-1].at < window.sunset:
@@ -83,10 +89,13 @@ def build_plan(*, now, windows, points, capacities, socs, load_by_day,
             stop = min(at + timedelta(minutes=15), end)
             midpoint = at + (stop-at)/2
             watts = power_at(points, midpoint) if window.sunrise <= midpoint < window.sunset else 0
-            slots.append({'at':at, 'end':stop, 'date':day, 'hours':(stop-at).total_seconds()/3600,
+            # Step in elapsed time across DST; retain local times for display.
+            slots.append({'at':at.astimezone(now.tzinfo), 'end':stop.astimezone(now.tzinfo), 'date':day, 'hours':(stop-at).total_seconds()/3600,
                           'solar_kw':max(watts,0)/1000, 'load_kw':load,
                           'daylight':window.sunrise <= midpoint < window.sunset})
             at = stop
+    if not days:
+        raise ValueError('No current or future planning days are available')
     common = dict(initial=initial, capacities=capacities, reserve=reserve_pct/100,
                   ceiling=ceiling_pct/100, charge_kw=max(charge_kw,0),
                   discharge_kw=max(discharge_kw,0), efficiency=efficiency)
