@@ -2,6 +2,7 @@
 import unittest
 import math
 from datetime import datetime,timedelta,timezone
+from zoneinfo import ZoneInfo
 from pathlib import Path
 import sys
 sys.path.insert(0,str(Path(__file__).resolve().parents[1]/'custom_components'/'energy_planner'))
@@ -29,6 +30,58 @@ def scenario(solar_kw=10, load_kw=1, soc=99, reserve=40, ev=1.68, now_hour=2, da
 
 
 class PlanningTests(unittest.TestCase):
+    def local_scenario(self, now, days=4):
+        args = scenario(ev=0)
+        windows, points, loads = [], [], {}
+        for offset in range(days):
+            day = (now + timedelta(days=offset)).replace(hour=0, minute=0, second=0, microsecond=0)
+            sunrise = day.replace(hour=7).astimezone(timezone.utc)
+            sunset = day.replace(hour=17).astimezone(timezone.utc)
+            windows.append(DaylightWindow(day.date(), sunrise, sunset))
+            loads[day.date().isoformat()] = 1.0
+            at = day.astimezone(timezone.utc)
+            end = (day + timedelta(days=1)).astimezone(timezone.utc)
+            while at <= end:
+                points.append(IntervalPoint(at, 0.0))
+                at += timedelta(hours=1)
+        args.update(now=now, windows=windows, points=sorted({p.at:p for p in points}.values(), key=lambda p:p.at), load_by_day=loads)
+        return args
+
+    def test_local_evening_with_utc_astral_events_keeps_today_and_tomorrow(self):
+        now = datetime(2026, 11, 10, 20, 25, 44, tzinfo=ZoneInfo('America/New_York'))
+        plan = build_plan(**self.local_scenario(now))
+        self.assertEqual(len(plan['days']), 4)
+        self.assertEqual(plan['days'][0]['date'], '2026-11-10')
+        self.assertAlmostEqual(plan['days'][0]['house_kwh'], 3 + 34/60 + 16/3600)
+        self.assertAlmostEqual(plan['days'][1]['house_kwh'], 24)
+        data = {}; publish_plan(data, plan)
+        self.assertEqual(data['next_sunset_date'], '2026-11-11')
+        self.assertEqual(data['battery_outlook_status'], 'ready')
+
+    def test_eastern_time_zone_uses_local_date_even_when_sunrise_is_previous_utc_date(self):
+        now = datetime(2026, 11, 10, 1, tzinfo=ZoneInfo('Asia/Tokyo'))
+        plan = build_plan(**self.local_scenario(now))
+        self.assertEqual(plan['days'][0]['date'], '2026-11-10')
+        self.assertAlmostEqual(plan['days'][0]['house_kwh'], 23)
+        self.assertEqual(plan['ledger'][0]['at'], now)
+
+    def test_dst_days_account_for_actual_elapsed_hours(self):
+        for month, day, hours in ((3, 8, 23), (11, 1, 25)):
+            with self.subTest(month=month):
+                now = datetime(2026, month, day, tzinfo=ZoneInfo('America/New_York'))
+                plan = build_plan(**self.local_scenario(now, days=1))
+                self.assertAlmostEqual(plan['days'][0]['house_kwh'], hours)
+                self.assertEqual(len(plan['ledger']), hours * 4)
+                for a, b in zip(plan['ledger'], plan['ledger'][1:]):
+                    self.assertEqual(a['end'].timestamp(), b['at'].timestamp())
+                    self.assertAlmostEqual(a['stored_kwh'], b['start_stored_kwh'])
+
+    def test_no_remaining_days_has_actionable_reason(self):
+        args = scenario()
+        args['windows'] = []
+        with self.assertRaisesRegex(ValueError, 'No current or future planning days'):
+            build_plan(**args)
+
     def test_four_sunny_days_have_advance_actions_and_capacity_is_not_reused(self):
         p=build_plan(**scenario())
         self.assertEqual(p['status'],'ready')
